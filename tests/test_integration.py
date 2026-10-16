@@ -124,3 +124,31 @@ def test_jobs_fetch_wrappers_over_http_not_git(tmp_path, monkeypatch):
     assert "--wrapper-prefix https://github.com/snakemake/snakemake-wrappers/raw/" in cmd.read_text()
     # ECS allows 8192 characters for all overrides of a job; leave room for env vars and JSON.
     assert len(cmd.read_text()) < 6500, len(cmd.read_text())
+
+
+PER_RULE = textwrap.dedent('''
+    rule all:
+        input: "a.txt", "b.txt"
+    rule a:
+        output: "a.txt"
+        shell: "echo a > {output}"
+    rule b:
+        output: "b.txt"
+        resources: batch_script_python="host"
+        shell: "echo b > {output}"
+''')
+
+
+def _script_python(calls):
+    return {c["jobName"].split("_")[1]: c["env"]["SMK_FLEX_SCRIPT_PYTHON"]
+            for c in calls if c["call"] == "submit_job"}
+
+
+def test_script_python_per_rule_overrides_setting(tmp_path):
+    r, calls = run(tmp_path, PER_RULE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _script_python(calls) == {"a": "image", "b": "host"}
+    r, calls = run(tmp_path, PER_RULE.replace('"host"', '"image"'), "--forceall",
+                   "--aws-batch-flex-script-python", "host")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _script_python(calls) == {"a": "host", "b": "image"}

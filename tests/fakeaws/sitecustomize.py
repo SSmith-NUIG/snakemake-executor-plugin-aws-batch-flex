@@ -57,6 +57,7 @@ class FakeBatch:
         _rec("submit_job", queue=kw["jobQueue"], jobdef=kw["jobDefinition"],
              res=kw["containerOverrides"]["resourceRequirements"], jobName=kw["jobName"],
              tags=kw.get("tags"), propagate=kw.get("propagateTags"),
+             env={e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]},
              cmdtail=kw["containerOverrides"]["command"][2][-700:])
         return {"jobId": jid, "jobName": kw["jobName"]}
 

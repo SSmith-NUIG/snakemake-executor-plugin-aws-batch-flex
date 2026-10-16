@@ -97,8 +97,8 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 - Python `script:` rules use the image's `python` if it's 3.10 or newer, so they see the
   image's packages. Otherwise (no Python, or an older one) and for `run:` blocks, the code runs
   in Snakemake's own Python from the host env; add libraries there with `--extra-package` when
-  building it, or call the script from `shell:`. `--aws-batch-flex-script-python host` always
-  uses Snakemake's Python.
+  building it, or call the script from `shell:`. `--aws-batch-flex-script-python host` (or
+  `resources: batch_script_python="host"` on one rule) uses Snakemake's Python instead.
 - `pipe()` doesn't work. `--sdm apptainer` isn't supported.
 - Images with an ENTRYPOINT that doesn't pass the command through will break.
 - All rules in a group must use the same image.

@@ -101,6 +101,9 @@ a = sys.argv[1:]
 if a[:2] != ["-m", "snakemake"]:
     os.execv(sys.executable, [sys.executable] + a)
 sys.argv = ["snakemake"] + a[2:]
+if os.environ.get("SMK_FLEX_SCRIPT_PYTHON") == "host":
+    runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
+    sys.exit()
 found = []
 def image_python():
     if not found:

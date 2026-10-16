@@ -137,7 +137,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         metadata={
             "help": "Which python runs Python script: rules. 'image': the image's python if it "
             "is 3.10 or newer (so the script sees the image's packages), else Snakemake's. "
-            "'host': always Snakemake's own python.",
+            "'host': always Snakemake's own python. Per rule: the batch_script_python resource.",
             "env_var": False,
             "required": False,
         },
@@ -434,8 +434,7 @@ class Executor(RemoteExecutor):
             base = self._base_prelude(self._bootstrap_for(platform))
             if self.settings.conda_path and platform == "ec2":
                 base += "\n" + conda_snippet(self.settings.conda_path)
-            if (self.settings.script_python or "image") == "image":
-                base += "\n" + image_python_snippet()
+            base += "\n" + image_python_snippet()  # SMK_FLEX_SCRIPT_PYTHON decides per job
             self._preludes[platform] = base
         return self._preludes[platform]
 
@@ -496,6 +495,13 @@ class Executor(RemoteExecutor):
         if overhead is None:
             overhead = DEFAULT_MEM_OVERHEAD_MIB
         req = job_requirements(job.resources, job.threads, platform, overhead)
+        script_python = str(
+            job.resources.get("batch_script_python") or self.settings.script_python or "image"
+        ).lower()
+        if script_python not in ("image", "host"):
+            raise WorkflowError(
+                f"{job.name}: batch_script_python must be 'image' or 'host', got '{script_python}'."
+            )
         jobdef = self.jobdefs.ensure(image, platform)
 
         script = f"{self._prelude_for(platform)}\n{self.format_job_exec(job)}"
@@ -515,7 +521,8 @@ class Executor(RemoteExecutor):
                 "resourceRequirements": resource_reqs,
                 "environment": [
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()
-                ],
+                ]
+                + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}],
             },
         )
         if self.settings.spot_retries:

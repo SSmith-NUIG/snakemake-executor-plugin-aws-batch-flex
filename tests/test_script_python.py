@@ -28,14 +28,14 @@ def _python(min_ok):
     return None
 
 
-def run_job(tmp_path, image_python, with_snippet=True):
+def run_job(tmp_path, image_python, mode="image"):
     (tmp_path / "Snakefile").write_text(SNAKEFILE)
     (tmp_path / "s.py").write_text(SCRIPT)
     img = tmp_path / "imagebin"; img.mkdir()
     os.symlink(image_python, img / "python")
     work = tmp_path / "work"; work.mkdir()
-    snippet = image_python_snippet() if with_snippet else ""
-    job = (f'set -eu\nSMK_WORK={work}\nSMK_PY={sys.executable}\npython() {{ "$SMK_PY" "$@"; }}\n'
+    snippet = image_python_snippet()
+    job = (f'set -eu\nexport SMK_FLEX_SCRIPT_PYTHON={mode}\nSMK_WORK={work}\nSMK_PY={sys.executable}\npython() {{ "$SMK_PY" "$@"; }}\n'
            f'{snippet}\ncd {tmp_path}\npython -m snakemake -c1 -q\n')
     env = dict(os.environ, PATH=f"{img}:/usr/bin:/bin")
     r = subprocess.run(["sh", "-c", job], env=env, capture_output=True, text=True, timeout=120)
@@ -56,4 +56,4 @@ def test_old_image_python_falls_back_to_snakemakes(tmp_path):
 
 @pytest.mark.skipif(not _python(True), reason="needs a second python >= 3.10")
 def test_host_setting_keeps_snakemakes_python(tmp_path):
-    assert run_job(tmp_path, _python(True), with_snippet=False) == f"hi {sys.executable}"
+    assert run_job(tmp_path, _python(True), mode="host") == f"hi {sys.executable}"
