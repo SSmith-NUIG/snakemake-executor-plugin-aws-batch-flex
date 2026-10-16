@@ -1,0 +1,42 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="SMKINIT"
+
+--SMKINIT
+Content-Type: text/x-shellscript; charset="us-ascii"
+
+#!/bin/bash
+# Instance setup for the Snakemake Batch compute environment.
+# Job: tune the ECS agent for large container images, then (re)start it once Batch has
+# supplied the cluster name. Nothing is downloaded and nothing outside this host is touched.
+set -u
+ECS_CFG="${ECS_CONFIG:-/etc/ecs/ecs.config}"
+WAIT_SECS="${SMK_INIT_WAIT:-120}"
+say() { echo "[smk-init] $*"; }
+
+mkdir -p "$(dirname "$ECS_CFG")"
+touch "$ECS_CFG"
+
+# Batch adds the ECS cluster name to this file; do not start the agent before it is there,
+# or the instance would register with the wrong cluster and never receive jobs.
+waited=0
+until grep -q '^ECS_CLUSTER=' "$ECS_CFG"; do
+  if [ "$waited" -ge "$WAIT_SECS" ]; then
+    say "WARNING: ECS_CLUSTER not set after ${WAIT_SECS}s; starting the agent anyway"
+    break
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
+
+if ! grep -q '^ECS_CONTAINER_START_TIMEOUT=' "$ECS_CFG"; then
+  cat >> "$ECS_CFG" <<'SETTINGS'
+ECS_CONTAINER_START_TIMEOUT=10m
+ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
+SETTINGS
+fi
+
+systemctl enable ecs >/dev/null 2>&1 || true
+systemctl restart --no-block ecs
+say "ECS agent configured and started (waited ${waited}s)"
+
+--SMKINIT--

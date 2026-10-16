@@ -1,0 +1,17 @@
+region = "eu-west-1"
+name   = "smkflex"                     # creates smkflex-queue etc. (must not clash with existing names)
+
+# existing subnets are only read
+subnet_ids = ["subnet-aaaa", "subnet-bbbb"]
+
+# AMI made by scripts/bake-ami.sh (ECS-optimized AMI + Snakemake env)
+ami_id = "ami-REPLACE-WITH-BAKED-AMI"
+
+# instance boot script (starts the ECS agent); see variables.tf
+userdata_file = "userdata.snakemake.txt"
+
+root_volume_gib        = 100
+root_volume_iops       = 5000
+root_volume_throughput = 125
+
+# s3_bucket = null  -> a new bucket is created. Set a name only to use an existing bucket.

@@ -1,0 +1,23 @@
+# local notes
+CLAUDE.md
+HANDOVER.md
+
+# account-specific
+terraform/terraform.tfvars
+terraform/launcher/terraform.tfvars
+**/profile*/config.yaml
+*.tfstate
+tfplan
+*.tfplan
+*.tfstate.*
+.terraform/
+userdata.mime
+# generated
+conformance-*.log
+.snakemake/
+results/
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/

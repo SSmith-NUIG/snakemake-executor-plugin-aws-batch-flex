@@ -1,0 +1,17 @@
+# Laptop tooling for everything in this repo: Terraform, AWS CLI, and the plugin's own CLI
+# (snakemake-batch-flex-host-env) so you can generate the host-env user-data locally.
+#
+#   conda env create -f environment.yml
+#   conda activate smk-aws
+#   pip install -e .            # run from the repo root: installs the plugin into this env
+name: smk-aws
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - terraform>=1.5
+  - awscli            # conda-forge ships AWS CLI v2
+  - pip
+  - pip:
+      - snakemake
+      - snakemake-storage-plugin-s3

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "snakemake-executor-plugin-aws-batch-flex"
+version = "0.1.0"
+description = "Snakemake executor plugin for AWS Batch that runs every rule in its own container image"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Stephen Smith" }]
+dependencies = [
+    "snakemake-interface-common>=1.17.4,<2",
+    "snakemake-interface-executor-plugins>=9.3.2,<10",
+    "snakemake-interface-storage-plugins>=3.0.0,<5",
+    "boto3>=1.34",
+]
+
+[project.scripts]
+snakemake-batch-flex-host-env = "snakemake_executor_plugin_aws_batch_flex.hostenv:main"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/snakemake_executor_plugin_aws_batch_flex"]

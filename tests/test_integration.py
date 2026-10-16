@@ -1,0 +1,124 @@
+"""Runs a real Snakemake workflow through the plugin against a fake AWS Batch."""
+import json, os, subprocess, sys, textwrap
+from pathlib import Path
+
+FAKE = str(Path(__file__).parent / "fakeaws")
+
+SNAKEFILE = textwrap.dedent('''
+    container: "docker://ubuntu:24.04"
+
+    rule all:
+        input: "a.txt", "b.txt"
+
+    rule make_a:
+        output: "a.txt"
+        threads: 4
+        resources: mem_mb=3000, batch_queue="special-queue"
+        shell: "echo A > {output}"
+
+    rule make_b:
+        input: "a.txt"
+        output: "b.txt"
+        container: "docker://quay.io/biocontainers/bwa:0.7.17"
+        shell: "cat {input} > {output} && echo B >> {output}"
+''')
+
+FAILING = textwrap.dedent('''
+    rule all:
+        input: "x.txt"
+    rule boom:
+        output: "x.txt"
+        shell: "echo about-to-fail-marker >&2; exit 3"
+''')
+
+
+def run(tmp_path, snakefile, *extra):
+    (tmp_path / "Snakefile").write_text(snakefile)
+    log = tmp_path / "calls.jsonl"
+    env = dict(os.environ, PYTHONPATH=FAKE, FAKEAWS_LOG=str(log))
+    cmd = [sys.executable, "-m", "snakemake", "--executor", "aws-batch-flex",
+           "--aws-batch-flex-queue", "default-queue", "--aws-batch-flex-default-image", "debian:12",
+           "--default-storage-provider", "fs", "--default-storage-prefix", str(tmp_path / "store"),
+           "--default-resources", "mem_mb=500", "-j", "4", "--latency-wait", "5", *extra]
+    r = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=300)
+    calls = [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
+    return r, calls
+
+
+def test_per_rule_images_queues_and_resources(tmp_path):
+    r, calls = run(tmp_path, SNAKEFILE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "b.txt").read_text() == "A\nB\n"
+    images = {c["image"] for c in calls if c["call"] == "register_job_definition"}
+    assert images == {"ubuntu:24.04", "quay.io/biocontainers/bwa:0.7.17"}
+    a = next(c for c in calls if c["call"] == "submit_job" and c["queue"] == "special-queue")
+    assert {"type": "VCPU", "value": "4"} in a["res"]
+    # Snakemake derives mem_mib 2862 from mem_mb 3000; plus the default 256 MiB overhead
+    assert {"type": "MEMORY", "value": "3118"} in a["res"]
+    assert sum(c["queue"] == "default-queue" for c in calls if c["call"] == "submit_job") >= 1
+
+
+def test_failure_surfaces_log_tail(tmp_path):
+    r, _ = run(tmp_path, FAILING)
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "FAILED" in out and "exit code: 1" in out and "exit status 3" in out
+    assert "about-to-fail-marker" in out  # log tail was fetched and shown
+
+
+def test_startup_check_wrong_queue(tmp_path):
+    r, calls = run(tmp_path, FAILING, "--aws-batch-flex-queue", "no-such-queue")
+    assert r.returncode != 0
+    assert "Job queue 'no-such-queue' not found" in r.stdout + r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)
+
+
+def test_startup_check_wrong_platform(tmp_path):
+    r, calls = run(tmp_path, FAILING, "--aws-batch-flex-queue", "my-fargate-queue",
+                   "--aws-batch-flex-platform", "ec2")
+    assert r.returncode != 0
+    assert "Set --aws-batch-flex-platform fargate" in r.stdout + r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)
+
+
+MIXED = textwrap.dedent('''
+    rule all:
+        input: "e.txt", "f.txt"
+    rule on_ec2:
+        output: "e.txt"
+        resources: mem_mb=1000
+        shell: "echo E > {output}"
+    rule on_fargate:
+        output: "f.txt"
+        resources: mem_mb=1000, batch_queue="my-fargate-queue"
+        shell: "echo F > {output}"
+''')
+
+
+def test_mixed_ec2_and_fargate_queues(tmp_path):
+    r, calls = run(tmp_path, MIXED, "--aws-batch-flex-execution-role-arn", "arn:aws:iam::1:role/exec",
+                   "--aws-batch-flex-volumes", "/tmp:/scratch")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "f.txt").read_text() == "F\n"
+    defs = {c["platform"][0]: c for c in calls if c["call"] == "register_job_definition"}
+    assert set(defs) == {"EC2", "FARGATE"}
+    assert defs["EC2"]["mounts"] and not defs["FARGATE"]["mounts"]  # no host mounts on Fargate
+    subs = {c["queue"]: c for c in calls if c["call"] == "submit_job"}
+    assert {"type": "MEMORY", "value": "1210"} in subs["default-queue"]["res"]  # 954 + 256
+    assert {"type": "MEMORY", "value": "2048"} in subs["my-fargate-queue"]["res"]  # Fargate minimum for 1 vCPU
+    assert "Fargate jobs get no host mounts" in r.stdout + r.stderr
+
+
+def test_fargate_rule_without_execution_role_fails_clearly(tmp_path):
+    r, calls = run(tmp_path, MIXED)
+    assert r.returncode != 0
+    assert "requires --aws-batch-flex-execution-role-arn" in r.stdout + r.stderr
+    assert not any(c["call"] == "submit_job" and c["queue"] == "my-fargate-queue" for c in calls)
+
+
+def test_jobs_fetch_wrappers_over_http_not_git(tmp_path, monkeypatch):
+    cmd = tmp_path / "cmd.txt"
+    monkeypatch.setenv("FAKEAWS_CMD", str(cmd))
+    r, _ = run(tmp_path, MIXED.replace(', batch_queue="my-fargate-queue"', ""))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "--wrapper-prefix https://github.com/snakemake/snakemake-wrappers/raw/" in cmd.read_text()

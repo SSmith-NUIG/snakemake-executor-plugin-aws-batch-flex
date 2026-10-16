@@ -1,0 +1,152 @@
+"""Shell snippets that run before the Snakemake job command inside the container.
+
+"host" mode uses the env mounted from the instance; the other modes install Snakemake into a
+venv under $TMPDIR with uv. Either way Snakemake is only reachable through a shell function
+called `python`, so the rule's own commands still see the image's python and PATH."""
+
+import shlex
+from typing import Iterable
+
+MODES = ("auto", "always", "never", "host")
+
+_TEMPLATE = r"""
+set -eu
+@@WORKDIR@@
+SMK_BOOT="${TMPDIR:-/tmp}/.snakemake-batch-bootstrap"
+SMK_NEED=@@NEED@@
+@@CHECK@@
+if [ "$SMK_NEED" = 1 ]; then
+  echo "[snakemake-batch] bootstrapping Snakemake into $SMK_BOOT" >&2
+  mkdir -p "$SMK_BOOT"
+  export UV_CACHE_DIR="$SMK_BOOT/cache" UV_PYTHON_INSTALL_DIR="$SMK_BOOT/python"
+  if [ "@@PREREQ@@" = 1 ] && ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1 \
+     && ! { command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; }; then
+    echo "[snakemake-batch] no curl/wget/pip in the image: installing curl, ca-certificates and bash" >&2
+    if [ "$(id -u)" != 0 ]; then
+      echo "[snakemake-batch] cannot install prerequisites: the image runs as a non-root user" >&2
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends curl ca-certificates bash >&2 || true
+    elif command -v apk >/dev/null 2>&1; then apk add -q --no-cache curl ca-certificates bash >&2 || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates bash >&2 || true
+    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y curl ca-certificates bash >&2 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates bash >&2 || true
+    else echo "[snakemake-batch] no known package manager in the image" >&2
+    fi
+  fi
+  UV=""
+  if command -v uv >/dev/null 2>&1; then
+    UV=uv
+  else
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO- https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
+    fi
+    if [ -x "$SMK_BOOT/bin/uv" ]; then
+      UV="$SMK_BOOT/bin/uv"
+    else
+      for p in python3 python; do
+        if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$SMK_BOOT/uvlib" uv >&2; then
+          UV="env PYTHONPATH=$SMK_BOOT/uvlib $p -m uv"
+          break
+        fi
+      done
+    fi
+  fi
+  if [ -z "$UV" ]; then
+    echo "[snakemake-batch] cannot bootstrap: image needs curl, wget, or python3+pip (and internet access)" >&2
+    exit 127
+  fi
+  $UV venv --clear --quiet --python @@PYVER@@ --system-site-packages "$SMK_BOOT/venv" >&2
+  $UV pip install --quiet --python "$SMK_BOOT/venv/bin/python" @@REQS@@ >&2
+  python() { "$SMK_BOOT/venv/bin/python" "$@"; }
+fi
+"""
+
+
+WORKDIR = (
+    'SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"; mkdir -p "$SMK_WORK"; cd "$SMK_WORK"'
+)
+
+_HOST_TEMPLATE = r"""
+set -eu
+@@WORKDIR@@
+SMK_ENV=@@ENV@@
+SMK_WAITED=0
+while [ ! -f "$SMK_ENV/.ready" ]; do
+  if [ "$SMK_WAITED" -ge @@WAIT@@ ]; then
+    echo "[snakemake-batch] host env $SMK_ENV is missing or not ready. Install it on the" >&2
+    echo "  EC2 host/AMI (snakemake-batch-flex-host-env) and check the job definition mount." >&2
+    exit 127
+  fi
+  sleep 2; SMK_WAITED=$((SMK_WAITED + 2))
+done
+python() { "$SMK_ENV/venv/bin/python" "$@"; }
+if ! python -c "import snakemake" >/dev/null 2>&1; then
+  echo "[snakemake-batch] the host env cannot run in this image (musl/Alpine? exotic libc?)." >&2
+  exit 127
+fi
+"""
+
+
+def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:
+    code = (
+        "import importlib.metadata as m\n"
+        f"assert m.version('snakemake') == {snakemake_version!r}\n"
+        + "".join(f"m.version({n!r})\n" for n in package_names)
+    )
+    return shlex.quote(code)
+
+
+def build_prelude(
+    mode: str,
+    snakemake_version: str,
+    requirements: list[str],
+    python_version: str,
+    install_prereqs: bool = False,
+) -> str:
+    """Return a POSIX-sh snippet; after it runs, `python -m snakemake` works."""
+    if mode not in MODES:
+        raise ValueError(f"bootstrap mode must be one of {MODES}, got {mode!r}")
+    if mode == "never":
+        return f"set -eu\n{WORKDIR}"
+
+    names = [r.split("==")[0] for r in requirements]
+    if mode == "always":
+        need, check = "1", ""
+    else:
+        need = "1"
+        check = (
+            "if command -v python >/dev/null 2>&1 && "
+            f"python -c {_py_check(snakemake_version, names)} >/dev/null 2>&1; "
+            "then SMK_NEED=0; fi"
+        )
+    reqs = " ".join(shlex.quote(r) for r in requirements)
+    return (
+        _TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
+        .replace("@@NEED@@", need)
+        .replace("@@CHECK@@", check)
+        .replace("@@PYVER@@", shlex.quote(python_version))
+        .replace("@@PREREQ@@", "1" if install_prereqs else "0")
+        .replace("@@REQS@@", reqs)
+    )
+
+
+def build_host_prelude(env_path: str, wait_seconds: int = 120) -> str:
+    """Prelude for the host-mounted env. Waits for `.ready` because an instance that is
+    still installing the env (user-data) may already have been given a job."""
+    return (
+        _HOST_TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
+        .replace("@@ENV@@", shlex.quote(env_path))
+        .replace("@@WAIT@@", str(int(wait_seconds)))
+    )
+
+
+def conda_snippet(conda_path: str) -> str:
+    """Make a host-mounted conda usable in any image: only `condabin` (conda itself, no python)
+    goes at the END of PATH, so an image's own conda wins; packages cache to a writable dir."""
+    return (
+        f'export PATH="$PATH:{conda_path}/condabin"\n'
+        'export CONDA_PKGS_DIRS="$SMK_WORK/conda-pkgs"\n'
+        '[ -w "${HOME:-/nonexistent}" ] || export HOME="$SMK_WORK"\n'
+    )

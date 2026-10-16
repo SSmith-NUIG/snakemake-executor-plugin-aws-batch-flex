@@ -1,0 +1,23 @@
+# Smoke test for host mode (aws-batch-flex-bootstrap: host).
+# Neither image below needs Snakemake: it is mounted from the host. The first one has NO Python
+# and no curl, which is the point of this mode. Needs bash + glibc (debian is fine, alpine is not).
+
+rule all:
+    input: "results/hello.txt", "results/sum.txt"
+
+rule hello:                               # shell rule in an image without python
+    output: "results/hello.txt"
+    container: "docker://debian:12"
+    resources: mem_mb=512
+    shell:
+        "echo hello from $(grep PRETTY_NAME /etc/os-release) on $(hostname) > {output}; "
+        "command -v python3 >/dev/null && echo 'image HAS python3' >> {output} || echo 'image has NO python3' >> {output}"
+
+rule add:                                 # run: block executes inside Snakemake (the host-mounted env)
+    input: "results/hello.txt"
+    output: "results/sum.txt"
+    container: "docker://debian:12-slim"  # second image => second job definition
+    resources: mem_mb=512
+    run:
+        with open(output[0], "w") as f:
+            f.write(str(sum(range(10))))  # expect 45

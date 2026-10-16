@@ -1,0 +1,12 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="//"
+
+--//
+Content-Type: text/cloud-config; charset="us-ascii"
+
+#cloud-config
+runcmd:
+  - echo "site setup" > /var/log/site-setup.log
+  - systemctl enable --now --no-block ecs
+
+--//--

@@ -1,0 +1,2 @@
+/opt/miniforge3/envs/smalltest
+6.0.3
