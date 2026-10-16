@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|rscript|wrapper|mixed|rules ...]   (default: script fanout)
+# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|rscript|wrapper|mixed|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run (needs enable_fargate=true in terraform)
 # `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
 set -u
@@ -29,6 +29,8 @@ run() { # name, snakemake args...
       tempdir)    check tempdir results/td/final.txt "x" && ! aws s3 ls "$PREFIX/results/td/tmp.txt" 2>/dev/null | grep -q tmp && echo "  temp file removed from storage";;
       directory)  check directory results/dr/total.txt "^3$";;
       pyimage)    check pyimage results/pyimg/out.txt "sum=6 pandas=2.2.1";;
+      pyrule)     check pyrule results/pyrule/image.txt "python=/usr/local/bin/python pandas=yes" \
+                    && check pyrule results/pyrule/host.txt "python=/opt/snakemake-env/.* pandas=no";;
       rscript)    check rscript results/r/out.txt "rscript threads=2 rule=r_script R=4";;
       wrapper)    check wrapper results/wr/ref.fa.fai "^chr2	8	";;
       mixed)      check mixed results/mixed/both.txt "AWS_ECS_EC2" && check mixed results/mixed/both.txt "AWS_ECS_FARGATE";;
@@ -43,6 +45,7 @@ for t in "${@:-script fanout}"; do
       conda)  run conda -s conda.smk --sdm conda;;
       pipeline) run pipeline -s pipeline.smk -j 8;;
       pyimage) run pyimage -s pyimage.smk;;
+      pyrule) run pyrule -s pyrule.smk -j 2;;
       rscript) run rscript -s rscript.smk;;
       wrapper) run wrapper -s wrapper.smk --sdm conda -j 2;;
       mixed) FQ=$(terraform -chdir=../../terraform output -raw snakemake_profile_fargate | sed -n 's/^aws-batch-flex-queue: //p')
