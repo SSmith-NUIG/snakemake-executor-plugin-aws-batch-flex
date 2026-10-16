@@ -4,7 +4,9 @@
 venv under $TMPDIR with uv. Either way Snakemake is only reachable through a shell function
 called `python`, so the rule's own commands still see the image's python and PATH."""
 
+import base64
 import shlex
+import zlib
 from typing import Iterable
 
 MODES = ("auto", "always", "never", "host")
@@ -59,7 +61,8 @@ if [ "$SMK_NEED" = 1 ]; then
   fi
   $UV venv --clear --quiet --python @@PYVER@@ --system-site-packages "$SMK_BOOT/venv" >&2
   $UV pip install --quiet --python "$SMK_BOOT/venv/bin/python" @@REQS@@ >&2
-  python() { "$SMK_BOOT/venv/bin/python" "$@"; }
+  SMK_PY="$SMK_BOOT/venv/bin/python"
+  python() { "$SMK_PY" "$@"; }
 fi
 """
 
@@ -81,12 +84,74 @@ while [ ! -f "$SMK_ENV/.ready" ]; do
   fi
   sleep 2; SMK_WAITED=$((SMK_WAITED + 2))
 done
-python() { "$SMK_ENV/venv/bin/python" "$@"; }
+SMK_PY="$SMK_ENV/venv/bin/python"
+python() { "$SMK_PY" "$@"; }
 if ! python -c "import snakemake" >/dev/null 2>&1; then
   echo "[snakemake-batch] the host env cannot run in this image (musl/Alpine? exotic libc?)." >&2
   exit 127
 fi
 """
+
+# Python `script:` rules normally run with Snakemake's own interpreter. This launcher makes them
+# use the image's python (>= 3.10, which Snakemake's script header needs) when it has one, the
+# same way Snakemake treats conda envs. Anything else falls through to the original code.
+_LAUNCHER = r"""
+import os, runpy, shutil, subprocess, sys
+a = sys.argv[1:]
+if a[:2] != ["-m", "snakemake"]:
+    os.execv(sys.executable, [sys.executable] + a)
+sys.argv = ["snakemake"] + a[2:]
+found = []
+def image_python():
+    if not found:
+        found.append(None)
+        p = shutil.which("python") or shutil.which("python3")
+        if p and os.path.realpath(p) != os.path.realpath(sys.executable):
+            try:
+                if subprocess.run([p, "-c", "import sys; sys.exit(sys.version_info < (3, 10))"]).returncode == 0:
+                    found[0] = p
+            except OSError:
+                pass
+    return found[0]
+def own_packages():
+    # Links to just this Snakemake's packages, put first on the script's path so that a
+    # Snakemake installed in the image can't shadow them. Everything else: image first.
+    import snakemake
+    site = os.path.dirname(os.path.dirname(snakemake.__file__))
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".smk-pkgs")
+    if not os.path.isdir(d):
+        os.makedirs(d)
+        for n in os.listdir(site):
+            if n.startswith("snakemake") and os.path.isdir(os.path.join(site, n)) and "." not in n:
+                os.symlink(os.path.join(site, n), os.path.join(d, n))
+    return d
+try:
+    from snakemake import script as sm_script
+    orig = sm_script.PythonScript.execute_script
+    def execute_script(self, fname, edit=False):
+        if self.container_img is None and self.conda_env is None and self.env_modules is None and image_python():
+            return self._execute_cmd(
+                "PYTHONPATH={pkgs:q}${{PYTHONPATH:+:$PYTHONPATH}} {py_exec:q} {fname:q}",
+                pkgs=own_packages(), py_exec=image_python(), fname=fname, is_python_script=True)
+        return orig(self, fname, edit)
+    sm_script.PythonScript.execute_script = execute_script
+except Exception as e:
+    print(f"[snakemake-batch] script: rules will use Snakemake's python ({e!r})", file=sys.stderr)
+runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
+"""
+
+
+def image_python_snippet() -> str:
+    """Point the `python` function at the launcher above (only if the prelude defined one).
+    The launcher is sent compressed: ECS allows only 8192 characters of overrides per job."""
+    packed = base64.b64encode(zlib.compress(_LAUNCHER.encode(), 9)).decode()
+    unpack = "import base64,sys,zlib;open(sys.argv[1],'wb').write(zlib.decompress(base64.b64decode(sys.argv[2])))"
+    return (
+        'if [ -n "${SMK_PY:-}" ]; then\n'
+        f'  "$SMK_PY" -c "{unpack}" "$SMK_WORK/.smk-launch.py" {packed}\n'
+        '  python() { "$SMK_PY" "$SMK_WORK/.smk-launch.py" "$@"; }\n'
+        "fi\n"
+    )
 
 
 def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:

@@ -94,11 +94,11 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 
 - Host mode needs a glibc image with `/bin/sh` and bash. Alpine/musl images exit with 127 and
   say why. Build the AMI on the same CPU architecture as your instances.
-- `run:` blocks and Python `script:` rules run in Snakemake's own Python (the host env), not
-  the image's. Libraries they import have to be in that env (`--extra-package` when building
-  it with `snakemake-batch-flex-host-env script`, or `--aws-batch-flex-extra-packages` for
-  install-at-start), or call the script from `shell:` instead. R, bash and `shell:` use the
-  image as normal.
+- Python `script:` rules use the image's `python` if it's 3.10 or newer, so they see the
+  image's packages. Otherwise (no Python, or an older one) and for `run:` blocks, the code runs
+  in Snakemake's own Python from the host env; add libraries there with `--extra-package` when
+  building it, or call the script from `shell:`. `--aws-batch-flex-script-python host` always
+  uses Snakemake's Python.
 - `pipe()` doesn't work. `--sdm apptainer` isn't supported.
 - Images with an ENTRYPOINT that doesn't pass the command through will break.
 - All rules in a group must use the same image.

@@ -122,3 +122,5 @@ def test_jobs_fetch_wrappers_over_http_not_git(tmp_path, monkeypatch):
     r, _ = run(tmp_path, MIXED.replace(', batch_queue="my-fargate-queue"', ""))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "--wrapper-prefix https://github.com/snakemake/snakemake-wrappers/raw/" in cmd.read_text()
+    # ECS allows 8192 characters for all overrides of a job; leave room for env vars and JSON.
+    assert len(cmd.read_text()) < 6500, len(cmd.read_text())

@@ -22,7 +22,7 @@ from snakemake_interface_executor_plugins.settings import (
     ExecutorSettingsBase,
 )
 
-from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet
+from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
 from .naming import batch_job_name
@@ -128,6 +128,16 @@ class ExecutorSettings(ExecutorSettingsBase):
             "help": "Install-at-start modes (auto/always): if the image has no curl, wget or "
             "python3+pip, install curl/ca-certificates/bash with the image's package manager "
             "(apt/apk/dnf/yum). Needs root in the image and access to the distro mirrors.",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    script_python: Optional[str] = field(
+        default="image",
+        metadata={
+            "help": "Which python runs Python script: rules. 'image': the image's python if it "
+            "is 3.10 or newer (so the script sees the image's packages), else Snakemake's. "
+            "'host': always Snakemake's own python.",
             "env_var": False,
             "required": False,
         },
@@ -303,6 +313,8 @@ class Executor(RemoteExecutor):
         s: ExecutorSettings = self.workflow.executor_settings
         if s.platform not in (None, "ec2", "fargate"):
             raise WorkflowError("--aws-batch-flex-platform must be 'ec2' or 'fargate'.")
+        if s.script_python not in (None, "image", "host"):
+            raise WorkflowError("--aws-batch-flex-script-python must be 'image' or 'host'.")
         if s.bootstrap not in MODES:
             raise WorkflowError(f"--aws-batch-flex-bootstrap must be one of {MODES}.")
         mounts = []
@@ -422,6 +434,8 @@ class Executor(RemoteExecutor):
             base = self._base_prelude(self._bootstrap_for(platform))
             if self.settings.conda_path and platform == "ec2":
                 base += "\n" + conda_snippet(self.settings.conda_path)
+            if (self.settings.script_python or "image") == "image":
+                base += "\n" + image_python_snippet()
             self._preludes[platform] = base
         return self._preludes[platform]
 
