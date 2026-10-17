@@ -27,8 +27,8 @@ class FakeBatch:
         out = []
         for jid, j in self.jobs.items():
             if j["kw"]["jobQueue"] == jobQueue and self._status(j) == jobStatus:
-                out.append({"jobId": jid, "jobName": j["name"], "status": jobStatus,
-                            "jobDefinition": f"arn:aws:batch:eu-west-1:1:job-definition/{j['kw']['jobDefinition']}:1"})
+                # like real AWS: no jobDefinition or tags in the summaries
+                out.append({"jobId": jid, "jobName": j["name"], "status": jobStatus})
         return {"jobSummaryList": out}
 
     def _status(self, j):
@@ -88,7 +88,8 @@ class FakeBatch:
         for jid in jobs:
             j = self.jobs[jid]
             d = {"jobId": jid, "jobName": j["name"], "createdAt": int(j["t"] * 1000),
-                 "tags": j["kw"].get("tags") or {}}
+                 "tags": j["kw"].get("tags") or {},
+                 "jobDefinition": f"arn:aws:batch:eu-west-1:1:job-definition/{j['kw']['jobDefinition']}:1"}
             if j["p"] is None:  # a pre-loaded leftover job
                 out.append(dict(d, status=j["status"]))
                 continue

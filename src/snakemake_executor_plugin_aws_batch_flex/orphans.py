@@ -22,10 +22,9 @@ def find_orphans(batch, queue: str, jobdef_prefix: str, wf_id: str, run_id: str)
             if token:
                 kw["nextToken"] = token
             resp = batch.list_jobs(**kw)
-            for j in resp.get("jobSummaryList", []):
-                name = j.get("jobDefinition", "").rsplit("/", 1)[-1].split(":")[0]
-                if name.startswith(jobdef_prefix + "-"):
-                    ids.append(j["jobId"])
+            # The summaries have no job definition or tags (despite the API model), so
+            # everything active is described below.
+            ids += [j["jobId"] for j in resp.get("jobSummaryList", [])]
             token = resp.get("nextToken")
             if not token:
                 break
@@ -33,6 +32,9 @@ def find_orphans(batch, queue: str, jobdef_prefix: str, wf_id: str, run_id: str)
     for i in range(0, len(ids), 100):
         for d in batch.describe_jobs(jobs=ids[i : i + 100])["jobs"]:
             tags = d.get("tags") or {}
-            if tags.get("snakemake-workflow") == wf_id and tags.get("snakemake-run-id") != run_id:
+            jobdef = d.get("jobDefinition", "").rsplit("/", 1)[-1].split(":")[0]
+            if (jobdef.startswith(jobdef_prefix + "-")
+                    and tags.get("snakemake-workflow") == wf_id
+                    and tags.get("snakemake-run-id") != run_id):
                 found.append((d["jobId"], d.get("jobName", ""), d.get("status", "")))
     return found
