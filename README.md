@@ -223,13 +223,14 @@ To remove everything:
 ```bash
 aws s3 rm s3://YOUR-BUCKET --recursive          # empty the bucket (deletes your results!)
 cd terraform && terraform destroy && cd ..       # remove queue, roles, bucket, ...
-rm terraform/terraform.tfvars
-bash scripts/cleanup-ami.sh --region eu-west-1 ami-XXXXXXXX   # remove the machine image
+bash scripts/cleanup-ami.sh --region eu-west-1 --no-tfvars ami-XXXXXXXX   # remove the machine image
 ```
 
 `terraform destroy` refuses to delete a bucket that still has files in it, hence the first
-line. `cleanup-ami.sh` refuses to delete the AMI that `terraform.tfvars` still uses, hence the
-`rm`; it also only deletes images that `bake-ami.sh` made, and asks before deleting.
+line. `cleanup-ami.sh` only deletes images that `bake-ami.sh` made, asks before deleting, and
+refuses any image that's still in use by a compute environment, launch template or machine.
+Normally it also refuses the image named in `terraform.tfvars`; `--no-tfvars` skips that one
+check, since after `terraform destroy` nothing uses it any more.
 
 ## Troubleshooting
 
