@@ -24,7 +24,7 @@ from snakemake_interface_executor_plugins.settings import (
 
 from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
-from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
+from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, is_ecr
 from .naming import batch_job_name
 from .preflight import SUBMIT_HINT, check_queue, check_role
 from .sizing import DEFAULT_MEM_OVERHEAD_MIB, job_requirements
@@ -240,6 +240,19 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
+    registry_credentials: List[str] = field(
+        default_factory=list,
+        metadata={
+            "help": "REGISTRY=SECRET_ARN pairs for private registries outside AWS, e.g. "
+            "docker.io=arn:aws:secretsmanager:...:secret:dockerhub (the secret holds "
+            "{\"username\": ..., \"password\": ...}). Only images from that registry use it. "
+            "Needs --aws-batch-flex-execution-role-arn with secretsmanager:GetSecretValue on "
+            "the secret. ECR images need no credentials (the instance/execution role pulls them).",
+            "env_var": False,
+            "required": False,
+            "nargs": "+",
+        },
+    )
     tags: List[str] = field(
         default_factory=list,
         metadata={
@@ -328,6 +341,25 @@ class Executor(RemoteExecutor):
         if s.conda_path:
             mounts.append((s.conda_path, s.conda_path, True))
         self.mounts = mounts
+        registry_credentials = {}
+        for item in s.registry_credentials or []:
+            reg, sep, arn = item.partition("=")
+            reg, arn = reg.strip().lower(), arn.strip()
+            if not sep or not reg or not arn.startswith("arn:"):
+                raise WorkflowError(
+                    f"Invalid --aws-batch-flex-registry-credentials entry '{item}', "
+                    "expected REGISTRY=SECRET_ARN (e.g. docker.io=arn:aws:secretsmanager:...)."
+                )
+            if is_ecr(reg):
+                raise WorkflowError(
+                    f"{reg} is ECR: it needs no credentials, the instance/execution role pulls from it."
+                )
+            registry_credentials["docker.io" if reg in ("index.docker.io", "registry-1.docker.io") else reg] = arn
+        if registry_credentials and not s.execution_role_arn:
+            raise WorkflowError(
+                "--aws-batch-flex-registry-credentials needs --aws-batch-flex-execution-role-arn: "
+                "ECS reads the registry secret with the execution role."
+            )
         self.settings = s
         tags = parse_pairs(s.tags or [], "--aws-batch-flex-tags")
         self.run_id = uuid.uuid4().hex[:12]
@@ -350,6 +382,7 @@ class Executor(RemoteExecutor):
             ephemeral_storage_gib=s.ephemeral_storage_gib,
             tags=tags,
             mounts=mounts,
+            registry_credentials=registry_credentials,
         )
         self.default_image = s.default_image or getattr(
             self.workflow.remote_execution_settings, "container_image", None

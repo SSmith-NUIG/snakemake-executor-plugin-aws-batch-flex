@@ -152,3 +152,31 @@ def test_script_python_per_rule_overrides_setting(tmp_path):
                    "--aws-batch-flex-script-python", "host")
     assert r.returncode == 0, r.stdout + r.stderr
     assert _script_python(calls) == {"a": "host", "b": "image"}
+
+
+
+SECRET = "arn:aws:secretsmanager:eu-west-1:1:secret:dockerhub"
+EXEC = "arn:aws:iam::1:role/exec"
+
+
+def test_registry_credentials_only_for_matching_registry(tmp_path):
+    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-registry-credentials", f"docker.io={SECRET}",
+                   "--aws-batch-flex-execution-role-arn", EXEC)
+    assert r.returncode == 0, r.stdout + r.stderr
+    defs = {c["image"]: c for c in calls if c["call"] == "register_job_definition"}
+    hub, quay = defs["ubuntu:24.04"], defs["quay.io/biocontainers/bwa:0.7.17"]
+    assert hub["creds"] == {"credentialsParameter": SECRET} and hub["exec_role"] == EXEC
+    assert quay["creds"] is None and quay["exec_role"] is None  # EC2, no secret: no execution role
+
+
+def test_registry_credentials_need_execution_role(tmp_path):
+    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-registry-credentials", f"docker.io={SECRET}")
+    assert r.returncode != 0 and "needs --aws-batch-flex-execution-role-arn" in r.stdout + r.stderr
+    assert not calls
+
+
+def test_registry_credentials_reject_ecr(tmp_path):
+    ecr = "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+    r, _ = run(tmp_path, SNAKEFILE, "--aws-batch-flex-registry-credentials", f"{ecr}={SECRET}",
+               "--aws-batch-flex-execution-role-arn", EXEC)
+    assert r.returncode != 0 and "is ECR" in r.stdout + r.stderr

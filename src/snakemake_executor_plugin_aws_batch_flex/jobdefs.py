@@ -13,6 +13,18 @@ from snakemake_interface_common.exceptions import WorkflowError
 DEFAULT_LOG_GROUP = "/aws/batch/job"
 
 
+def image_registry(image: str) -> str:
+    """Registry host of an image reference; Docker Hub images (no host part) give docker.io."""
+    first, _, rest = image.partition("/")
+    if rest and ("." in first or ":" in first or first == "localhost"):
+        return "docker.io" if first in ("index.docker.io", "registry-1.docker.io") else first
+    return "docker.io"
+
+
+def is_ecr(registry: str) -> bool:
+    return bool(re.match(r"^\d{12}\.dkr\.ecr(-fips)?\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$", registry))
+
+
 class JobDefinitions:
     def __init__(
         self,
@@ -28,6 +40,7 @@ class JobDefinitions:
         ephemeral_storage_gib: Optional[int],
         tags: dict,
         mounts: Optional[list] = None,
+        registry_credentials: Optional[dict] = None,
     ):
         self.batch = batch_client
         self.logger = logger
@@ -41,6 +54,8 @@ class JobDefinitions:
         self.tags = tags
         # [(host_path, container_path, read_only)] bind mounts (EC2 only)
         self.mounts = list(mounts or [])
+        # registry host -> Secrets Manager secret ARN (username/password) for private images
+        self.registry_credentials = dict(registry_credentials or {})
         self._cache: dict[tuple, str] = {}
 
     def container_properties(self, image: str, platform: Optional[str] = None) -> dict:
@@ -55,7 +70,11 @@ class JobDefinitions:
         }
         if self.job_role_arn:
             props["jobRoleArn"] = self.job_role_arn
-        if self.execution_role_arn and platform == "fargate":
+        secret = self.registry_credentials.get(image_registry(image))
+        if secret:
+            props["repositoryCredentials"] = {"credentialsParameter": secret}
+        # ECS reads the registry secret with the execution role, on EC2 too
+        if self.execution_role_arn and (platform == "fargate" or secret):
             props["executionRoleArn"] = self.execution_role_arn
         if self.mounts and platform == "ec2":  # Fargate has no host paths
             props["volumes"] = [

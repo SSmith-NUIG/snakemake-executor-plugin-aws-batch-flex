@@ -63,6 +63,23 @@ Then `snakemake --profile profile`. All settings: `snakemake --help | grep aws-b
   your own with `aws-batch-flex-tags: [project=x]` or per rule with
   `resources: batch_tags="stage=align"`. Tags propagate to the ECS tasks.
 
+## Private images
+
+ECR images need nothing extra: the instance role (EC2) or execution role (Fargate) pulls them,
+and the roles from `terraform/` already have ECR read access. For another account's ECR, that
+repository's policy has to allow those roles.
+
+For registries outside AWS (Docker Hub, GitHub, Quay...), store `{"username": ..., "password": ...}`
+in Secrets Manager and map the registry to it:
+
+```yaml
+aws-batch-flex-registry-credentials: [docker.io=arn:aws:secretsmanager:eu-west-1:123456789012:secret:dockerhub]
+aws-batch-flex-execution-role-arn: arn:aws:iam::123456789012:role/my-exec-role
+```
+
+Only images from that registry get the credentials. ECS reads the secret with the execution
+role, so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the secret.
+
 ## Conda and wrappers
 
 Run with `--sdm conda`. Jobs need `conda`: either the image has it, or bake Miniforge into
@@ -102,8 +119,6 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 - `pipe()` doesn't work. `--sdm apptainer` isn't supported.
 - Images with an ENTRYPOINT that doesn't pass the command through will break.
 - All rules in a group must use the same image.
-- Images must be pullable by the instances (ECR needs read access on the instance role;
-  private Docker Hub isn't supported).
 - Install-at-start fails on very old images (e.g. glibc 2.23).
 - If the machine running `snakemake` dies mid-run, a restart can resubmit jobs that were
   still running.

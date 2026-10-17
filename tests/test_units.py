@@ -36,3 +36,14 @@ def test_prelude_is_valid_posix_sh(mode, tmp_path):
     f = tmp_path / "p.sh"
     f.write_text(build_prelude(mode, "9.27.0", ["snakemake==9.27.0", "pkg==1"], "3.12"))
     assert subprocess.run(["sh", "-n", str(f)]).returncode == 0
+
+
+
+def test_image_registry():
+    from snakemake_executor_plugin_aws_batch_flex.jobdefs import image_registry, is_ecr
+    assert image_registry("ubuntu:24.04") == "docker.io"
+    assert image_registry("staphb/bwa:0.7.19") == "docker.io"
+    assert image_registry("quay.io/biocontainers/bwa:0.7.17") == "quay.io"
+    assert image_registry("localhost:5000/x") == "localhost:5000"
+    assert is_ecr(image_registry("123456789012.dkr.ecr.eu-west-1.amazonaws.com/tool:1"))
+    assert not is_ecr("quay.io")

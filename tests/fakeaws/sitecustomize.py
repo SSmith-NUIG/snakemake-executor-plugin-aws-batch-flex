@@ -41,7 +41,9 @@ class FakeBatch:
         _rec("register_job_definition", image=kw["containerProperties"]["image"],
              name=kw["jobDefinitionName"], platform=kw.get("platformCapabilities"),
              mounts=kw["containerProperties"].get("mountPoints"),
-             volumes=kw["containerProperties"].get("volumes"))
+             volumes=kw["containerProperties"].get("volumes"),
+             creds=kw["containerProperties"].get("repositoryCredentials"),
+             exec_role=kw["containerProperties"].get("executionRoleArn"))
         return {}
 
     def submit_job(self, **kw):
