@@ -308,8 +308,10 @@ def _normalize_image(url: str) -> str:
         return url[len("docker://") :]
     if re.match(r"^[a-z]+://", url):
         raise WorkflowError(
-            f"Unsupported container URL '{url}': AWS Batch can only run images from "
-            "a Docker registry (e.g. 'docker://ubuntu:24.04' or 'ubuntu:24.04')."
+            f"Unsupported container URL '{url}': AWS Batch only runs Docker/OCI images from a "
+            "registry such as Docker Hub, quay.io, ghcr.io or ECR (e.g. "
+            "'docker://quay.io/biocontainers/samtools:1.21--h50ea8bc_0'). Singularity/Apptainer "
+            "images (.sif, oras://, shub://) can't be used."
         )
     return url
 
