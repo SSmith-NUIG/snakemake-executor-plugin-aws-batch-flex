@@ -247,22 +247,95 @@ check, since after `terraform destroy` nothing uses it any more.
 
 ## Reference
 
-### How rules map to Batch
+### Rule options
 
-- `container:` is the image (`docker://` is optional). One job definition is registered per
-  image and platform and reused across runs.
-- `threads` -> vCPUs, `mem_mb`/`mem_mib` -> memory, `gpu` -> GPUs, `runtime` (minutes) -> timeout.
-- Memory is a hard limit and the Snakemake process in the job uses some of it, so 256 MiB is
-  added to explicit memory requests (`--aws-batch-flex-mem-overhead-mib`, 0 to turn off).
-  Rules with no memory request get 2048 MiB.
-- `resources: batch_queue="other-queue"` sends one rule to another queue. EC2 and Fargate
-  queues can be mixed in a run; the platform is read from each queue's compute environment (or
-  set per rule with `batch_platform`). Fargate jobs need `--aws-batch-flex-execution-role-arn`
-  and get no host mounts.
-- Every job is tagged with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule` and
-  `snakemake-job-id`. Add your own with `aws-batch-flex-tags: [project=x]` or per rule with
-  `resources: batch_tags="stage=align"`. Tags propagate to the ECS tasks.
-- All settings: `snakemake --help | grep aws-batch-flex`.
+Everything about a job is set on its rule. An example with most of the options:
+
+```python
+rule align:
+    input: "data/{sample}.fq"
+    output: "results/{sample}.sam"
+    container: "docker://quay.io/biocontainers/bwa:0.7.17--h7132678_9"
+    threads: 8
+    resources:
+        mem_mb=16000,
+        runtime=120,
+        batch_queue="smkflex-big-queue",
+        batch_tags="stage=align,project=rnaseq",
+    shell: "bwa mem -t {threads} ref.fa {input} > {output}"
+```
+
+| On the rule | What it does on AWS |
+|---|---|
+| `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
+| `threads: 8` | Number of vCPUs requested. |
+| `mem_mb=16000` (or `mem_mib`) | Memory requested. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. |
+| `runtime=120` | Minutes before Batch stops the job (timeout). |
+| `gpu=1` | Number of GPUs (needs a queue with GPU instances; untested). |
+| `batch_queue="other-queue"` | Send this rule to a different queue than the profile's. EC2 and Fargate queues can be mixed in one workflow; the plugin works out which is which. |
+| `batch_platform="fargate"` | Force the platform instead of detecting it from the queue (only needed if the plugin isn't allowed to look the queue up). |
+| `batch_tags="k=v,k2=v2"` | Extra tags on this rule's jobs, e.g. for cost reports. Overrides profile tags with the same key. |
+| `batch_script_python="host"` | For Python `script:` rules: use Snakemake's own Python instead of the image's. |
+
+Resources can also be set from the profile, without editing the Snakefile, using Snakemake's
+`set-resources`:
+
+```yaml
+set-resources:
+  align:
+    batch_queue: smkflex-big-queue
+    mem_mb: 32000
+```
+
+Snakemake features that work as usual (each has a small example in `examples/conformance/`):
+
+- `shell:` commands, and `script:` files in Python, R or bash. Python scripts run with the
+  image's own Python (3.10 or newer) and can use its packages; otherwise with Snakemake's.
+- `run:` blocks (these always use Snakemake's own Python, not the image's).
+- `conda:` environments and `wrapper:`s, with `--sdm conda` (see below).
+- `retries: 2`, and resources that grow with each attempt, e.g.
+  `mem_mb=lambda wildcards, attempt: 4000 * attempt`.
+- `group:` (grouped rules run as one Batch job, so they must share an image), `checkpoint`,
+  `temp()`, `directory()`, `shadow:`, `log:` and `benchmark:`.
+
+### Profile settings
+
+Settings go in `profile/config.yaml` (as `aws-batch-flex-queue: my-queue`) or on the command
+line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terraform's
+`snakemake_profile` output fills in the usual ones.
+
+| Setting (`aws-batch-flex-...`) | Default | What it's for |
+|---|---|---|
+| `queue` | (required) | The Batch queue jobs go to, unless a rule sets `batch_queue`. |
+| `region` | your AWS config | AWS region. |
+| `job-role-arn` | instance role | Role the jobs run as; needs read/write on the S3 bucket. |
+| `execution-role-arn` | none | Needed for Fargate queues and for private registries. |
+| `platform` | detected | `ec2` or `fargate` for the main queue. Normally read from the queue. |
+| `default-image` | none | Image for rules without `container:`. |
+| `bootstrap` | `auto` | How jobs get Snakemake: `host` (from the AMI, recommended on EC2), `auto`/`always` (install when the job starts), `never` (the image has it). |
+| `host-env-path` | `/opt/snakemake-env` | Where the AMI has Snakemake (`host` mode). |
+| `host-env-wait-seconds` | 120 | How long a job waits for that env if the instance is still installing it. 0 on a baked AMI. |
+| `install-prereqs` | off | Install-at-start only: install `curl` first in images that have no way to download. |
+| `script-python` | `image` | `image`: Python `script:` rules use the image's Python if it's 3.10+. `host`: always Snakemake's. |
+| `mem-overhead-mib` | 256 | Memory added to each rule's request for the Snakemake process in the job. |
+| `conda-path` | none | Where the AMI has Miniforge, for `conda:` rules in images without conda (EC2). |
+| `volumes` | none | Extra folders from the instance to mount into jobs, `HOST:CONTAINER[:ro]` (EC2). |
+| `extra-packages` | none | Extra pip packages for install-at-start (e.g. other Snakemake plugins). |
+| `python-version` | yours | Python version for install-at-start. |
+| `spot-retries` | 2 | How often Batch retries a job whose Spot instance was taken away. |
+| `registry-credentials` | none | `REGISTRY=SECRET_ARN` for private registries outside AWS (see below). |
+| `orphan-jobs` | `cancel` | Jobs left running by an interrupted run: `cancel`, `warn` or `ignore` (see below). |
+| `tags` | none | `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`. |
+| `no-auto-tags` | off | Turn off the automatic tags (and the leftover-job check, which uses them). |
+| `runnable-warn-minutes` | 15 | Warn when a job has waited this long for a machine. |
+| `skip-preflight` | off | Skip the startup checks of the queue and roles. |
+| `log-group` | `/aws/batch/job` | CloudWatch log group for job logs. |
+| `job-definition-prefix` | `snakemake` | Name prefix for the job definitions the plugin registers. |
+| `assign-public-ip` | `ENABLED` | Fargate: give jobs a public IP (needed for internet without a NAT gateway). |
+| `ephemeral-storage-gib` | Fargate's 20 | Fargate: scratch disk size, 21-200 GiB. |
+
+Jobs are tagged automatically with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule`
+and `snakemake-job-id`, and tags propagate to the ECS tasks.
 
 ### Interrupted runs
 

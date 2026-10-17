@@ -210,3 +210,12 @@ def test_leftover_jobs_only_warned_with_warn_or_nolock(tmp_path, monkeypatch):
         assert r.returncode == 0, r.stdout + r.stderr
         assert not any(c["call"] == "terminate_job" for c in calls)
         assert "from an earlier run of this workflow are still active" in r.stdout + r.stderr
+
+
+def test_set_resources_from_the_command_line(tmp_path):
+    r, calls = run(tmp_path, SNAKEFILE, "--set-resources", "make_b:batch_queue=other-queue",
+                   "make_b:mem_mb=1000")
+    assert r.returncode == 0, r.stdout + r.stderr
+    b = next(c for c in calls if c["call"] == "submit_job" and "make_b" in c["jobName"])
+    assert b["queue"] == "other-queue"
+    assert {"type": "MEMORY", "value": "1210"} in b["res"]  # 954 + 256

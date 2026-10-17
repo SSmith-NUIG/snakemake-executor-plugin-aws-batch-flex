@@ -280,8 +280,9 @@ class ExecutorSettings(ExecutorSettingsBase):
     no_auto_tags: bool = field(
         default=False,
         metadata={
-            "help": "Disable the automatic job tags snakemake-run-id, snakemake-rule "
-            "and snakemake-job-id (on by default, for per-rule cost reporting).",
+            "help": "Disable the automatic job tags snakemake-run-id, snakemake-workflow, "
+            "snakemake-rule and snakemake-job-id (on by default, for per-rule cost reporting). "
+            "Also turns off the check for jobs left over from an interrupted run.",
             "env_var": False,
             "required": False,
         },
