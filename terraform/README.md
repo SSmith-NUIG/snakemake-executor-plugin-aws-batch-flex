@@ -31,7 +31,8 @@ With a baked AMI you can set `aws-batch-flex-host-env-wait-seconds: 0` in the pr
 `terraform destroy` removes what's in `terraform output created`. It fails on the bucket while
 the bucket still has data in it so empty the bucket first. The AMI is made by the bake script not Terraform. remove old
 AMIs with `scripts/cleanup-ami.sh` This should only delete AMIs tagged `ManagedBy=snakemake-batch-flex`
-and never the one that is being used in `terraform.tfvars`.
+and never one that a compute environment, launch template or instance is still using, or the one
+in `terraform.tfvars` (after `terraform destroy`, pass `--no-tfvars` to skip that last check).
 
 ## Notes
 
