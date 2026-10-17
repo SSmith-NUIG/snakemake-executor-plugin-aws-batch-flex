@@ -39,9 +39,9 @@ variable "extra_security_group_ids" {
 }
 
 variable "instance_role_policy_arns" {
-  description = "Managed policies for the NEW instance role (besides the ECS one). CloudWatch is there because the copied user-data installs the CloudWatch agent."
+  description = "Extra managed policies for the instance role (it always gets the ECS one, which includes ECR pulls)."
   type        = list(string)
-  default     = ["arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"]
+  default     = []
 }
 
 variable "s3_bucket" {
@@ -70,7 +70,7 @@ variable "batch_service_role_arn" {
 # capacity / launch template
 variable "ecs_image_type" {
   type    = string
-  default = "ECS_AL2"
+  default = "ECS_AL2023"
 }
 
 variable "use_spot" {

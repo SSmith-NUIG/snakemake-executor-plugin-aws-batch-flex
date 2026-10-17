@@ -1,17 +1,18 @@
-region = "eu-west-1"
-name   = "smkflex"                     # creates smkflex-queue etc. (must be unique)
+# Copy to terraform.tfvars and fill in the two REPLACE values.
+region = "eu-west-1"                   # the AWS region you want to run in
+name   = "smkflex"                     # prefix for everything created; <name>-queue must not exist yet
 
-# existing subnets are only read
-subnet_ids = ["subnet-aaaa", "subnet-bbbb"]
+# Subnets with internet access (the default VPC's subnets work); find them with
+#   aws ec2 describe-subnets --filters Name=default-for-az,Values=true --query 'Subnets[].SubnetId'
+subnet_ids = ["subnet-REPLACE", "subnet-REPLACE"]
 
-# AMI made by scripts/bake-ami.sh (ECS-optimized AMI + Snakemake env)
-ami_id = "ami-REPLACE-WITH-BAKED-AMI"
+# The AMI printed at the end of scripts/bake-ami.sh
+ami_id = "ami-REPLACE"
 
-# instance boot script (starts the ECS agent); see variables.tf
-userdata_file = "userdata.snakemake.txt"
+root_volume_gib = 100                  # disk per instance (container images + job files)
 
-root_volume_gib        = 100
-root_volume_iops       = 5000
-root_volume_throughput = 125
-
-# s3_bucket = null  -> a new bucket is created. Set a name only to use an existing bucket.
+# Optional:
+# enable_fargate = true                # also create a Fargate queue
+# use_spot       = true                # cheaper Spot instances (can be interrupted; untested)
+# max_vcpus      = 256                 # upper limit on instances running at once
+# s3_bucket      = "my-bucket"         # use an existing bucket instead of creating one
