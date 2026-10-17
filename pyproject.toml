@@ -21,7 +21,7 @@ dependencies = [
 snakemake-batch-flex-host-env = "snakemake_executor_plugin_aws_batch_flex.hostenv:main"
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "snakemake", "snakemake-storage-plugin-fs"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snakemake_executor_plugin_aws_batch_flex"]

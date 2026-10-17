@@ -1,5 +1,5 @@
 region = "eu-west-1"
-name   = "smkflex"                     # creates smkflex-queue etc. (must not clash with existing names)
+name   = "smkflex"                     # creates smkflex-queue etc. (must be unique)
 
 # existing subnets are only read
 subnet_ids = ["subnet-aaaa", "subnet-bbbb"]

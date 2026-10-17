@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"   # weekly, to catch new Snakemake releases
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        snakemake: ["9.27.0", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install R (for the R script test)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends r-base-core
+      - name: Install
+        run: |
+          pip install -e ".[test]"
+          if [ "${{ matrix.snakemake }}" != latest ]; then pip install "snakemake==${{ matrix.snakemake }}"; else pip install -U snakemake; fi
+          snakemake --version
+      - name: Test
+        run: python -m pytest -q -ra
