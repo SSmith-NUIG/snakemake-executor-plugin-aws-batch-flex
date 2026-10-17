@@ -221,7 +221,8 @@ data "aws_iam_policy_document" "launcher" {
   statement {
     actions = [
       "batch:DescribeJobs", "batch:TerminateJob", "batch:RegisterJobDefinition",
-      "batch:DescribeJobDefinitions", "batch:DescribeJobQueues", "batch:TagResource",
+      "batch:DescribeJobDefinitions", "batch:DescribeJobQueues", "batch:DescribeComputeEnvironments",
+      "batch:ListJobs", "batch:TagResource",
     ]
     resources = ["*"]
   }

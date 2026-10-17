@@ -16,6 +16,26 @@ def _rec(kind, **kw):
 class FakeBatch:
     def __init__(self):
         self.defs, self.jobs = {}, {}
+        # Jobs "left over" from an earlier run: FAKEAWS_ORPHANS = JSON list of
+        # {"jobId", "queue", "jobDefinition", "tags"}; they stay RUNNING until terminated.
+        for o in json.loads(os.environ.get("FAKEAWS_ORPHANS") or "[]"):
+            self.jobs[o["jobId"]] = dict(p=None, name="old-job", t=time.time(), status="RUNNING",
+                                         kw={"jobQueue": o["queue"], "jobDefinition": o["jobDefinition"],
+                                             "tags": o["tags"]})
+
+    def list_jobs(self, jobQueue, jobStatus, maxResults=100, nextToken=None):
+        out = []
+        for jid, j in self.jobs.items():
+            if j["kw"]["jobQueue"] == jobQueue and self._status(j) == jobStatus:
+                out.append({"jobId": jid, "jobName": j["name"], "status": jobStatus,
+                            "jobDefinition": f"arn:aws:batch:eu-west-1:1:job-definition/{j['kw']['jobDefinition']}:1"})
+        return {"jobSummaryList": out}
+
+    def _status(self, j):
+        if j["p"] is None:
+            return j["status"]
+        rc = j["p"].poll()
+        return "RUNNING" if rc is None else ("SUCCEEDED" if rc == 0 else "FAILED")
 
     # Startup checks: every queue exists except "no-such-queue"; a queue whose name contains
     # "fargate" sits on a FARGATE compute environment, all others on EC2.
@@ -67,8 +87,12 @@ class FakeBatch:
         out = []
         for jid in jobs:
             j = self.jobs[jid]
+            d = {"jobId": jid, "jobName": j["name"], "createdAt": int(j["t"] * 1000),
+                 "tags": j["kw"].get("tags") or {}}
+            if j["p"] is None:  # a pre-loaded leftover job
+                out.append(dict(d, status=j["status"]))
+                continue
             rc = j["p"].poll()
-            d = {"jobId": jid, "jobName": j["name"], "createdAt": int(j["t"] * 1000)}
             if rc is None:
                 d["status"] = "RUNNING"
             else:
@@ -81,7 +105,12 @@ class FakeBatch:
         return {"jobs": out}
 
     def terminate_job(self, jobId, reason):
-        self.jobs[jobId]["p"].kill()
+        _rec("terminate_job", jobId=jobId, reason=reason)
+        j = self.jobs[jobId]
+        if j["p"] is None:
+            j["status"] = "FAILED"
+        else:
+            j["p"].kill()
 
     def _tail(self, jid):
         return (self.jobs[jid].get("out") or "").splitlines()[-40:]

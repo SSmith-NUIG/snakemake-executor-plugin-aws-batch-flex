@@ -180,3 +180,33 @@ def test_registry_credentials_reject_ecr(tmp_path):
     r, _ = run(tmp_path, SNAKEFILE, "--aws-batch-flex-registry-credentials", f"{ecr}={SECRET}",
                "--aws-batch-flex-execution-role-arn", EXEC)
     assert r.returncode != 0 and "is ECR" in r.stdout + r.stderr
+
+
+def _orphan(jid, tmp_path, wf=None, jobdef="snakemake-0123abcd", queue="default-queue"):
+    from snakemake_executor_plugin_aws_batch_flex.orphans import workflow_id
+    wf = wf or workflow_id(str(tmp_path), str(tmp_path / "Snakefile"), str(tmp_path / "store"))
+    return {"jobId": jid, "queue": queue, "jobDefinition": jobdef,
+            "tags": {"snakemake-workflow": wf, "snakemake-run-id": "oldrun"}}
+
+
+def test_leftover_jobs_are_cancelled(tmp_path, monkeypatch):
+    orphans = [_orphan("old-1", tmp_path),
+               _orphan("other-wf", tmp_path, wf="someoneelse"),
+               _orphan("not-ours", tmp_path, jobdef="nextflow-thing")]
+    monkeypatch.setenv("FAKEAWS_ORPHANS", json.dumps(orphans))
+    r, calls = run(tmp_path, MIXED.replace(', batch_queue="my-fargate-queue"', ""))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert [c["jobId"] for c in calls if c["call"] == "terminate_job"] == ["old-1"]
+    first_submit = next(i for i, c in enumerate(calls) if c["call"] == "submit_job")
+    assert next(i for i, c in enumerate(calls) if c["call"] == "terminate_job") < first_submit
+    wf = orphans[0]["tags"]["snakemake-workflow"]
+    assert all(c["tags"]["snakemake-workflow"] == wf for c in calls if c["call"] == "submit_job")
+
+
+def test_leftover_jobs_only_warned_with_warn_or_nolock(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_ORPHANS", json.dumps([_orphan("old-1", tmp_path)]))
+    for extra in (["--aws-batch-flex-orphan-jobs", "warn"], ["--nolock"]):
+        r, calls = run(tmp_path, MIXED.replace(', batch_queue="my-fargate-queue"', ""), "--forceall", *extra)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert not any(c["call"] == "terminate_job" for c in calls)
+        assert "from an earlier run of this workflow are still active" in r.stdout + r.stderr

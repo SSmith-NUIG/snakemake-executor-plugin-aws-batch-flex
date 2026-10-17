@@ -76,6 +76,6 @@ def check_role(iam, role_arn: str, label: str):
 
 SUBMIT_HINT = (
     "The identity running snakemake needs batch:SubmitJob (on the queue and the snakemake-* job definitions), "
-    "batch:RegisterJobDefinition, batch:DescribeJobDefinitions, batch:DescribeJobs, batch:TerminateJob, "
+    "batch:RegisterJobDefinition, batch:DescribeJobDefinitions, batch:DescribeJobs, batch:ListJobs, batch:TerminateJob, "
     "batch:TagResource (jobs are tagged), logs:GetLogEvents, and iam:PassRole on the job role."
 )

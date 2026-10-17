@@ -3,6 +3,7 @@
 
 import asyncio
 import importlib.metadata as md
+import os
 import re
 import sys
 import time
@@ -26,6 +27,7 @@ from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, 
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, is_ecr
 from .naming import batch_job_name
+from .orphans import find_orphans, workflow_id
 from .preflight import SUBMIT_HINT, check_queue, check_role
 from .sizing import DEFAULT_MEM_OVERHEAD_MIB, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
@@ -253,6 +255,17 @@ class ExecutorSettings(ExecutorSettingsBase):
             "nargs": "+",
         },
     )
+    orphan_jobs: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "What to do with jobs still running from an earlier, interrupted run of "
+            "the same workflow (same directory, Snakefile and storage prefix), which "
+            "Snakemake would otherwise run a second time: 'cancel' (default), 'warn' "
+            "(default with --nolock) or 'ignore'. Needs batch:ListJobs.",
+            "env_var": False,
+            "required": False,
+        },
+    )
     tags: List[str] = field(
         default_factory=list,
         metadata={
@@ -363,6 +376,16 @@ class Executor(RemoteExecutor):
                 "ECS reads the registry secret with the execution role."
             )
         self.settings = s
+        lock = getattr(getattr(self.workflow, "execution_settings", None), "lock", True)
+        self.orphan_mode = s.orphan_jobs or ("cancel" if lock else "warn")
+        if self.orphan_mode not in ("cancel", "warn", "ignore"):
+            raise WorkflowError("--aws-batch-flex-orphan-jobs must be 'cancel', 'warn' or 'ignore'.")
+        self.workflow_id = workflow_id(
+            os.getcwd(),
+            getattr(self.workflow, "main_snakefile", "") or "",
+            getattr(self.workflow.storage_settings, "default_storage_prefix", "") or "",
+        )
+        self._orphans_checked: set = set()
         tags = parse_pairs(s.tags or [], "--aws-batch-flex-tags")
         self.run_id = uuid.uuid4().hex[:12]
 
@@ -409,6 +432,7 @@ class Executor(RemoteExecutor):
                 raise WorkflowError("Startup check failed:\n  - " + "\n  - ".join(errors) +
                                     "\n(skip with --aws-batch-flex-skip-preflight)")
         main_platform = self._queue_platform(s.queue)
+        self._handle_orphans(s.queue)
         self._check_fargate_ok(main_platform, s.queue)
         self.logger.info(
             f"AWS Batch executor: queue={s.queue}, platform={main_platform}, "
@@ -431,6 +455,38 @@ class Executor(RemoteExecutor):
                                         "\n(skip with --aws-batch-flex-skip-preflight)")
             self._platforms[queue] = detected or self.settings.platform or "ec2"
         return self._platforms[queue]
+
+    def _handle_orphans(self, queue: str):
+        if queue in self._orphans_checked or self.orphan_mode == "ignore" or self.settings.no_auto_tags:
+            return
+        self._orphans_checked.add(queue)
+        try:
+            found = find_orphans(
+                self.batch, queue, self.jobdefs.prefix, self.workflow_id, self.run_id
+            )
+        except (ClientError, BotoCoreError) as e:
+            self.logger.warning(f"Could not look for leftover jobs in queue {queue}: {e}")
+            return
+        if not found:
+            return
+        names = ", ".join(f"{name} ({status})" for _, name, status in found[:10])
+        more = f" and {len(found) - 10} more" if len(found) > 10 else ""
+        if self.orphan_mode == "warn":
+            self.logger.warning(
+                f"{len(found)} job(s) from an earlier run of this workflow are still active in "
+                f"queue {queue}: {names}{more}. They may run twice; cancel them or use "
+                "--aws-batch-flex-orphan-jobs cancel."
+            )
+            return
+        self.logger.info(
+            f"Cancelling {len(found)} job(s) left over from an earlier run of this workflow "
+            f"in queue {queue}: {names}{more}"
+        )
+        for jid, _, _ in found:
+            try:
+                self.batch.terminate_job(jobId=jid, reason="Left over from an earlier Snakemake run")
+            except (ClientError, BotoCoreError) as e:
+                self.logger.warning(f"Could not cancel leftover job {jid}: {e}")
 
     def _platform_for(self, job: JobExecutorInterface, queue: str) -> str:
         forced = job.resources.get("batch_platform")
@@ -525,6 +581,7 @@ class Executor(RemoteExecutor):
         image = self._image_for(job)
         queue = self._queue_for(job)
         platform = self._platform_for(job, queue)
+        self._handle_orphans(queue)
         self._check_fargate_ok(platform, queue)
         overhead = self.settings.mem_overhead_mib
         if overhead is None:
@@ -572,6 +629,7 @@ class Executor(RemoteExecutor):
             kwargs["timeout"] = {"attemptDurationSeconds": req.timeout_seconds}
         tags = job_tags(
             run_id=self.run_id,
+            workflow_id=self.workflow_id,
             # Snakemake returns plain names; the interface type says rule objects. Accept both.
             rule_names=[getattr(r, "name", r) for r in job.rules],
             jobid=job.jobid,

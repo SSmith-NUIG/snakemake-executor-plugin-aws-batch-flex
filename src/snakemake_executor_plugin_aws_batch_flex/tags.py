@@ -49,6 +49,7 @@ def parse_resource_string(value: Optional[str]) -> dict:
 def job_tags(
     *,
     run_id: str,
+    workflow_id: str = "",
     rule_names: Iterable[str],
     jobid: int,
     global_tags: Mapping[str, str],
@@ -58,6 +59,8 @@ def job_tags(
     tags: dict = {}
     if auto:
         tags["snakemake-run-id"] = _clean(run_id, 256)
+        if workflow_id:
+            tags["snakemake-workflow"] = _clean(workflow_id, 256)
         tags["snakemake-rule"] = _clean("+".join(sorted(set(rule_names))), 256)
         tags["snakemake-job-id"] = _clean(str(jobid), 256)
     tags.update(global_tags)

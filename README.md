@@ -59,9 +59,19 @@ Then `snakemake --profile profile`. All settings: `snakemake --help | grep aws-b
   mixed in a run; the platform is read from each queue's compute environment (or set per rule
   with `batch_platform`). Fargate jobs need `--aws-batch-flex-execution-role-arn` and get no
   host mounts.
-- Every job is tagged with `snakemake-run-id`, `snakemake-rule` and `snakemake-job-id`. Add
+- Every job is tagged with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule` and
+  `snakemake-job-id`. Add
   your own with `aws-batch-flex-tags: [project=x]` or per rule with
   `resources: batch_tags="stage=align"`. Tags propagate to the ECS tasks.
+
+## Interrupted runs
+
+If `snakemake` is killed or loses its connection, its Batch jobs keep running, and a restart
+would submit them again. Jobs are tagged with `snakemake-workflow` (a hash of the working
+directory, Snakefile and storage prefix), so on restart the plugin finds jobs from the earlier
+run that are still active and cancels them before submitting anything. Use
+`--aws-batch-flex-orphan-jobs warn` to only list them (the default with `--nolock`), or
+`ignore` to skip the check.
 
 ## Private images
 
@@ -120,13 +130,11 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 - Images with an ENTRYPOINT that doesn't pass the command through will break.
 - All rules in a group must use the same image.
 - Install-at-start fails on very old images (e.g. glibc 2.23).
-- If the machine running `snakemake` dies mid-run, a restart can resubmit jobs that were
-  still running.
 
 ## IAM
 
 The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `TerminateJob`,
-`RegisterJobDefinition`, `DescribeJobDefinitions`, `DescribeJobQueues`,
+`RegisterJobDefinition`, `DescribeJobDefinitions`, `DescribeJobQueues`, `ListJobs`,
 `DescribeComputeEnvironments` and `TagResource`, plus `logs:GetLogEvents`, `iam:PassRole` on
 the job role(s), and read/write on the S3 prefix. The job role needs read/write on the prefix.
 
