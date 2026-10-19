@@ -375,8 +375,10 @@ The machine you run `snakemake` on needs `conda` on its PATH as well.
 Wrappers work the same way. The plugin passes jobs an HTTP `--wrapper-prefix`, so images don't
 need git.
 
-`scripts/update-ami.sh --conda-env new.yaml` bakes a new AMI on top of the current one; a
-`terraform apply` then replaces the compute environment but keeps the queue.
+`scripts/update-ami.sh --conda-env new.yaml` bakes a new AMI on top of the current one and
+points `terraform.tfvars` at it; `terraform apply` then updates the compute environment's image
+in place (new instances start from the new AMI) and leaves the queue alone. Apply it while no
+jobs are running.
 
 ### Without the machine image
 
@@ -395,10 +397,10 @@ different image per rule, a 6-image variant-calling pipeline, EC2 and Fargate (s
 mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`,
 `directory()`, resources and tags, OOM and timeout reporting, cancelling with Ctrl-C, startup
 checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
-from an interrupted run, `/dev/shm` size per rule.
+from an interrupted run, `/dev/shm` size per rule, updating the AMI with `update-ami.sh`.
 
 Only tested against a fake Batch: private registry credentials, ECR pulls,
-`--aws-batch-flex-volumes`, `update-ami.sh`, a single Ctrl-C.
+`--aws-batch-flex-volumes`, a single Ctrl-C.
 Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 
 ### Limits
