@@ -47,6 +47,8 @@ def test_happy_path_order_and_read_only_use_of_base(tmp_path):
     assert not [c for c in calls if BASE in c and c.split()[1] != "run-instances" and "BaseAmi" not in c]
     # image is taken from the builder we launched, then everything temporary is removed
     assert any(c.startswith("ec2 create-image --instance-id i-builder") for c in calls)
+    import importlib.metadata as md
+    assert any(f"Key=SnakemakeVersion,Value={md.version('snakemake')}" in c for c in calls if "create-image" in c)
     assert any("terminate-instances --instance-ids i-builder" in c for c in calls)
     assert any("delete-security-group --group-id sg-new" in c for c in calls)
     assert subcmds.index("create-image") < subcmds.index("terminate-instances")

@@ -425,8 +425,9 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `TerminateJob`,
 `RegisterJobDefinition`, `DescribeJobDefinitions`, `DescribeJobQueues`, `ListJobs`,
 `DescribeComputeEnvironments` and `TagResource`, plus `logs:GetLogEvents`, `iam:PassRole` on
-the job role(s), and read/write on the S3 prefix. `terraform output launcher_policy_json`
-prints a policy with exactly this. The job role needs read/write on the prefix.
+the job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` and
+`ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
+far from yours. `terraform output launcher_policy_json` prints a policy with all of this. The job role needs read/write on the prefix.
 
 ## License
 

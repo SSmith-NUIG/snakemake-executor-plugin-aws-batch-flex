@@ -259,3 +259,14 @@ def test_failure_explains_missing_storage_plugin(tmp_path):
     r, _ = run(tmp_path, smk)
     assert r.returncode != 0
     assert "hint: this machine has snakemake-storage-plugin-gcs installed" in r.stdout + r.stderr
+
+
+def test_startup_compares_ami_snakemake_version(tmp_path, monkeypatch):
+    host = ["--aws-batch-flex-bootstrap", "host", "--aws-batch-flex-host-env-wait-seconds", "0"]
+    monkeypatch.setenv("FAKEAWS_AMI_VERSION", "9.0.1")
+    r, _ = run(tmp_path, FAILING, *host)
+    assert "Snakemake version gap: the AMI has Snakemake 9.0.1" in r.stdout + r.stderr
+    import importlib.metadata as md
+    monkeypatch.setenv("FAKEAWS_AMI_VERSION", md.version("snakemake"))
+    r, _ = run(tmp_path, FAILING, *host)
+    assert "the AMI has Snakemake" not in r.stdout + r.stderr

@@ -49,7 +49,8 @@ class FakeBatch:
     def describe_compute_environments(self, computeEnvironments):
         return {"computeEnvironments": [
             {"computeEnvironmentName": ce, "status": "VALID",
-             "computeResources": {"type": "FARGATE" if "fargate" in ce else "EC2"}}
+             "computeResources": {"type": "FARGATE" if "fargate" in ce else "EC2",
+                                  "ec2Configuration": [{"imageType": "ECS_AL2023", "imageIdOverride": "ami-fake"}]}}
             for ce in computeEnvironments]}
 
     def describe_job_definitions(self, jobDefinitionName, status):
@@ -124,10 +125,22 @@ class FakeLogs:
         return {"events": [{"message": l} for l in self.b._tail(logStreamName)]}
 
 
+class FakeEC2:
+    """The AMI behind every fake queue is ami-fake, tagged with FAKEAWS_AMI_VERSION if set."""
+    def describe_images(self, ImageIds):
+        v = os.environ.get("FAKEAWS_AMI_VERSION")
+        tags = [{"Key": "SnakemakeVersion", "Value": v}] if v else []
+        return {"Images": [{"ImageId": i, "Tags": tags} for i in ImageIds]}
+
+    def describe_launch_template_versions(self, **kw):
+        return {"LaunchTemplateVersions": []}
+
+
 _batch = FakeBatch()
 _real = boto3.client
 def client(name, *a, **k):
     if name == "batch": return _batch
     if name == "logs": return FakeLogs(_batch)
+    if name == "ec2": return FakeEC2()
     return _real(name, *a, **k)
 boto3.client = client

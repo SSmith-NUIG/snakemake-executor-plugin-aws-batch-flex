@@ -28,7 +28,7 @@ from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, is_ecr
 from .naming import batch_job_name
 from .orphans import find_orphans, workflow_id
-from .preflight import SUBMIT_HINT, check_queue, check_role
+from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, version_note
 from .sizing import DEFAULT_MEM_OVERHEAD_MIB, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
 
@@ -458,6 +458,13 @@ class Executor(RemoteExecutor):
                                     "\n(skip with --aws-batch-flex-skip-preflight)")
         main_platform = self._queue_platform(s.queue)
         self._handle_orphans(s.queue)
+        if s.bootstrap == "host" and main_platform == "ec2" and not s.skip_preflight:
+            ami = ami_snakemake_version(self.batch, boto3.client("ec2", config=cfg), s.queue)
+            level, note = version_note(ami, md.version("snakemake"))
+            if level == "warning":
+                self.logger.warning(note)
+            elif level == "info":
+                self.logger.info(note)
         self._check_fargate_ok(main_platform, s.queue)
         self.logger.info(
             f"AWS Batch executor: queue={s.queue}, platform={main_platform}, "

@@ -55,3 +55,40 @@ def test_known_problem_hints():
     assert len(two) == 2 and "snakemake-storage-plugin-gcs" in two[0] and "plugin-http" in two[1]
     assert "versions are probably too far apart" in hints(["error: unrecognized arguments: --new-flag"])[0]
     assert hints(["all fine"]) == []
+
+
+def test_version_note():
+    from snakemake_executor_plugin_aws_batch_flex.preflight import version_note
+    assert version_note(None, "9.27.0") == (None, None)
+    assert version_note("9.27.0", "9.27.0") == (None, None)
+    assert version_note("9.20.0", "9.27.0")[0] == "info"
+    assert version_note("9.0.1", "9.27.0")[0] == "warning"
+    assert version_note("10.0.0", "9.27.0")[0] == "warning"
+
+
+class _Stub:
+    def __init__(self, **calls): self.calls = calls
+    def __getattr__(self, name):
+        r = self.calls[name]
+        if isinstance(r, Exception):
+            def fail(**kw): raise r
+            return fail
+        return lambda **kw: r
+
+
+def test_ami_snakemake_version_paths():
+    from botocore.exceptions import ClientError
+    from snakemake_executor_plugin_aws_batch_flex.preflight import ami_snakemake_version
+    q = {"jobQueues": [{"computeEnvironmentOrder": [{"computeEnvironment": "ce"}]}]}
+    tagged = {"Images": [{"Tags": [{"Key": "SnakemakeVersion", "Value": "9.27.0"}]}]}
+    override = _Stub(describe_job_queues=q, describe_compute_environments={"computeEnvironments": [
+        {"computeResources": {"ec2Configuration": [{"imageIdOverride": "ami-1"}]}}]})
+    assert ami_snakemake_version(override, _Stub(describe_images=tagged), "q") == "9.27.0"
+    via_lt = _Stub(describe_job_queues=q, describe_compute_environments={"computeEnvironments": [
+        {"computeResources": {"launchTemplate": {"launchTemplateId": "lt-1", "version": "$Latest"}}}]})
+    ec2 = _Stub(describe_images=tagged, describe_launch_template_versions={
+        "LaunchTemplateVersions": [{"LaunchTemplateData": {"ImageId": "ami-2"}}]})
+    assert ami_snakemake_version(via_lt, ec2, "q") == "9.27.0"
+    assert ami_snakemake_version(override, _Stub(describe_images={"Images": [{"Tags": []}]}), "q") is None
+    denied = ClientError({"Error": {"Code": "UnauthorizedOperation"}}, "DescribeImages")
+    assert ami_snakemake_version(override, _Stub(describe_images=denied), "q") is None

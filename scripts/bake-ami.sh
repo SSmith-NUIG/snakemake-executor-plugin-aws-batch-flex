@@ -48,6 +48,9 @@ command -v snakemake-batch-flex-host-env >/dev/null || { echo "snakemake-batch-f
 PLUGIN_ARGS=()
 for p in "${PLUGINS[@]}"; do PLUGIN_ARGS+=(--storage-plugin "$p"); done
 INSTALLER=$(snakemake-batch-flex-host-env script --path "$ENV_PATH" "${PLUGIN_ARGS[@]}")
+# the Snakemake version going into the AMI; tagged on the image so the plugin can compare it
+SMK_VERSION=$(printf '%s\n' "$INSTALLER" | grep -o 'snakemake==[0-9][0-9.]*' | head -1 | cut -d= -f3)
+SMK_VERSION=${SMK_VERSION:-unknown}
 
 CONDA_SCRIPT=""
 if [ "$CONDA" = 1 ]; then
@@ -159,7 +162,7 @@ echo "builder stopped itself: the installer finished successfully"
 
 IMAGE=$($AWS ec2 create-image --instance-id "$INSTANCE" --name "$NAME" \
   --description "Snakemake host env on $ENV_PATH, copied from $BASE" \
-  --tag-specifications "ResourceType=image,Tags=[$TAGS,{Key=BaseAmi,Value=$BASE}]" \
+  --tag-specifications "ResourceType=image,Tags=[$TAGS,{Key=BaseAmi,Value=$BASE},{Key=SnakemakeVersion,Value=$SMK_VERSION}]" \
                        "ResourceType=snapshot,Tags=[$TAGS]" \
   --query ImageId --output text)
 echo "creating AMI $IMAGE ..."

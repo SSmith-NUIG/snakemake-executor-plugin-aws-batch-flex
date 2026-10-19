@@ -79,3 +79,54 @@ SUBMIT_HINT = (
     "batch:RegisterJobDefinition, batch:DescribeJobDefinitions, batch:DescribeJobs, batch:ListJobs, batch:TerminateJob, "
     "batch:TagResource (jobs are tagged), logs:GetLogEvents, and iam:PassRole on the job role."
 )
+
+
+def ami_snakemake_version(batch, ec2, queue: str) -> Optional[str]:
+    """The SnakemakeVersion tag (set by bake-ami.sh) of the AMI the queue's instances start from.
+    None when it can't be found out: no tag (older AMIs), no permission, or several AMIs."""
+    try:
+        queues = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
+        ces = [o["computeEnvironment"] for o in (queues[0].get("computeEnvironmentOrder", []) if queues else [])]
+        if not ces:
+            return None
+        images = set()
+        for ce in batch.describe_compute_environments(computeEnvironments=ces)["computeEnvironments"]:
+            cr = ce.get("computeResources") or {}
+            # Batch uses an image override first, then imageId, then the launch template's image
+            found = {c.get("imageIdOverride") for c in cr.get("ec2Configuration") or []} - {None}
+            if not found and cr.get("imageId"):
+                found = {cr["imageId"]}
+            lt = cr.get("launchTemplate") or {}
+            if not found and (lt.get("launchTemplateId") or lt.get("launchTemplateName")):
+                which = ({"LaunchTemplateId": lt["launchTemplateId"]} if lt.get("launchTemplateId")
+                         else {"LaunchTemplateName": lt["launchTemplateName"]})
+                for v in ec2.describe_launch_template_versions(
+                        Versions=[lt.get("version") or "$Default"], **which)["LaunchTemplateVersions"]:
+                    found |= {v.get("LaunchTemplateData", {}).get("ImageId")} - {None}
+            images |= found
+        if not images:
+            return None
+        versions = {t["Value"] for img in ec2.describe_images(ImageIds=sorted(images))["Images"]
+                    for t in img.get("Tags", []) if t["Key"] == "SnakemakeVersion"}
+        return versions.pop() if len(versions) == 1 else None
+    except (ClientError, BotoCoreError, KeyError, IndexError):
+        return None
+
+
+def _version_tuple(v: str):
+    try:
+        return tuple(int(x) for x in v.split(".")[:3])
+    except ValueError:
+        return None
+
+
+def version_note(ami: Optional[str], local: str):
+    """(level, message) comparing the AMI's Snakemake with this machine's, or (None, None)."""
+    if not ami or ami == "unknown" or ami == local:
+        return None, None
+    a, l = _version_tuple(ami), _version_tuple(local)
+    msg = f"the AMI has Snakemake {ami}, this machine has {local}."
+    if a and l and a[0] == l[0] and min(a, l) >= (9, 5):
+        return "info", "Note: " + msg + " Versions from 9.5 on are known to work together."
+    return "warning", ("Snakemake version gap: " + msg + " Jobs may fail with 'unrecognized "
+                       "arguments'; install the AMI's version here or bake a new AMI.")

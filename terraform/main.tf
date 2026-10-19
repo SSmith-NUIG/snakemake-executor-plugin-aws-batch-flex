@@ -231,6 +231,11 @@ data "aws_iam_policy_document" "launcher" {
     resources = ["*"]
   }
   statement {
+    # optional: lets the plugin compare the AMI's Snakemake version with yours at startup
+    actions   = ["ec2:DescribeImages", "ec2:DescribeLaunchTemplateVersions"]
+    resources = ["*"]
+  }
+  statement {
     actions   = ["iam:PassRole"]
     resources = [local.job_role_arn]
   }
