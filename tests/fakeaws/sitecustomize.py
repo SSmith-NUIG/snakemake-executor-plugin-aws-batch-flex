@@ -53,7 +53,16 @@ class FakeBatch:
                                   "ec2Configuration": [{"imageType": "ECS_AL2023", "imageIdOverride": "ami-fake"}]}}
             for ce in computeEnvironments]}
 
-    def describe_job_definitions(self, jobDefinitionName, status):
+    def describe_job_definitions(self, jobDefinitionName=None, status=None, jobDefinitions=None, nextToken=None):
+        # Pre-made definitions (FAKEAWS_JOBDEFS: JSON list in the real API's shape) come first.
+        made = json.loads(os.environ.get("FAKEAWS_JOBDEFS") or "[]")
+        if jobDefinitions:
+            ref = jobDefinitions[0]
+            return {"jobDefinitions": [d for d in made if ref in (d["jobDefinitionArn"],
+                    f'{d["jobDefinitionName"]}:{d["revision"]}')]}
+        hits = [d for d in made if d["jobDefinitionName"] == jobDefinitionName]
+        if hits:
+            return {"jobDefinitions": hits}
         d = self.defs.get(jobDefinitionName)
         return {"jobDefinitions": [d] if d else []}
 

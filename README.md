@@ -276,6 +276,7 @@ rule align:
 | `batch_queue="other-queue"` | Send this rule to a different queue than the profile's. EC2 and Fargate queues can be mixed in one workflow; the plugin works out which is which. |
 | `batch_platform="fargate"` | Force the platform instead of detecting it from the queue (only needed if the plugin isn't allowed to look the queue up). |
 | `batch_tags="k=v,k2=v2"` | Extra tags on this rule's jobs, e.g. for cost reports. Overrides profile tags with the same key. |
+| `batch_job_definition="name"` | Use an existing job definition for this rule (see the `job-definition` setting below). |
 | `batch_script_python="host"` | For Python `script:` rules: use Snakemake's own Python instead of the image's. |
 
 Resources can also be set from the profile, without editing the Snakefile, using Snakemake's
@@ -331,6 +332,7 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 | `runnable-warn-minutes` | 15 | Warn when a job has waited this long for a machine. |
 | `skip-preflight` | off | Skip the startup checks of the queue and roles. |
 | `log-group` | `/aws/batch/job` | CloudWatch log group for job logs. |
+| `job-definition` | none | Use an existing job definition (name, `name:revision` or ARN) instead of letting the plugin register its own, e.g. where you aren't allowed to register them. It decides the image, job role, mounts and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the AMI's Snakemake, jobs install Snakemake at start. |
 | `job-definition-prefix` | `snakemake` | Name prefix for the job definitions the plugin registers. |
 | `assign-public-ip` | `ENABLED` | Fargate: give jobs a public IP (needed for internet without a NAT gateway). |
 | `ephemeral-storage-gib` | Fargate's 20 | Fargate: scratch disk size, 21-200 GiB. |

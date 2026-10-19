@@ -5,6 +5,7 @@ existing ones."""
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from botocore.exceptions import ClientError
@@ -132,3 +133,47 @@ class JobDefinitions:
             raise WorkflowError(f"Could not register AWS Batch job definition: {e}")
         self._cache[key] = name
         return name
+
+
+@dataclass
+class ExistingJobDefinition:
+    """What a job definition made outside the plugin fixes for its jobs."""
+    arn: str
+    image: str
+    platform: str
+    container_paths: set
+    job_role: Optional[str]
+
+
+def describe_existing(batch, ref: str) -> ExistingJobDefinition:
+    """`ref` is a name (latest ACTIVE revision), name:revision, or an ARN."""
+    try:
+        if ref.startswith("arn:") or ":" in ref:
+            found = batch.describe_job_definitions(jobDefinitions=[ref])["jobDefinitions"]
+        else:
+            found, token = [], None
+            while True:
+                kw = dict(jobDefinitionName=ref, status="ACTIVE")
+                if token:
+                    kw["nextToken"] = token
+                resp = batch.describe_job_definitions(**kw)
+                found += resp["jobDefinitions"]
+                token = resp.get("nextToken")
+                if not token:
+                    break
+    except ClientError as e:
+        raise WorkflowError(f"Could not look up AWS Batch job definition '{ref}': {e}")
+    found = [d for d in found if d.get("status", "ACTIVE") == "ACTIVE"]
+    if not found:
+        raise WorkflowError(f"AWS Batch job definition '{ref}' not found (or not ACTIVE).")
+    d = max(found, key=lambda d: d.get("revision", 0))
+    props = d.get("containerProperties")
+    if d.get("type", "container") != "container" or not props:
+        raise WorkflowError(f"Job definition '{ref}' is not a single-container job definition.")
+    return ExistingJobDefinition(
+        arn=d["jobDefinitionArn"],
+        image=props.get("image", ""),
+        platform="fargate" if "FARGATE" in (d.get("platformCapabilities") or ["EC2"]) else "ec2",
+        container_paths={m.get("containerPath") for m in props.get("mountPoints") or []},
+        job_role=props.get("jobRoleArn"),
+    )

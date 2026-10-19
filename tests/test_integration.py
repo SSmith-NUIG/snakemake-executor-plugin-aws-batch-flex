@@ -270,3 +270,47 @@ def test_startup_compares_ami_snakemake_version(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKEAWS_AMI_VERSION", md.version("snakemake"))
     r, _ = run(tmp_path, FAILING, *host)
     assert "the AMI has Snakemake" not in r.stdout + r.stderr
+
+
+def _jobdef(name, rev=1, image="debian:12", mounts=(), platform="EC2"):
+    return {"jobDefinitionName": name, "revision": rev, "status": "ACTIVE", "type": "container",
+            "jobDefinitionArn": f"arn:aws:batch:eu-west-1:1:job-definition/{name}:{rev}",
+            "platformCapabilities": [platform],
+            "containerProperties": {"image": image, "mountPoints": [{"containerPath": m} for m in mounts]}}
+
+
+def test_existing_job_definition_global_and_per_rule(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_JOBDEFS", json.dumps([_jobdef("team-def", 1), _jobdef("team-def", 2, "ubuntu:24.04"),
+                                                      _jobdef("special", 5, "debian:12-slim")]))
+    smk = SNAKEFILE.replace('resources: mem_mb=3000, batch_queue="special-queue"',
+                            'resources: mem_mb=3000, batch_job_definition="special:5"')
+    r, calls = run(tmp_path, smk, "--aws-batch-flex-job-definition", "team-def")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not any(c["call"] == "register_job_definition" for c in calls)
+    jobdefs = sorted(c["jobdef"].rsplit("/", 1)[1] for c in calls if c["call"] == "submit_job")
+    assert jobdefs == ["special:5", "team-def:2"]          # name alone -> latest revision
+    out = r.stdout + r.stderr
+    assert "its image ubuntu:24.04 is used, not quay.io/biocontainers/bwa:0.7.17" in out
+    mem = next(c for c in calls if c["call"] == "submit_job" and c["jobdef"].endswith("special:5"))
+    assert {"type": "MEMORY", "value": "3118"} in mem["res"]  # rule resources still apply
+
+
+def test_existing_job_definition_without_host_mount_installs_at_start(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_JOBDEFS", json.dumps([_jobdef("plain"), _jobdef("mounted", mounts=["/opt/snakemake-env"])]))
+    cmd = tmp_path / "cmd.txt"
+    monkeypatch.setenv("FAKEAWS_CMD", str(cmd))
+    host = ["--aws-batch-flex-bootstrap", "host", "--aws-batch-flex-host-env-wait-seconds", "0"]
+    r, _ = run(tmp_path, FAILING, "--aws-batch-flex-job-definition", "plain", *host)
+    assert "doesn't mount /opt/snakemake-env, so Snakemake is installed at job start" in r.stdout + r.stderr
+    assert "bootstrapping Snakemake" in cmd.read_text()
+    r, _ = run(tmp_path, FAILING, "--aws-batch-flex-job-definition", "mounted", *host)
+    assert "SMK_ENV=/opt/snakemake-env" in cmd.read_text()
+
+
+def test_existing_job_definition_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_JOBDEFS", json.dumps([_jobdef("fg", platform="FARGATE")]))
+    r, calls = run(tmp_path, FAILING, "--aws-batch-flex-job-definition", "nope")
+    assert r.returncode != 0 and "job definition 'nope' not found" in r.stdout + r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)
+    r, calls = run(tmp_path, FAILING, "--aws-batch-flex-job-definition", "fg")
+    assert r.returncode != 0 and "is for FARGATE but queue default-queue runs on EC2" in r.stdout + r.stderr

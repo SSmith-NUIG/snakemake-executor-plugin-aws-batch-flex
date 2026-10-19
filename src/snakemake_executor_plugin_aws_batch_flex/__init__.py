@@ -25,7 +25,7 @@ from snakemake_interface_executor_plugins.settings import (
 
 from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
-from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, is_ecr
+from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, describe_existing, is_ecr
 from .naming import batch_job_name
 from .orphans import find_orphans, workflow_id
 from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, version_note
@@ -213,6 +213,17 @@ class ExecutorSettings(ExecutorSettingsBase):
         default=DEFAULT_LOG_GROUP,
         metadata={
             "help": "CloudWatch log group for job logs. The default needs no setup.",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    job_definition: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Use this existing job definition (name, name:revision or ARN) instead of "
+            "registering one per image; per rule: the batch_job_definition resource. It fixes "
+            "the image, job role, mounts and /dev/shm; vCPUs, memory, timeout and tags still "
+            "come from the rules. Without the host-env mount, jobs install Snakemake at start.",
             "env_var": False,
             "required": False,
         },
@@ -445,6 +456,8 @@ class Executor(RemoteExecutor):
         self._preludes: dict = {}  # platform -> job prelude
         self._warned_fargate_mounts = False
         self._warned_fargate_shm = False
+        self._existing_defs: dict = {}  # ref -> ExistingJobDefinition
+        self._warned_existing: set = set()
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
             self._platforms[s.queue] = s.platform or detected or "ec2"
@@ -564,20 +577,54 @@ class Executor(RemoteExecutor):
                 "conda: rules need conda inside the image there."
             )
 
-    def _bootstrap_for(self, platform: str) -> str:
-        # Fargate cannot mount the host env: fall back to installing at job start.
-        if platform == "fargate" and self.settings.bootstrap == "host":
+    def _bootstrap_for(self, platform: str, host_mount: bool = True) -> str:
+        # Without the host env (Fargate, or a job definition that doesn't mount it):
+        # install at job start instead.
+        if self.settings.bootstrap == "host" and (platform == "fargate" or not host_mount):
             return "auto"
         return self.settings.bootstrap
 
-    def _prelude_for(self, platform: str) -> str:
-        if platform not in self._preludes:
-            base = self._base_prelude(self._bootstrap_for(platform))
-            if self.settings.conda_path and platform == "ec2":
+    def _prelude_for(self, platform: str, host_mount: bool = True, conda_mount: bool = True) -> str:
+        key = (platform, host_mount, conda_mount)
+        if key not in self._preludes:
+            base = self._base_prelude(self._bootstrap_for(platform, host_mount))
+            if self.settings.conda_path and platform == "ec2" and conda_mount:
                 base += "\n" + conda_snippet(self.settings.conda_path)
             base += "\n" + image_python_snippet()  # SMK_FLEX_SCRIPT_PYTHON decides per job
-            self._preludes[platform] = base
-        return self._preludes[platform]
+            self._preludes[key] = base
+        return self._preludes[key]
+
+    def _existing_jobdef(self, job: JobExecutorInterface, platform: str, image: str, shm_mb):
+        """The existing job definition this job should use, or None; warns once per rule
+        about rule settings that the job definition overrides."""
+        ref = job.resources.get("batch_job_definition") or self.settings.job_definition
+        if not ref:
+            return None
+        ref = str(ref)
+        if ref not in self._existing_defs:
+            self._existing_defs[ref] = describe_existing(self.batch, ref)
+        ex = self._existing_defs[ref]
+        if ex.platform != platform:
+            raise WorkflowError(
+                f"{job.name}: job definition '{ref}' is for {ex.platform.upper()} but queue "
+                f"{self._queue_for(job)} runs on {platform.upper()}."
+            )
+        key = (job.name, ref)
+        if key not in self._warned_existing:
+            self._warned_existing.add(key)
+            notes = []
+            subjobs = list(job.jobs) if job.is_group() else [job]
+            if image != ex.image and any(getattr(j, "container_img_url", None) for j in subjobs):
+                notes.append(f"its image {ex.image} is used, not {image}")
+            if self.settings.bootstrap == "host" and self.settings.host_env_path not in ex.container_paths:
+                notes.append(f"it doesn't mount {self.settings.host_env_path}, so Snakemake is installed at job start")
+            if shm_mb:
+                notes.append("batch_shm_mb is ignored (set sharedMemorySize in the job definition)")
+            if self.settings.job_role_arn and ex.job_role and ex.job_role != self.settings.job_role_arn:
+                notes.append(f"its job role {ex.job_role} is used")
+            if notes:
+                self.logger.warning(f"{job.name} uses job definition '{ref}': " + "; ".join(notes) + ".")
+        return ex
 
     def _base_prelude(self, mode: str) -> str:
         if mode == "host":
@@ -645,9 +692,16 @@ class Executor(RemoteExecutor):
                 f"{job.name}: batch_script_python must be 'image' or 'host', got '{script_python}'."
             )
         shm_mb = self._shm_for(job, platform)
-        jobdef = self.jobdefs.ensure(image, platform, shm_mb)
+        existing = self._existing_jobdef(job, platform, image, shm_mb)
+        if existing:
+            jobdef, image = existing.arn, existing.image
+            host_mount = self.settings.host_env_path in existing.container_paths
+            conda_mount = bool(self.settings.conda_path) and self.settings.conda_path in existing.container_paths
+        else:
+            jobdef = self.jobdefs.ensure(image, platform, shm_mb)
+            host_mount = conda_mount = True
 
-        script = f"{self._prelude_for(platform)}\n{self.format_job_exec(job)}"
+        script = f"{self._prelude_for(platform, host_mount, conda_mount)}\n{self.format_job_exec(job)}"
         resource_reqs = [
             {"type": "VCPU", "value": req.vcpu},
             {"type": "MEMORY", "value": str(req.memory_mib)},
