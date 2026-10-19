@@ -50,17 +50,25 @@ for t in "${@:-script fanout}"; do
       conda)  run conda -s conda.smk --sdm conda;;
       pipeline) run pipeline -s pipeline.smk -j 8;;
       shm) run shm -s shm.smk -j 2;;
-      ecr) # private ECR repo with a copy of debian:12-slim, deleted again afterwards (needs docker here)
+      ecr) # a private ECR image: ECR_IMAGE=<uri> to use an existing one, otherwise a test repo is
+           # created with a copy of debian:12-slim and deleted afterwards (needs ecr:CreateRepository + docker)
+           if [ -n "${ECR_IMAGE:-}" ]; then
+             run ecr -s ecr.smk --config ecr_image=docker://$ECR_IMAGE
+           else
              REGION=$(grep '^aws-batch-flex-region:' profile/config.yaml | awk '{print $2}')
              ACCT=$(aws sts get-caller-identity --query Account --output text)
              REG=$ACCT.dkr.ecr.$REGION.amazonaws.com; IMG=$REG/smkflex-ecr-test:debian12
-             aws ecr create-repository --repository-name smkflex-ecr-test --region $REGION \
-               --tags Key=ManagedBy,Value=snakemake-batch-flex --query repository.repositoryUri --output text
-             aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REG \
-               && docker pull -q debian:12-slim && docker tag debian:12-slim $IMG && docker push -q $IMG
-             run ecr -s ecr.smk --config ecr_image=docker://$IMG
+             if aws ecr create-repository --repository-name smkflex-ecr-test --region $REGION \
+                  --tags Key=ManagedBy,Value=snakemake-batch-flex --query repository.repositoryUri --output text \
+                && aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REG \
+                && docker pull -q debian:12-slim && docker tag debian:12-slim $IMG && docker push -q $IMG; then
+               run ecr -s ecr.smk --config ecr_image=docker://$IMG
+             else
+               echo "  could not set up the test image; nothing submitted"; fail+=(ecr)
+             fi
              aws ecr delete-repository --repository-name smkflex-ecr-test --region $REGION --force \
-               --query repository.repositoryName --output text && echo "  deleted ECR repo";;
+               --query repository.repositoryName --output text 2>/dev/null && echo "  deleted ECR repo"
+           fi;;
       existing) # a job definition made outside the plugin (with the host-env mount), removed again after
              ROLE=$(grep '^aws-batch-flex-job-role-arn:' profile/config.yaml | awk '{print $2}')
              ARN=$(aws batch register-job-definition --job-definition-name smkflex-existing-test --type container \
