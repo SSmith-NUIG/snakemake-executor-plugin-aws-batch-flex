@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|rscript|wrapper|mixed|rules ...]   (default: script fanout)
+# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run (needs enable_fargate=true in terraform)
 # `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
 set -u
@@ -31,6 +31,7 @@ run() { # name, snakemake args...
       existing)   check existing results/py_script.txt "pyscript threads=2 rule=py_script" \
                     && ! grep -q "Registering AWS Batch job definition" conformance-existing.log \
                     && echo "  used the existing job definition, registered none";;
+      ecr)        check ecr results/ecr/os.txt "Debian GNU/Linux 12";;
       shm)        check shm results/shm/big.txt "^1024$" && check shm results/shm/default.txt "^64$";;
       pyimage)    check pyimage results/pyimg/out.txt "sum=6 pandas=2.2.1";;
       pyrule)     check pyrule results/pyrule/image.txt "python=/usr/local/bin/python pandas=yes" \
@@ -49,6 +50,17 @@ for t in "${@:-script fanout}"; do
       conda)  run conda -s conda.smk --sdm conda;;
       pipeline) run pipeline -s pipeline.smk -j 8;;
       shm) run shm -s shm.smk -j 2;;
+      ecr) # private ECR repo with a copy of debian:12-slim, deleted again afterwards (needs docker here)
+             REGION=$(grep '^aws-batch-flex-region:' profile/config.yaml | awk '{print $2}')
+             ACCT=$(aws sts get-caller-identity --query Account --output text)
+             REG=$ACCT.dkr.ecr.$REGION.amazonaws.com; IMG=$REG/smkflex-ecr-test:debian12
+             aws ecr create-repository --repository-name smkflex-ecr-test --region $REGION \
+               --tags Key=ManagedBy,Value=snakemake-batch-flex --query repository.repositoryUri --output text
+             aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REG \
+               && docker pull -q debian:12-slim && docker tag debian:12-slim $IMG && docker push -q $IMG
+             run ecr -s ecr.smk --config ecr_image=docker://$IMG
+             aws ecr delete-repository --repository-name smkflex-ecr-test --region $REGION --force \
+               --query repository.repositoryName --output text && echo "  deleted ECR repo";;
       existing) # a job definition made outside the plugin (with the host-env mount), removed again after
              ROLE=$(grep '^aws-batch-flex-job-role-arn:' profile/config.yaml | awk '{print $2}')
              ARN=$(aws batch register-job-definition --job-definition-name smkflex-existing-test --type container \
