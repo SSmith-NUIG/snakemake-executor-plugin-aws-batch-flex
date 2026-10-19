@@ -415,6 +415,10 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
 - Images with an ENTRYPOINT that doesn't pass the command through will break.
 - All rules in a group must use the same image.
 - Install-at-start fails on very old images (e.g. glibc 2.23).
+- Your Snakemake and the AMI's don't have to be the same version: 9.5 up to 9.27 mix fine in
+  both directions (tested against the fake Batch; 9.0.x doesn't work). But every storage plugin
+  installed on your machine must also be in the AMI, because Snakemake passes all of their
+  options to the jobs; a job that fails this way says which plugin it is.
 
 ### IAM
 

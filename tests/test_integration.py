@@ -251,3 +251,11 @@ def test_shared_memory_per_rule(tmp_path):
 def test_shared_memory_must_be_positive(tmp_path):
     r, calls = run(tmp_path, SHM.replace("batch_shm_mb=2048", "batch_shm_mb=-1"))
     assert r.returncode != 0 and "batch_shm_mb must be a positive" in r.stdout + r.stderr
+
+
+def test_failure_explains_missing_storage_plugin(tmp_path):
+    smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
+                          'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')
+    r, _ = run(tmp_path, smk)
+    assert r.returncode != 0
+    assert "hint: this machine has snakemake-storage-plugin-gcs installed" in r.stdout + r.stderr

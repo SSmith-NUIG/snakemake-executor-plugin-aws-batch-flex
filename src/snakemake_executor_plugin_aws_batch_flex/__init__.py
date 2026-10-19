@@ -330,6 +330,29 @@ def _normalize_image(url: str) -> str:
     return url
 
 
+def _known_problem_hints(log_lines: List[str]) -> List[str]:
+    """Plain-language explanations for failures with a known cause, from the job's log."""
+    text = "\n".join(log_lines)
+    hints = []
+    bad = " ".join(re.findall(r"unrecognized arguments:(.*)", text))
+    plugins = sorted(set(re.findall(r"--storage-([a-z0-9]+)-", bad)))
+    for name in plugins:
+        hints.append(
+            f"  hint: this machine has snakemake-storage-plugin-{name} installed but the job's "
+            f"Snakemake (from the AMI, or installed at job start) doesn't, and Snakemake passes "
+            f"every installed storage "
+            f"plugin's options to its jobs. Uninstall it here (pip uninstall "
+            f"snakemake-storage-plugin-{name}) or bake an AMI with --storage-plugin {name}."
+        )
+    if not plugins and "unrecognized arguments" in text:
+        hints.append(
+            "  hint: the job's Snakemake didn't understand an option from this machine's "
+            "Snakemake; the two versions are probably too far apart (compare "
+            "`snakemake --version` here with the job's; 9.5 to 9.27 are known to mix fine)."
+        )
+    return hints
+
+
 def _pinned(package: str) -> str:
     try:
         return f"{package}=={md.version(package)}"
@@ -778,6 +801,7 @@ class Executor(RemoteExecutor):
                 if events:
                     lines.append("  last log lines:")
                     lines += [f"    {e['message'].rstrip()}" for e in events]
+                lines += _known_problem_hints([e["message"] for e in events])
             except (ClientError, BotoCoreError):
                 lines.append("  (could not fetch log tail)")
         return "\n".join(lines) + "\n"

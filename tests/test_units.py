@@ -47,3 +47,11 @@ def test_image_registry():
     assert image_registry("localhost:5000/x") == "localhost:5000"
     assert is_ecr(image_registry("123456789012.dkr.ecr.eu-west-1.amazonaws.com/tool:1"))
     assert not is_ecr("quay.io")
+
+
+def test_known_problem_hints():
+    from snakemake_executor_plugin_aws_batch_flex import _known_problem_hints as hints
+    two = hints(["snakemake: error: unrecognized arguments: --storage-gcs-project x --storage-http-retries 5"])
+    assert len(two) == 2 and "snakemake-storage-plugin-gcs" in two[0] and "plugin-http" in two[1]
+    assert "versions are probably too far apart" in hints(["error: unrecognized arguments: --new-flag"])[0]
+    assert hints(["all fine"]) == []
