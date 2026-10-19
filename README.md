@@ -445,4 +445,4 @@ far from yours. `terraform output launcher_policy_json` prints a policy with all
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/blob/main/LICENSE).

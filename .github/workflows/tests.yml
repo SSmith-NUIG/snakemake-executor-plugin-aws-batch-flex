@@ -2,7 +2,9 @@ name: tests
 
 on:
   push:
+    paths-ignore: ["**.md", "docs/**", "terraform/**", "LICENSE"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "terraform/**", "LICENSE"]
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1"   # weekly, to catch new Snakemake releases
@@ -14,7 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        snakemake: ["9.27.0", "latest"]
+        # pushes test the version baked into the AMI; the weekly/manual runs also test the newest
+        snakemake: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["9.27.0", "latest"]' || '["9.27.0"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
