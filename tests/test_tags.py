@@ -83,3 +83,10 @@ def test_list_settings_parse_from_cli_and_profile(tmp_path):
     reg = next(c for c in calls if c["call"] == "register_job_definition")
     assert {"sourceVolume": "vol1", "containerPath": "/ref", "readOnly": True} in reg["mounts"]
     assert all(c["tags"]["from"] == "profile" for c in _subs(calls))
+
+
+def test_job_definitions_are_tagged_managed_by(tmp_path):
+    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-tags", "project=x")
+    assert r.returncode == 0, r.stdout + r.stderr
+    regs = [c for c in calls if c["call"] == "register_job_definition"]
+    assert regs and all(c["tags"] == {"project": "x", "ManagedBy": "snakemake-batch-flex"} for c in regs)

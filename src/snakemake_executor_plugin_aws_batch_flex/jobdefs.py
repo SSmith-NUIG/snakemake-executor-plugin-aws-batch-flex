@@ -126,8 +126,8 @@ class JobDefinitions:
                     containerProperties=props,
                     platformCapabilities=[platform.upper()],
                 )
-                if self.tags:
-                    kwargs["tags"] = self.tags
+                # ManagedBy lets scripts/cleanup-jobdefs.sh tell the plugin's definitions apart
+                kwargs["tags"] = {**self.tags, "ManagedBy": "snakemake-batch-flex"}
                 self.batch.register_job_definition(**kwargs)
         except ClientError as e:
             raise WorkflowError(f"Could not register AWS Batch job definition: {e}")

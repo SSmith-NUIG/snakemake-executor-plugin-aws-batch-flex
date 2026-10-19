@@ -70,7 +70,7 @@ class FakeBatch:
     def register_job_definition(self, **kw):
         self.defs[kw["jobDefinitionName"]] = kw
         _rec("register_job_definition", image=kw["containerProperties"]["image"],
-             name=kw["jobDefinitionName"], platform=kw.get("platformCapabilities"),
+             name=kw["jobDefinitionName"], platform=kw.get("platformCapabilities"), tags=kw.get("tags"),
              mounts=kw["containerProperties"].get("mountPoints"),
              volumes=kw["containerProperties"].get("volumes"),
              creds=kw["containerProperties"].get("repositoryCredentials"),

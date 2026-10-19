@@ -224,7 +224,13 @@ To remove everything:
 aws s3 rm s3://YOUR-BUCKET --recursive          # empty the bucket (deletes your results!)
 cd terraform && terraform destroy && cd ..       # remove queue, roles, bucket, ...
 bash scripts/cleanup-ami.sh --region eu-west-1 --no-tfvars ami-XXXXXXXX   # remove the machine image
+bash scripts/cleanup-jobdefs.sh --region eu-west-1                       # remove the plugin's job definitions
 ```
+
+`cleanup-jobdefs.sh` is also handy on its own now and then: job definitions for images you no longer
+use stay in AWS (they cost nothing, but pile up). It only removes the plugin's own definitions,
+never one an active job uses, and the plugin simply registers them again if a later run needs one.
+Add `--dry-run` to see the list first.
 
 `terraform destroy` refuses to delete a bucket that still has files in it, hence the first
 line. `cleanup-ami.sh` only deletes images that `bake-ami.sh` made, asks before deleting, and
