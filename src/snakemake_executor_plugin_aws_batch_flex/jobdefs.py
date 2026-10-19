@@ -58,7 +58,9 @@ class JobDefinitions:
         self.registry_credentials = dict(registry_credentials or {})
         self._cache: dict[tuple, str] = {}
 
-    def container_properties(self, image: str, platform: Optional[str] = None) -> dict:
+    def container_properties(
+        self, image: str, platform: Optional[str] = None, shm_mb: Optional[int] = None
+    ) -> dict:
         platform = platform or self.platform
         # vCPU/memory here are placeholders; they are overridden on every submit.
         props: dict = {
@@ -90,6 +92,8 @@ class JobDefinitions:
                 "logDriver": "awslogs",
                 "options": {"awslogs-group": self.log_group},
             }
+        if shm_mb and platform == "ec2":  # /dev/shm size; Fargate doesn't support it
+            props["linuxParameters"] = {"sharedMemorySize": int(shm_mb)}
         if platform == "fargate":
             props["networkConfiguration"] = {"assignPublicIp": self.assign_public_ip}
             props["fargatePlatformConfiguration"] = {"platformVersion": "LATEST"}
@@ -97,12 +101,14 @@ class JobDefinitions:
                 props["ephemeralStorage"] = {"sizeInGiB": self.ephemeral_storage_gib}
         return props
 
-    def ensure(self, image: str, platform: Optional[str] = None) -> str:
-        """Return the job definition name for `image` on `platform`, registering it if needed."""
+    def ensure(self, image: str, platform: Optional[str] = None, shm_mb: Optional[int] = None) -> str:
+        """Return the job definition name for `image` on `platform` (and /dev/shm size),
+        registering it if needed."""
         platform = platform or self.platform
-        if (image, platform) in self._cache:
-            return self._cache[(image, platform)]
-        props = self.container_properties(image, platform)
+        key = (image, platform, shm_mb)
+        if key in self._cache:
+            return self._cache[key]
+        props = self.container_properties(image, platform, shm_mb)
         digest = hashlib.sha256(
             json.dumps([props, platform], sort_keys=True).encode()
         ).hexdigest()[:12]
@@ -124,5 +130,5 @@ class JobDefinitions:
                 self.batch.register_job_definition(**kwargs)
         except ClientError as e:
             raise WorkflowError(f"Could not register AWS Batch job definition: {e}")
-        self._cache[(image, platform)] = name
+        self._cache[key] = name
         return name

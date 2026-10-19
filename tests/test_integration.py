@@ -219,3 +219,35 @@ def test_set_resources_from_the_command_line(tmp_path):
     b = next(c for c in calls if c["call"] == "submit_job" and "make_b" in c["jobName"])
     assert b["queue"] == "other-queue"
     assert {"type": "MEMORY", "value": "1210"} in b["res"]  # 954 + 256
+
+
+SHM = textwrap.dedent('''
+    container: "docker://debian:12"
+    rule all:
+        input: "a.txt", "b.txt", "c.txt"
+    rule a:
+        output: "a.txt"
+        resources: batch_shm_mb=2048
+        shell: "echo a > {output}"
+    rule b:
+        output: "b.txt"
+        resources: shared_memory_size_mb=2048
+        shell: "echo b > {output}"
+    rule c:
+        output: "c.txt"
+        shell: "echo c > {output}"
+''')
+
+
+def test_shared_memory_per_rule(tmp_path):
+    r, calls = run(tmp_path, SHM)
+    assert r.returncode == 0, r.stdout + r.stderr
+    defs = {c["name"]: c["linux"] for c in calls if c["call"] == "register_job_definition"}
+    assert sorted(map(str, defs.values())) == ["None", "{'sharedMemorySize': 2048}"]  # a and b share one
+    jobdef = {c["jobName"].split("_")[1]: c["jobdef"] for c in calls if c["call"] == "submit_job"}
+    assert jobdef["a"] == jobdef["b"] != jobdef["c"]
+
+
+def test_shared_memory_must_be_positive(tmp_path):
+    r, calls = run(tmp_path, SHM.replace("batch_shm_mb=2048", "batch_shm_mb=-1"))
+    assert r.returncode != 0 and "batch_shm_mb must be a positive" in r.stdout + r.stderr

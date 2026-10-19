@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|rscript|wrapper|mixed|rules ...]   (default: script fanout)
+# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|rscript|wrapper|mixed|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run (needs enable_fargate=true in terraform)
 # `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
 set -u
@@ -28,6 +28,7 @@ run() { # name, snakemake args...
       pipe)       check pipe results/pipe/out.txt "^3$" && [ "$(grep -c Submitted conformance-pipe.log)" = 1 ] && echo "  one Batch job for the pipe group";;
       tempdir)    check tempdir results/td/final.txt "x" && ! aws s3 ls "$PREFIX/results/td/tmp.txt" 2>/dev/null | grep -q tmp && echo "  temp file removed from storage";;
       directory)  check directory results/dr/total.txt "^3$";;
+      shm)        check shm results/shm/big.txt "^1024$" && check shm results/shm/default.txt "^64$";;
       pyimage)    check pyimage results/pyimg/out.txt "sum=6 pandas=2.2.1";;
       pyrule)     check pyrule results/pyrule/image.txt "python=/usr/local/bin/python pandas=yes" \
                     && check pyrule results/pyrule/host.txt "python=/opt/snakemake-env/.* pandas=no";;
@@ -44,6 +45,7 @@ for t in "${@:-script fanout}"; do
       fanout) run fanout -s fanout.smk --config n_units=$N -j $N;;
       conda)  run conda -s conda.smk --sdm conda;;
       pipeline) run pipeline -s pipeline.smk -j 8;;
+      shm) run shm -s shm.smk -j 2;;
       pyimage) run pyimage -s pyimage.smk;;
       pyrule) run pyrule -s pyrule.smk -j 2;;
       rscript) run rscript -s rscript.smk;;

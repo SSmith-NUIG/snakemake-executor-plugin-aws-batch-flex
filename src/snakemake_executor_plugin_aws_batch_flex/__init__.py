@@ -421,6 +421,7 @@ class Executor(RemoteExecutor):
         self._platforms: dict = {}  # queue -> "ec2" | "fargate"
         self._preludes: dict = {}  # platform -> job prelude
         self._warned_fargate_mounts = False
+        self._warned_fargate_shm = False
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
             self._platforms[s.queue] = s.platform or detected or "ec2"
@@ -499,6 +500,24 @@ class Executor(RemoteExecutor):
                 )
             return forced
         return self._queue_platform(queue)
+
+    def _shm_for(self, job: JobExecutorInterface, platform: str) -> Optional[int]:
+        # batch_shm_mb, or shared_memory_size_mb as in the official aws-batch plugin
+        value = job.resources.get("batch_shm_mb") or job.resources.get("shared_memory_size_mb")
+        if not value:
+            return None
+        try:
+            shm = int(value)
+            if shm <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise WorkflowError(f"{job.name}: batch_shm_mb must be a positive number of MiB, got {value!r}.")
+        if platform == "fargate":
+            if not self._warned_fargate_shm:
+                self._warned_fargate_shm = True
+                self.logger.warning("Fargate doesn't support batch_shm_mb; /dev/shm stays at its default there.")
+            return None
+        return shm
 
     def _check_fargate_ok(self, platform: str, queue: str):
         if platform != "fargate":
@@ -595,7 +614,8 @@ class Executor(RemoteExecutor):
             raise WorkflowError(
                 f"{job.name}: batch_script_python must be 'image' or 'host', got '{script_python}'."
             )
-        jobdef = self.jobdefs.ensure(image, platform)
+        shm_mb = self._shm_for(job, platform)
+        jobdef = self.jobdefs.ensure(image, platform, shm_mb)
 
         script = f"{self._prelude_for(platform)}\n{self.format_job_exec(job)}"
         resource_reqs = [
