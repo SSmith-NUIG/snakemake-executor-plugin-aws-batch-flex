@@ -13,7 +13,7 @@ authors = [{ name = "Stephen Smith" }]
 dependencies = [
     "snakemake-interface-common>=1.17.4,<2",
     "snakemake-interface-executor-plugins>=9.3.2,<10",
-    "snakemake-interface-storage-plugins>=3.0.0,<5",
+    "snakemake-interface-storage-plugins>=4.0.0,<5",
     "boto3>=1.34",
 ]
 
