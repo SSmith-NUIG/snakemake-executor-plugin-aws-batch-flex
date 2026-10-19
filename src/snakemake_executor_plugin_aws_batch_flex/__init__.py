@@ -204,7 +204,18 @@ class ExecutorSettings(ExecutorSettingsBase):
         default=2,
         metadata={
             "help": "How many times AWS Batch itself retries a job whose host was "
-            "reclaimed (Spot interruption). Independent of Snakemake's --retries.",
+            "reclaimed (Spot interruption), 0-9; 0 = none. Independent of Snakemake's --retries. "
+            "Per rule: the batch_spot_retries resource.",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    scheduling_priority: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Scheduling priority (0-9999, higher runs first) for every job. Only works on "
+            "queues with a fair-share scheduling policy; skipped with a warning otherwise. Per "
+            "rule: the batch_priority resource.",
             "env_var": False,
             "required": False,
         },
@@ -457,6 +468,7 @@ class Executor(RemoteExecutor):
         self._warned_fargate_mounts = False
         self._warned_fargate_shm = False
         self._existing_defs: dict = {}  # ref -> ExistingJobDefinition
+        self._fair_share: dict = {}  # queue -> has a scheduling policy
         self._warned_existing: set = set()
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
@@ -543,6 +555,49 @@ class Executor(RemoteExecutor):
                 )
             return forced
         return self._queue_platform(queue)
+
+    def _int_resource(self, job, names, low, high, default):
+        """First of `names` set on the job (else `default`), as an int in [low, high]."""
+        for name in names:
+            value = job.resources.get(name)
+            if value is not None:
+                break
+        else:
+            name, value = "setting", default
+        if value is None:
+            return None
+        try:
+            n = int(value)
+            if not low <= n <= high:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise WorkflowError(f"{job.name}: {name} must be a whole number from {low} to {high}, got {value!r}.")
+        return n
+
+    def _spot_retries_for(self, job: JobExecutorInterface) -> int:
+        attempts = job.resources.get("aws_batch_spot_attempts")  # official plugin's name: attempts
+        if attempts is not None and job.resources.get("batch_spot_retries") is None:
+            return self._int_resource(job, ["aws_batch_spot_attempts"], 1, 10, None) - 1
+        return self._int_resource(job, ["batch_spot_retries"], 0, 9, self.settings.spot_retries) or 0
+
+    def _priority_for(self, job: JobExecutorInterface, queue: str) -> Optional[int]:
+        priority = self._int_resource(
+            job, ["batch_priority", "aws_batch_scheduling_priority"], 0, 9999, self.settings.scheduling_priority
+        )
+        if priority is None:
+            return None
+        if queue not in self._fair_share:
+            try:
+                q = self.batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
+                self._fair_share[queue] = bool(q and q[0].get("schedulingPolicyArn"))
+            except (ClientError, BotoCoreError):
+                self._fair_share[queue] = True  # can't tell: send it and let Batch decide
+            if not self._fair_share[queue]:
+                self.logger.warning(
+                    f"Queue {queue} has no fair-share scheduling policy, so job priorities are "
+                    "ignored for it (batch_priority / --aws-batch-flex-scheduling-priority)."
+                )
+        return priority if self._fair_share[queue] else None
 
     def _shm_for(self, job: JobExecutorInterface, platform: str) -> Optional[int]:
         # batch_shm_mb, or shared_memory_size_mb as in the official aws-batch plugin
@@ -722,14 +777,18 @@ class Executor(RemoteExecutor):
                 + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}],
             },
         )
-        if self.settings.spot_retries:
+        spot_retries = self._spot_retries_for(job)
+        if spot_retries:
             kwargs["retryStrategy"] = {
-                "attempts": self.settings.spot_retries + 1,
+                "attempts": spot_retries + 1,
                 "evaluateOnExit": [
                     {"onStatusReason": "Host EC2*", "action": "RETRY"},
                     {"onReason": "*", "action": "EXIT"},
                 ],
             }
+        priority = self._priority_for(job, queue)
+        if priority is not None:
+            kwargs["schedulingPriorityOverride"] = priority
         if req.timeout_seconds:
             kwargs["timeout"] = {"attemptDurationSeconds": req.timeout_seconds}
         tags = job_tags(

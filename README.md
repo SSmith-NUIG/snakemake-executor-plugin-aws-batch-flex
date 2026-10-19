@@ -276,6 +276,8 @@ rule align:
 | `batch_queue="other-queue"` | Send this rule to a different queue than the profile's. EC2 and Fargate queues can be mixed in one workflow; the plugin works out which is which. |
 | `batch_platform="fargate"` | Force the platform instead of detecting it from the queue (only needed if the plugin isn't allowed to look the queue up). |
 | `batch_tags="k=v,k2=v2"` | Extra tags on this rule's jobs, e.g. for cost reports. Overrides profile tags with the same key. |
+| `batch_spot_retries=0` | How often Batch retries this rule's job if its Spot instance is taken away (0-9; default from the profile, 2). `aws_batch_spot_attempts` (retries + 1) also works. |
+| `batch_priority=500` | Scheduling priority, 0-9999, higher first. Only on queues with a fair-share policy. `aws_batch_scheduling_priority` also works. |
 | `batch_job_definition="name"` | Use an existing job definition for this rule (see the `job-definition` setting below). |
 | `batch_script_python="host"` | For Python `script:` rules: use Snakemake's own Python instead of the image's. |
 
@@ -324,7 +326,8 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 | `volumes` | none | Extra folders from the instance to mount into jobs, `HOST:CONTAINER[:ro]` (EC2). |
 | `extra-packages` | none | Extra pip packages for install-at-start (e.g. other Snakemake plugins). |
 | `python-version` | yours | Python version for install-at-start. |
-| `spot-retries` | 2 | How often Batch retries a job whose Spot instance was taken away. |
+| `spot-retries` | 2 | How often Batch retries a job whose Spot instance was taken away (0 = never). |
+| `scheduling-priority` | none | Priority for every job (0-9999), on queues with a fair-share policy; others ignore it with a warning. |
 | `registry-credentials` | none | `REGISTRY=SECRET_ARN` for private registries outside AWS (see below). |
 | `orphan-jobs` | `cancel` | Jobs left running by an interrupted run: `cancel`, `warn` or `ignore` (see below). |
 | `tags` | none | `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`. |

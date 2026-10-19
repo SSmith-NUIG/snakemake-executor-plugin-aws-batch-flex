@@ -314,3 +314,43 @@ def test_existing_job_definition_errors(tmp_path, monkeypatch):
     assert not any(c["call"] == "submit_job" for c in calls)
     r, calls = run(tmp_path, FAILING, "--aws-batch-flex-job-definition", "fg")
     assert r.returncode != 0 and "is for FARGATE but queue default-queue runs on EC2" in r.stdout + r.stderr
+
+
+PRIO = textwrap.dedent('''
+    container: "docker://debian:12"
+    rule all:
+        input: "a.txt", "b.txt", "c.txt"
+    rule a:
+        output: "a.txt"
+        resources: batch_priority=500, batch_spot_retries=0
+        shell: "echo a > {output}"
+    rule b:
+        output: "b.txt"
+        resources: aws_batch_scheduling_priority=7, aws_batch_spot_attempts=4
+        shell: "echo b > {output}"
+    rule c:
+        output: "c.txt"
+        shell: "echo c > {output}"
+''')
+
+
+def _by_rule(calls, key):
+    return {c["jobName"].split("_")[1]: c[key] for c in calls if c["call"] == "submit_job"}
+
+
+def test_priority_and_spot_retries_per_rule(tmp_path):
+    r, calls = run(tmp_path, PRIO, "--aws-batch-flex-queue", "fair-queue", "--aws-batch-flex-scheduling-priority", "10")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _by_rule(calls, "priority") == {"a": 500, "b": 7, "c": 10}
+    attempts = {k: (v or {}).get("attempts") for k, v in _by_rule(calls, "retry").items()}
+    assert attempts == {"a": None, "b": 4, "c": 3}       # 0 retries -> no strategy; default 2 -> 3 attempts
+
+
+def test_priority_skipped_without_fair_share_and_validated(tmp_path):
+    r, calls = run(tmp_path, PRIO)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert set(_by_rule(calls, "priority").values()) == {None}
+    assert "has no fair-share scheduling policy" in r.stdout + r.stderr
+    r, calls = run(tmp_path, PRIO.replace("batch_priority=500", "batch_priority=99999"), "--forceall",
+                   "--aws-batch-flex-queue", "fair-queue")
+    assert r.returncode != 0 and "batch_priority must be a whole number from 0 to 9999" in r.stdout + r.stderr

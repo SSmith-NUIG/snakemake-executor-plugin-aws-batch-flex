@@ -43,6 +43,7 @@ class FakeBatch:
         names = jobQueues or ["default-queue"]
         return {"jobQueues": [
             {"jobQueueName": q, "state": "ENABLED", "status": "VALID",
+             **({"schedulingPolicyArn": "arn:aws:batch:eu-west-1:1:scheduling-policy/fs"} if "fair" in q else {}),
              "computeEnvironmentOrder": [{"order": 1, "computeEnvironment": f"ce-{q}"}]}
             for q in names if q != "no-such-queue"]}
 
@@ -91,6 +92,7 @@ class FakeBatch:
              res=kw["containerOverrides"]["resourceRequirements"], jobName=kw["jobName"],
              tags=kw.get("tags"), propagate=kw.get("propagateTags"),
              env={e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]},
+             retry=kw.get("retryStrategy"), priority=kw.get("schedulingPriorityOverride"),
              cmdtail=kw["containerOverrides"]["command"][2][-700:])
         return {"jobId": jid, "jobName": kw["jobName"]}
 
