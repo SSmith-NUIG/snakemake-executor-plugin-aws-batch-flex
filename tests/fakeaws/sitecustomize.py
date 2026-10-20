@@ -1,6 +1,6 @@
 """Replaces boto3.client with an in-process fake AWS Batch that really executes the
 submitted container command locally (via `sh -c`). Only for tests."""
-import itertools, json, subprocess, tempfile, time, os
+import itertools, json, subprocess, tempfile, time, os, types
 import boto3
 
 LOG = os.environ.get("FAKEAWS_LOG")
@@ -15,6 +15,7 @@ def _rec(kind, **kw):
 
 class FakeBatch:
     def __init__(self):
+        self.meta = types.SimpleNamespace(region_name="eu-west-1")
         self.defs, self.jobs = {}, {}
         # Jobs "left over" from an earlier run: FAKEAWS_ORPHANS = JSON list of
         # {"jobId", "queue", "jobDefinition", "tags"}; they stay RUNNING until terminated.
@@ -76,6 +77,7 @@ class FakeBatch:
              creds=kw["containerProperties"].get("repositoryCredentials"),
              linux=kw["containerProperties"].get("linuxParameters"),
              disk=kw["containerProperties"].get("ephemeralStorage"),
+             logs=kw["containerProperties"].get("logConfiguration"),
              exec_role=kw["containerProperties"].get("executionRoleArn"))
         return {}
 

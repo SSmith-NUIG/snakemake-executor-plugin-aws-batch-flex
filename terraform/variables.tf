@@ -55,6 +55,18 @@ variable "s3_prefix" {
   default = "snakemake"
 }
 
+variable "s3_expire_days" {
+  description = "Delete files under s3_prefix this many days after they were written (only on a bucket this module creates). Null: keep them."
+  type        = number
+  default     = null
+}
+
+variable "log_retention_days" {
+  description = "Job logs go to their own log group, /aws/batch/<name>, kept this many days. Null: use Batch's default group /aws/batch/job (kept forever)."
+  type        = number
+  default     = 30
+}
+
 variable "job_role_arn" {
   description = "Null: create a new job role with access to the S3 prefix."
   type        = string

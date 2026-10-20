@@ -287,6 +287,15 @@ def test_fargate_disk_from_disk_mb(tmp_path):
     assert disk == {"a": {"sizeInGiB": 75}, "b": {"sizeInGiB": 200}, "c": None, "d": None}
     assert "Fargate allows at most 200" in r.stdout + r.stderr
 
+
+def test_own_log_group(tmp_path):
+    r, calls = run(tmp_path, FAILING.replace("echo about-to-fail-marker >&2; exit 3", "touch {output}"),
+                   "--aws-batch-flex-log-group", "/aws/batch/smkflex")
+    assert r.returncode == 0, r.stdout + r.stderr
+    logs = [c["logs"] for c in calls if c["call"] == "register_job_definition"]
+    assert logs == [{"logDriver": "awslogs",
+                     "options": {"awslogs-group": "/aws/batch/smkflex", "awslogs-region": "eu-west-1"}}]
+
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
                           'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')

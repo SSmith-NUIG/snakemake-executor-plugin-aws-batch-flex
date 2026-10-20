@@ -12,6 +12,7 @@ locals {
   userdata_b64 = var.userdata_file == null ? null : filebase64(var.userdata_file)
   bucket       = coalesce(var.s3_bucket, one(aws_s3_bucket.work[*].id))
   job_role_arn = coalesce(var.job_role_arn, one(aws_iam_role.job[*].arn))
+  log_group    = one(aws_cloudwatch_log_group.jobs[*].name)
 }
 
 # S3 work bucket (new unless you pass one)
@@ -28,6 +29,43 @@ resource "aws_s3_bucket_public_access_block" "work" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# Abandoned multipart uploads (e.g. from killed jobs) are billed until removed. Optionally,
+# files under the prefix are deleted after s3_expire_days.
+resource "aws_s3_bucket_lifecycle_configuration" "work" {
+  count  = var.s3_bucket == null ? 1 : 0
+  bucket = aws_s3_bucket.work[0].id
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+  dynamic "rule" {
+    for_each = var.s3_expire_days == null ? [] : [1]
+    content {
+      id     = "expire-workflow-files"
+      status = "Enabled"
+      filter {
+        prefix = "${var.s3_prefix}/"
+      }
+      expiration {
+        days = var.s3_expire_days
+      }
+    }
+  }
+}
+
+# Job logs. The Batch default group /aws/batch/job keeps logs forever and is shared with
+# anything else using Batch in the account, so the jobs log to their own group instead.
+resource "aws_cloudwatch_log_group" "jobs" {
+  count             = var.log_retention_days == null ? 0 : 1
+  name              = "/aws/batch/${var.name}"
+  retention_in_days = var.log_retention_days
+  tags              = local.tags
 }
 
 data "aws_iam_policy_document" "s3_access" {
@@ -134,10 +172,10 @@ resource "aws_launch_template" "this" {
 
 # compute environment + queue (new)
 resource "aws_batch_compute_environment" "this" {
-  name_prefix                      = "${var.name}-"
-  type                            = "MANAGED"
-  state                           = "ENABLED"
-  service_role                    = var.batch_service_role_arn
+  name_prefix  = "${var.name}-"
+  type         = "MANAGED"
+  state        = "ENABLED"
+  service_role = var.batch_service_role_arn
 
   compute_resources {
     type                = var.use_spot ? "SPOT" : "EC2"

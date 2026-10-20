@@ -19,6 +19,7 @@ output "created" {
     security_group      = aws_security_group.batch.id
     instance_role       = aws_iam_role.instance.arn
     instance_profile    = aws_iam_instance_profile.instance.arn
+    log_group           = local.log_group
   }
 }
 
@@ -38,6 +39,7 @@ output "snakemake_profile" {
     aws-batch-flex-job-role-arn: ${local.job_role_arn}
     aws-batch-flex-bootstrap: host
     aws-batch-flex-host-env-wait-seconds: 180
-    aws-batch-flex-default-image: debian:12
+    aws-batch-flex-default-image: debian:12%{if local.log_group != null}
+    aws-batch-flex-log-group: ${local.log_group}%{endif}
   EOT
 }

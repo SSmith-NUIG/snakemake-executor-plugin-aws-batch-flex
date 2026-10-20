@@ -93,10 +93,11 @@ class JobDefinitions:
                 for i, (_h, cont, ro) in enumerate(self.mounts)
             ]
         if self.log_group != DEFAULT_LOG_GROUP:
-            props["logConfiguration"] = {
-                "logDriver": "awslogs",
-                "options": {"awslogs-group": self.log_group},
-            }
+            options = {"awslogs-group": self.log_group}
+            region = getattr(getattr(self.batch, "meta", None), "region_name", None)
+            if region:  # Fargate requires it
+                options["awslogs-region"] = region
+            props["logConfiguration"] = {"logDriver": "awslogs", "options": options}
         if shm_mb and platform == "ec2":  # /dev/shm size; Fargate doesn't support it
             props["linuxParameters"] = {"sharedMemorySize": int(shm_mb)}
         if platform == "fargate":

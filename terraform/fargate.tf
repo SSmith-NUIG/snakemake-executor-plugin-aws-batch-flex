@@ -60,7 +60,7 @@ resource "aws_batch_job_queue" "fargate" {
 
 output "snakemake_profile_fargate" {
   description = "Profile for the Fargate queue (install-at-start; needs internet via a public IP)."
-  value = var.enable_fargate ? join("\n", [
+  value = var.enable_fargate ? join("\n", concat([
     "executor: aws-batch-flex",
     "default-storage-provider: s3",
     "default-storage-prefix: s3://${local.bucket}/${var.s3_prefix}",
@@ -74,5 +74,5 @@ output "snakemake_profile_fargate" {
     "aws-batch-flex-default-image: debian:12",
     "default-resources: [mem_mb=512]",
     "jobs: 5",
-  ]) : "enable_fargate is false"
+  ], local.log_group == null ? [] : ["aws-batch-flex-log-group: ${local.log_group}"])) : "enable_fargate is false"
 }

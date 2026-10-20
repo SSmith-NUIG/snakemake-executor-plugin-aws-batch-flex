@@ -16,3 +16,5 @@ root_volume_gib = 100                  # disk per instance (container images + j
 # use_spot       = true                # cheaper Spot instances (can be interrupted; untested)
 # max_vcpus      = 256                 # upper limit on instances running at once
 # s3_bucket      = "my-bucket"         # use an existing bucket instead of creating one
+# s3_expire_days = 30                  # delete workflow files from the bucket after 30 days
+# log_retention_days = 90              # keep job logs 90 days (default 30; null = Batch's default group, kept forever)

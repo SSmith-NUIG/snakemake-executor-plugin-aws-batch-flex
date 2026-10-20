@@ -213,8 +213,12 @@ Fargate, ...) if you want to see more.
 
 ### 10. Costs and removing everything
 
-While idle, the only costs are the files in your bucket and the stored machine image (both
-cents per month for small amounts). Machines only run while jobs do. To check nothing is
+While idle, the only costs are the files in your bucket, the job logs and the stored machine
+image (all cents per month for small amounts). Job logs are deleted after 30 days
+(`log_retention_days` in `terraform.tfvars`). Files in the bucket stay until you delete them;
+set `s3_expire_days` to have files under the prefix deleted automatically that many days after
+they were written (only do this if you copy results you want to keep elsewhere). Uploads that
+were interrupted, e.g. by a killed job, are cleared after 7 days. Machines only run while jobs do. To check nothing is
 running, the AWS console's **EC2** > **Instances** page should show no running
 `snakemake`-related instances a few minutes after a workflow ends.
 
@@ -245,7 +249,8 @@ check, since after `terraform destroy` nothing uses it any more.
   and that your subnets have internet access. New accounts sometimes have a low limit on
   machines; Snakemake also prints a warning when a job waits too long.
 - **A job fails.** Snakemake prints the end of the job's log. Full logs are in the AWS console
-  under **CloudWatch** > **Log groups** > `/aws/batch/job`.
+  under **CloudWatch** > **Log groups** > `/aws/batch/smkflex` (`/aws/batch/` plus the `name` from
+  `terraform.tfvars`; `/aws/batch/job` without the Terraform setup).
 - **"Startup check failed".** The plugin checks the queue before submitting anything; the
   message says what's wrong (usually a typo in the queue name, or the wrong region).
 - **"IncompleteFilesException" after Snakemake was stopped.** Run again with
@@ -341,7 +346,7 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 | `no-auto-tags` | off | Turn off the automatic tags (and the leftover-job check, which uses them). |
 | `runnable-warn-minutes` | 15 | Warn when a job has waited this long for a machine. |
 | `skip-preflight` | off | Skip the startup checks of the queue and roles. |
-| `log-group` | `/aws/batch/job` | CloudWatch log group for job logs. |
+| `log-group` | `/aws/batch/job` | CloudWatch log group for job logs. Terraform creates one that deletes logs after 30 days and puts it in the profile; Batch's default group keeps them forever. The group must already exist. |
 | `job-definition` | none | Use an existing job definition (name, `name:revision` or ARN) instead of letting the plugin register its own, e.g. where you aren't allowed to register them. It decides the image, job role, mounts and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the AMI's Snakemake, jobs install Snakemake at start. |
 | `job-definition-prefix` | `snakemake` | Name prefix for the job definitions the plugin registers. |
 | `assign-public-ip` | `ENABLED` | Fargate: give jobs a public IP (needed for internet without a NAT gateway). |
