@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|rules ...]   (default: script fanout)
-# `mixed` = EC2 + Fargate queues in one run (needs enable_fargate=true in terraform)
+# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|rules ...]   (default: script fanout)
+# `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
+# (both need enable_fargate=true in terraform)
 # `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
 set -u
 N=${N:-100}
@@ -39,6 +40,7 @@ run() { # name, snakemake args...
       rscript)    check rscript results/r/out.txt "rscript threads=2 rule=r_script R=4";;
       wrapper)    check wrapper results/wr/ref.fa.fai "^chr2	8	";;
       mixed)      check mixed results/mixed/both.txt "AWS_ECS_EC2" && check mixed results/mixed/both.txt "AWS_ECS_FARGATE";;
+      disk)       check disk results/disk/check.txt "^disk ok";;
     esac && pass+=($name) || fail+=($name)
   else echo "  snakemake FAILED (see conformance-$name.log)"; fail+=($name); fi
 }
@@ -81,9 +83,9 @@ for t in "${@:-script fanout}"; do
       pyrule) run pyrule -s pyrule.smk -j 2;;
       rscript) run rscript -s rscript.smk;;
       wrapper) run wrapper -s wrapper.smk --sdm conda -j 2;;
-      mixed) FQ=$(terraform -chdir=../../terraform output -raw snakemake_profile_fargate | sed -n 's/^aws-batch-flex-queue: //p')
+      mixed|disk) FQ=$(terraform -chdir=../../terraform output -raw snakemake_profile_fargate | sed -n 's/^aws-batch-flex-queue: //p')
              XR=$(terraform -chdir=../../terraform output -raw snakemake_profile_fargate | sed -n 's/^aws-batch-flex-execution-role-arn: //p')
-             run mixed -s mixed.smk --config fargate_queue=$FQ --aws-batch-flex-execution-role-arn "$XR" \
+             run $name -s $name.smk --config fargate_queue=$FQ --aws-batch-flex-execution-role-arn "$XR" \
                --aws-batch-flex-install-prereqs -j 2;;
       rules) bash "$0" checkpoint group shadow benchmark retries pipe tempdir directory; exit;;
       checkpoint|group|shadow|benchmark|retries|pipe|tempdir|directory) run $name -s $name.smk -j 4;;

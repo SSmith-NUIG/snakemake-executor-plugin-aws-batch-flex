@@ -3,6 +3,7 @@
 
 import asyncio
 import importlib.metadata as md
+import math
 import os
 import re
 import sys
@@ -259,7 +260,8 @@ class ExecutorSettings(ExecutorSettingsBase):
     ephemeral_storage_gib: Optional[int] = field(
         default=None,
         metadata={
-            "help": "Fargate only: scratch disk in GiB (21-200).",
+            "help": "Fargate only: minimum scratch disk in GiB (21-200); a rule's disk_mb can "
+            "raise it for that rule.",
             "env_var": False,
             "required": False,
         },
@@ -334,6 +336,7 @@ common_settings = CommonSettings(
     init_seconds_before_status_checks=10,
 )
 
+FARGATE_MAX_DISK_GIB = 200
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
 _STATUS_RUNNING = {"SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"}
@@ -365,6 +368,13 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
             f"every installed storage "
             f"plugin's options to its jobs. Uninstall it here (pip uninstall "
             f"snakemake-storage-plugin-{name}) or bake an AMI with --storage-plugin {name}."
+        )
+    if "No space left on device" in text:
+        hints.append(
+            "  hint: the job ran out of disk. On EC2, all jobs on an instance share its disk "
+            "(root_volume_gib in Terraform), and disk_mb isn't enforced there: use a bigger "
+            "volume, a queue with bigger disks for this rule (batch_queue), or fewer jobs per "
+            "instance. On Fargate, raise the rule's disk_mb (up to 200 GiB)."
         )
     if not plugins and "unrecognized arguments" in text:
         hints.append(
@@ -467,6 +477,7 @@ class Executor(RemoteExecutor):
         self._preludes: dict = {}  # platform -> job prelude
         self._warned_fargate_mounts = False
         self._warned_fargate_shm = False
+        self._warned_disk: set = set()
         self._existing_defs: dict = {}  # ref -> ExistingJobDefinition
         self._fair_share: dict = {}  # queue -> has a scheduling policy
         self._warned_existing: set = set()
@@ -617,6 +628,34 @@ class Executor(RemoteExecutor):
             return None
         return shm
 
+    def _disk_for(self, job: JobExecutorInterface, platform: str) -> Optional[int]:
+        """Fargate scratch disk in GiB for this job, from disk_mb; None keeps the default
+        (20 GiB, or ephemeral-storage-gib). EC2 jobs share the instance's disk."""
+        if platform != "fargate":
+            return None
+        value = job.resources.get("disk_mb")
+        if not value:
+            return None
+        # Snakemake's default for rules without inputs is a flat 50000; that isn't a request
+        if str(value) == "50000" and not list(job.input):
+            return None
+        try:
+            gib = math.ceil(int(job.resources.get("disk_mib") or value) / 1024)
+        except (TypeError, ValueError):
+            raise WorkflowError(f"{job.name}: disk_mb must be a number of MB, got {value!r}.")
+        if gib <= 20:  # Fargate's default; 21 is the smallest size that can be set
+            return None
+        if gib > FARGATE_MAX_DISK_GIB:
+            if job.name not in self._warned_disk:
+                self._warned_disk.add(job.name)
+                self.logger.warning(
+                    f"{job.name} asks for {gib} GiB of disk; Fargate allows at most "
+                    f"{FARGATE_MAX_DISK_GIB}, so it gets {FARGATE_MAX_DISK_GIB}."
+                )
+        # The size is part of the job definition, so round up to 25 GiB steps; otherwise
+        # sizes derived from input files would register a new definition for nearly every job.
+        return min(FARGATE_MAX_DISK_GIB, math.ceil(gib / 25) * 25)
+
     def _check_fargate_ok(self, platform: str, queue: str):
         if platform != "fargate":
             return
@@ -649,7 +688,7 @@ class Executor(RemoteExecutor):
             self._preludes[key] = base
         return self._preludes[key]
 
-    def _existing_jobdef(self, job: JobExecutorInterface, platform: str, image: str, shm_mb):
+    def _existing_jobdef(self, job: JobExecutorInterface, platform: str, image: str, shm_mb, disk_gib=None):
         """The existing job definition this job should use, or None; warns once per rule
         about rule settings that the job definition overrides."""
         ref = job.resources.get("batch_job_definition") or self.settings.job_definition
@@ -675,6 +714,8 @@ class Executor(RemoteExecutor):
                 notes.append(f"it doesn't mount {self.settings.host_env_path}, so Snakemake is installed at job start")
             if shm_mb:
                 notes.append("batch_shm_mb is ignored (set sharedMemorySize in the job definition)")
+            if disk_gib:
+                notes.append("disk_mb is ignored (set ephemeralStorage in the job definition)")
             if self.settings.job_role_arn and ex.job_role and ex.job_role != self.settings.job_role_arn:
                 notes.append(f"its job role {ex.job_role} is used")
             if notes:
@@ -747,13 +788,14 @@ class Executor(RemoteExecutor):
                 f"{job.name}: batch_script_python must be 'image' or 'host', got '{script_python}'."
             )
         shm_mb = self._shm_for(job, platform)
-        existing = self._existing_jobdef(job, platform, image, shm_mb)
+        disk_gib = self._disk_for(job, platform)
+        existing = self._existing_jobdef(job, platform, image, shm_mb, disk_gib)
         if existing:
             jobdef, image = existing.arn, existing.image
             host_mount = self.settings.host_env_path in existing.container_paths
             conda_mount = bool(self.settings.conda_path) and self.settings.conda_path in existing.container_paths
         else:
-            jobdef = self.jobdefs.ensure(image, platform, shm_mb)
+            jobdef = self.jobdefs.ensure(image, platform, shm_mb, disk_gib)
             host_mount = conda_mount = True
 
         script = f"{self._prelude_for(platform, host_mount, conda_mount)}\n{self.format_job_exec(job)}"

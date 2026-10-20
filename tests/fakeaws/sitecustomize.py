@@ -75,6 +75,7 @@ class FakeBatch:
              volumes=kw["containerProperties"].get("volumes"),
              creds=kw["containerProperties"].get("repositoryCredentials"),
              linux=kw["containerProperties"].get("linuxParameters"),
+             disk=kw["containerProperties"].get("ephemeralStorage"),
              exec_role=kw["containerProperties"].get("executionRoleArn"))
         return {}
 

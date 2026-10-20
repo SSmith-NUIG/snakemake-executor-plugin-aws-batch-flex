@@ -278,6 +278,7 @@ rule align:
 | `mem_mb=16000` (or `mem_mib`) | Memory requested. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. |
 | `runtime=120` | Minutes before Batch stops the job (timeout). To give every rule a timeout, put `runtime` in the profile's `default-resources`. |
 | `batch_shm_mb=4096` | Size of `/dev/shm` (Docker's default is 64 MB), for tools that use shared memory, e.g. bwa-mem2 or PyTorch data loaders. What's stored there counts towards `mem_mb`. EC2 only. `shared_memory_size_mb` also works. |
+| `disk_mb=100000` | Fargate: scratch disk for the job (default 20 GiB, up to 200), rounded up to 25 GiB steps. Snakemake sets it to twice the input size by default, which is used too. EC2: ignored; see [Limits](#limits). |
 | `gpu=1` | Number of GPUs (needs a queue with GPU instances; untested). |
 | `batch_queue="other-queue"` | Send this rule to a different queue than the profile's. EC2 and Fargate queues can be mixed in one workflow; the plugin works out which is which. |
 | `batch_platform="fargate"` | Force the platform instead of detecting it from the queue (only needed if the plugin isn't allowed to look the queue up). |
@@ -344,7 +345,7 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 | `job-definition` | none | Use an existing job definition (name, `name:revision` or ARN) instead of letting the plugin register its own, e.g. where you aren't allowed to register them. It decides the image, job role, mounts and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the AMI's Snakemake, jobs install Snakemake at start. |
 | `job-definition-prefix` | `snakemake` | Name prefix for the job definitions the plugin registers. |
 | `assign-public-ip` | `ENABLED` | Fargate: give jobs a public IP (needed for internet without a NAT gateway). |
-| `ephemeral-storage-gib` | Fargate's 20 | Fargate: scratch disk size, 21-200 GiB. |
+| `ephemeral-storage-gib` | Fargate's 20 | Fargate: minimum scratch disk size for every job, 21-200 GiB (a rule's `disk_mb` can raise it). |
 
 Jobs are tagged automatically with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule`
 and `snakemake-job-id`, and tags propagate to the ECS tasks.
@@ -428,6 +429,11 @@ Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
   can't be used.
 - Images with an ENTRYPOINT that doesn't pass the command through will break.
 - All rules in a group must use the same image.
+- On EC2, all jobs on an instance share its disk (`root_volume_gib` in Terraform, 100 GiB in
+  the example), and `disk_mb` is not enforced: Batch only places jobs by CPU and memory. Several
+  jobs with large files on one instance can fill it, and the jobs then fail with "No space left
+  on device" (the failure message says so). Use a bigger volume, or a second queue with bigger
+  disks for the heavy rules (`batch_queue`).
 - Install-at-start fails on very old images (e.g. glibc 2.23).
 - Your Snakemake and the AMI's don't have to be the same version: 9.5 up to 9.27 mix fine in
   both directions (tested against the fake Batch; 9.0.x doesn't work). But every storage plugin

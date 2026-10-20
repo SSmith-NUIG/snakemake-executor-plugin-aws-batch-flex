@@ -60,7 +60,11 @@ class JobDefinitions:
         self._cache: dict[tuple, str] = {}
 
     def container_properties(
-        self, image: str, platform: Optional[str] = None, shm_mb: Optional[int] = None
+        self,
+        image: str,
+        platform: Optional[str] = None,
+        shm_mb: Optional[int] = None,
+        disk_gib: Optional[int] = None,
     ) -> dict:
         platform = platform or self.platform
         # vCPU/memory here are placeholders; they are overridden on every submit.
@@ -98,18 +102,25 @@ class JobDefinitions:
         if platform == "fargate":
             props["networkConfiguration"] = {"assignPublicIp": self.assign_public_ip}
             props["fargatePlatformConfiguration"] = {"platformVersion": "LATEST"}
-            if self.ephemeral_storage_gib:
-                props["ephemeralStorage"] = {"sizeInGiB": self.ephemeral_storage_gib}
+            disk = max(disk_gib or 0, self.ephemeral_storage_gib or 0)
+            if disk:
+                props["ephemeralStorage"] = {"sizeInGiB": disk}
         return props
 
-    def ensure(self, image: str, platform: Optional[str] = None, shm_mb: Optional[int] = None) -> str:
-        """Return the job definition name for `image` on `platform` (and /dev/shm size),
-        registering it if needed."""
+    def ensure(
+        self,
+        image: str,
+        platform: Optional[str] = None,
+        shm_mb: Optional[int] = None,
+        disk_gib: Optional[int] = None,
+    ) -> str:
+        """Return the job definition name for `image` on `platform` (and /dev/shm size,
+        Fargate disk size), registering it if needed."""
         platform = platform or self.platform
-        key = (image, platform, shm_mb)
+        key = (image, platform, shm_mb, disk_gib)
         if key in self._cache:
             return self._cache[key]
-        props = self.container_properties(image, platform, shm_mb)
+        props = self.container_properties(image, platform, shm_mb, disk_gib)
         digest = hashlib.sha256(
             json.dumps([props, platform], sort_keys=True).encode()
         ).hexdigest()[:12]

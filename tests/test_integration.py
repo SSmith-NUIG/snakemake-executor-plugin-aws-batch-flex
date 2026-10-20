@@ -253,6 +253,40 @@ def test_shared_memory_must_be_positive(tmp_path):
     assert r.returncode != 0 and "batch_shm_mb must be a positive" in r.stdout + r.stderr
 
 
+
+DISK = textwrap.dedent('''
+    container: "docker://debian:12"
+    rule all:
+        input: "a.txt", "b.txt", "c.txt", "d.txt"
+    rule a:
+        output: "a.txt"
+        resources: disk_mb=60000, batch_queue="my-fargate-queue"
+        shell: "echo a > {output}"
+    rule b:
+        output: "b.txt"
+        resources: disk_mb=500000, batch_queue="my-fargate-queue"
+        shell: "echo b > {output}"
+    rule c:
+        output: "c.txt"
+        resources: batch_queue="my-fargate-queue"
+        shell: "echo c > {output}"
+    rule d:
+        output: "d.txt"
+        resources: disk_mb=50000
+        shell: "echo d > {output}"
+''')
+
+
+def test_fargate_disk_from_disk_mb(tmp_path):
+    r, calls = run(tmp_path, DISK, "--aws-batch-flex-execution-role-arn", "arn:aws:iam::1:role/exec")
+    assert r.returncode == 0, r.stdout + r.stderr
+    defs = {c["name"]: c for c in calls if c["call"] == "register_job_definition"}
+    disk = {c["jobName"].split("_")[1]: defs[c["jobdef"]]["disk"] for c in calls if c["call"] == "submit_job"}
+    # 60000 MB = 56 GiB, rounded up to 75; 500000 is capped at 200; c gets Snakemake's
+    # placeholder 50000 for rules without inputs, which is ignored; d runs on EC2
+    assert disk == {"a": {"sizeInGiB": 75}, "b": {"sizeInGiB": 200}, "c": None, "d": None}
+    assert "Fargate allows at most 200" in r.stdout + r.stderr
+
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
                           'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')

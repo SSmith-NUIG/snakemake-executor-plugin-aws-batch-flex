@@ -40,6 +40,8 @@ rule align:
 
 - `threads` -> vCPUs, `mem_mb` -> memory (plus 256 MiB for the Snakemake process in the job),
   `runtime` (minutes) -> timeout, `gpu` -> GPUs.
+- `disk_mb` sets the job's disk on Fargate (up to 200 GiB). On EC2, jobs share the
+  instance's disk and `disk_mb` isn't enforced.
 - `batch_shm_mb` sets the size of `/dev/shm` (EC2 only); `batch_spot_retries` and
   `batch_priority` set Spot retries and fair-share priority per rule.
 - `batch_job_definition` (or `aws-batch-flex-job-definition` for all rules) uses an existing job
