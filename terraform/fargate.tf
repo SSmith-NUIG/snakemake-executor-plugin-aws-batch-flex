@@ -69,6 +69,7 @@ output "snakemake_profile_fargate" {
     "aws-batch-flex-platform: fargate",
     "aws-batch-flex-job-role-arn: ${local.job_role_arn}",
     "aws-batch-flex-execution-role-arn: ${aws_iam_role.fargate_exec[0].arn}",
+    "aws-batch-flex-head-role-arn: ${aws_iam_role.head.arn}",
     "aws-batch-flex-bootstrap: auto",
     "aws-batch-flex-install-prereqs: true",
     "aws-batch-flex-default-image: debian:12",

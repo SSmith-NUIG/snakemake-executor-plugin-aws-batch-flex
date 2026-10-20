@@ -10,6 +10,11 @@ output "job_role_arn" {
   value = local.job_role_arn
 }
 
+output "head_role_arn" {
+  description = "Role for the head job of `smkflex run`."
+  value       = aws_iam_role.head.arn
+}
+
 output "created" {
   description = "Everything this module created (all new, all tagged ManagedBy=snakemake-batch-flex)."
   value = {
@@ -19,12 +24,13 @@ output "created" {
     security_group      = aws_security_group.batch.id
     instance_role       = aws_iam_role.instance.arn
     instance_profile    = aws_iam_instance_profile.instance.arn
+    head_role           = aws_iam_role.head.arn
     log_group           = local.log_group
   }
 }
 
 output "launcher_policy_json" {
-  description = "Attach to the user/role that runs `snakemake`. SubmitJob is limited to this queue."
+  description = "Attach to the user/role that runs `snakemake`. SubmitJob is limited to this module's queues."
   value       = data.aws_iam_policy_document.launcher.json
 }
 
@@ -37,6 +43,7 @@ output "snakemake_profile" {
     aws-batch-flex-queue: ${aws_batch_job_queue.this.name}
     aws-batch-flex-region: ${var.region}
     aws-batch-flex-job-role-arn: ${local.job_role_arn}
+    aws-batch-flex-head-role-arn: ${aws_iam_role.head.arn}
     aws-batch-flex-bootstrap: host
     aws-batch-flex-host-env-wait-seconds: 180
     aws-batch-flex-default-image: debian:12%{if local.log_group != null}

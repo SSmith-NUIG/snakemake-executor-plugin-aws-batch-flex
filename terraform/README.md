@@ -5,8 +5,8 @@ group (egress only), instance and job roles, and an S3 bucket. Everything is new
 `ManagedBy=snakemake-batch-flex`; the only existing things it reads are your subnets and the
 AMI id you give it. `fargate.tf` adds an optional Fargate queue (`enable_fargate = true`).
 
-`launcher/` is an optional small EC2 instance to run `snakemake` from. It hasn't been applied
-yet, so treat it as a draft.
+It also creates the role for the head job of `smkflex run` (see "Long runs" in the main
+README); the printed profiles include it.
 
 ## Steps
 

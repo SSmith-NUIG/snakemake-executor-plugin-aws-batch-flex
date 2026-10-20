@@ -364,6 +364,40 @@ run that are still active and cancels them before submitting anything. Use
 `--aws-batch-flex-orphan-jobs warn` to only list them (the default with `--nolock`), or
 `ignore` to skip the check.
 
+### Long runs: `smkflex`
+
+`snakemake` has to keep running until the workflow is finished, so a laptop that sleeps or
+loses its connection stops the run (the jobs already on Batch carry on, and are cancelled when
+you restart). For long workflows, `smkflex` runs Snakemake itself on Batch instead. It's
+optional: running `snakemake` from your own machine works as before, and both can be used on
+the same workflow.
+
+```bash
+cd my-workflow
+smkflex run                      # uses ./profile; returns once the run is submitted
+smkflex logs JOB_ID --follow     # Snakemake's output, live
+smkflex status                   # recent runs
+smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
+```
+
+`smkflex run` packs the workflow folder (the files git would track, or everything except
+`.snakemake/` outside a git checkout) together with the profile, uploads it next to your
+workflow's files in the bucket, and submits one "head job" that runs `snakemake` there. Your
+machine can be switched off once it returns. Anything after the options goes to Snakemake,
+e.g. `smkflex run -- --forceall all`; `--wait` stays attached and prints the log until the run
+ends.
+
+- The head job uses 1 vCPU and 2 GiB (`--vcpus`, `--mem-mb`) for as long as the workflow
+  runs, on the profile's queue (`--queue` for another one). Don't use a Spot queue for it.
+- It needs remote storage (`default-storage-prefix`) and the profile setting
+  `aws-batch-flex-head-role-arn`; the profile Terraform prints has both.
+- Snakemake's `.snakemake` records (what was made with which code, unfinished jobs, logs) are
+  saved to the bucket at the end of every run and restored at the start of the next, so reruns
+  behave as they do on one machine. Runs with the same name (`--name`, default: the folder's
+  name) share them, and a second run of a workflow that's still running is refused.
+- The head job runs the plugin version installed where you run `smkflex`, and the AMI's
+  Snakemake (in `host` mode) or one installed at start.
+
 ### Private images
 
 ECR images need nothing extra: the instance role (EC2) or execution role (Fargate) pulls them,
@@ -420,7 +454,7 @@ Terraform's own log group (EC2 and Fargate).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 `--aws-batch-flex-volumes`, a single Ctrl-C.
-Not tested yet: `notebook:`, Julia, GPU, Spot, the `terraform/launcher` module.
+Not tested yet: `notebook:`, Julia, GPU, Spot, `smkflex`.
 
 ### Limits
 
@@ -454,6 +488,8 @@ The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `Termi
 the job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` and
 `ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
 far from yours. `terraform output launcher_policy_json` prints a policy with all of this. The job role needs read/write on the prefix.
+For `smkflex`, the head job's role needs the same as the identity running `snakemake`, and
+that identity also needs `iam:PassRole` on the head role (both are in the Terraform setup).
 
 ## License
 

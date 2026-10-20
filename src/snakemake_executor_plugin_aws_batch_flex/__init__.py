@@ -73,6 +73,15 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
+    head_role_arn: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Only for `smkflex run`: IAM role of the head job that runs Snakemake on "
+            "AWS (Terraform prints it as head_role_arn). Snakemake itself ignores it.",
+            "env_var": False,
+            "required": False,
+        },
+    )
     platform: Optional[str] = field(
         default=None,
         metadata={
@@ -390,6 +399,20 @@ def _pinned(package: str) -> str:
         return f"{package}=={md.version(package)}"
     except md.PackageNotFoundError:
         return package
+
+
+def storage_requirements(default_provider: Optional[str] = None) -> List[str]:
+    """pip requirements for the storage plugins installed here, pinned to these versions."""
+    packages = set()
+    try:
+        from snakemake_interface_storage_plugins.registry import StoragePluginRegistry
+
+        reg = StoragePluginRegistry()
+        packages = {reg.get_plugin_package_name(n) for n in reg.get_registered_plugins()}
+    except Exception:  # registry API drift: fall back to the default provider
+        if default_provider:
+            packages = {f"snakemake-storage-plugin-{default_provider}"}
+    return [_pinned(p) for p in sorted(packages)]
 
 
 class Executor(RemoteExecutor):
@@ -728,24 +751,8 @@ class Executor(RemoteExecutor):
                 self.settings.host_env_path, self.settings.host_env_wait_seconds
             )
         smk_version = md.version("snakemake")
-        reqs = [f"snakemake=={smk_version}"]
-        packages = set()
-        try:
-            from snakemake_interface_storage_plugins.registry import (
-                StoragePluginRegistry,
-            )
-
-            reg = StoragePluginRegistry()
-            packages = {
-                reg.get_plugin_package_name(n) for n in reg.get_registered_plugins()
-            }
-        except Exception:  # registry API drift: fall back to the default provider
-            default = getattr(
-                self.workflow.storage_settings, "default_storage_provider", None
-            )
-            if default:
-                packages = {f"snakemake-storage-plugin-{default}"}
-        reqs += [_pinned(p) for p in sorted(packages)]
+        default = getattr(self.workflow.storage_settings, "default_storage_provider", None)
+        reqs = [f"snakemake=={smk_version}"] + storage_requirements(default)
         reqs += list(self.settings.extra_packages or [])
         pyver = self.settings.python_version or f"{sys.version_info[0]}.{sys.version_info[1]}"
         return build_prelude(

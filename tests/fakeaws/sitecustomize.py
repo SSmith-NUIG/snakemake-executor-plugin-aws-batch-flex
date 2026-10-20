@@ -24,10 +24,14 @@ class FakeBatch:
                                          kw={"jobQueue": o["queue"], "jobDefinition": o["jobDefinition"],
                                              "tags": o["tags"]})
 
-    def list_jobs(self, jobQueue, jobStatus, maxResults=100, nextToken=None):
+    def list_jobs(self, jobQueue, jobStatus=None, maxResults=100, nextToken=None, filters=None):
         out = []
         for jid, j in self.jobs.items():
-            if j["kw"]["jobQueue"] == jobQueue and self._status(j) == jobStatus:
+            if filters:  # only JOB_NAME with a trailing * is used; any status, like real AWS
+                if j["kw"]["jobQueue"] == jobQueue and j["name"].startswith(filters[0]["values"][0].rstrip("*")):
+                    out.append({"jobId": jid, "jobName": j["name"], "status": self._status(j),
+                                "createdAt": int(j["t"] * 1000)})
+            elif j["kw"]["jobQueue"] == jobQueue and self._status(j) == jobStatus:
                 # like real AWS: no jobDefinition or tags in the summaries
                 out.append({"jobId": jid, "jobName": j["name"], "status": jobStatus})
         return {"jobSummaryList": out}
@@ -129,14 +133,18 @@ class FakeBatch:
         else:
             j["p"].kill()
 
-    def _tail(self, jid):
-        return (self.jobs[jid].get("out") or "").splitlines()[-40:]
+    def _tail(self, jid, n=40):
+        lines = (self.jobs[jid].get("out") or "").splitlines()
+        return lines[-n:] if n else lines
 
 
 class FakeLogs:
     def __init__(self, batch): self.b = batch
-    def get_log_events(self, logGroupName, logStreamName, limit, startFromHead):
-        return {"events": [{"message": l} for l in self.b._tail(logStreamName)]}
+    def get_log_events(self, logGroupName, logStreamName, startFromHead, limit=None, nextToken=None):
+        if nextToken == "end":  # already read everything
+            return {"events": [], "nextForwardToken": "end"}
+        lines = self.b._tail(logStreamName, limit)
+        return {"events": [{"message": l} for l in lines], "nextForwardToken": "end" if lines else None}
 
 
 class FakeEC2:

@@ -25,6 +25,7 @@ dependencies = [
     "snakemake-interface-executor-plugins>=9.3.2,<10",
     "snakemake-interface-storage-plugins>=4.0.0,<5",
     "boto3>=1.34",
+    "pyyaml",
 ]
 
 [project.urls]
@@ -34,6 +35,7 @@ Issues = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-fle
 
 [project.scripts]
 snakemake-batch-flex-host-env = "snakemake_executor_plugin_aws_batch_flex.hostenv:main"
+smkflex = "snakemake_executor_plugin_aws_batch_flex.remote:main"
 
 [project.optional-dependencies]
 test = ["pytest", "snakemake", "snakemake-storage-plugin-fs"]

@@ -5,7 +5,6 @@ HANDOVER.md
 # account-specific
 terraform/terraform.tfvars
 terraform/terraform.tfvars.bak-*
-terraform/launcher/terraform.tfvars
 **/profile*/config.yaml
 *.tfstate
 tfplan

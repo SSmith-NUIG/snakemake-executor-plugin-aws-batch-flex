@@ -251,10 +251,11 @@ resource "aws_iam_role_policy" "job_s3" {
 data "aws_iam_policy_document" "launcher" {
   statement {
     actions = ["batch:SubmitJob"]
-    resources = [
-      aws_batch_job_queue.this.arn,
-      "arn:aws:batch:${var.region}:${data.aws_caller_identity.me.account_id}:job-definition/snakemake-*",
-    ]
+    resources = concat(
+      [aws_batch_job_queue.this.arn],
+      aws_batch_job_queue.fargate[*].arn,
+      ["arn:aws:batch:${var.region}:${data.aws_caller_identity.me.account_id}:job-definition/snakemake-*"],
+    )
   }
   statement {
     actions = [
@@ -275,7 +276,21 @@ data "aws_iam_policy_document" "launcher" {
   }
   statement {
     actions   = ["iam:PassRole"]
-    resources = [local.job_role_arn]
+    resources = concat([local.job_role_arn, aws_iam_role.head.arn], aws_iam_role.fargate_exec[*].arn)
   }
   source_policy_documents = [data.aws_iam_policy_document.s3_access.json]
+}
+
+# Role of the head job that `smkflex run` submits: it runs Snakemake on AWS, so it gets the
+# same permissions as whoever runs snakemake.
+resource "aws_iam_role" "head" {
+  name_prefix        = "${var.name}-head-"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy" "head" {
+  name   = "run-snakemake"
+  role   = aws_iam_role.head.id
+  policy = data.aws_iam_policy_document.launcher.json
 }

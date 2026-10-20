@@ -1,7 +1,0 @@
-region           = "eu-west-1"                 # region of your Batch queue
-subnet_id        = "subnet-0123456789abcdef0"  # a subnet with outbound internet
-batch_queue_name = "your-nextflow-queue"
-s3_bucket        = "your-bucket"
-# plugin_zip_path = "./snakemake-executor-plugin-aws-batch-flex.zip"
-# assign_public_ip = false   # if the subnet is private behind a NAT gateway
-# job_role_arn     = "arn:aws:iam::123456789012:role/your-batch-job-role"
