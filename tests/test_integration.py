@@ -48,6 +48,8 @@ def run(tmp_path, snakefile, *extra):
 def test_per_rule_images_queues_and_resources(tmp_path):
     r, calls = run(tmp_path, SNAKEFILE)
     assert r.returncode == 0, r.stdout + r.stderr
+    summary = (r.stdout + r.stderr).split("AWS Batch usage of this run")[1]
+    assert "make_a" in summary and "make_b" in summary and "total" in summary
     assert (tmp_path / "store" / "b.txt").read_text() == "A\nB\n"
     images = {c["image"] for c in calls if c["call"] == "register_job_definition"}
     assert images == {"ubuntu:24.04", "quay.io/biocontainers/bwa:0.7.17"}

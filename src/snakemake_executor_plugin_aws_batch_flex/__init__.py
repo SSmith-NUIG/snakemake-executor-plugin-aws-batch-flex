@@ -29,7 +29,8 @@ from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, describe_existing, is_ecr
 from .naming import batch_job_name
 from .orphans import find_orphans, workflow_id
-from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, version_note
+from .costs import Usage
+from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
 from .sizing import DEFAULT_MEM_OVERHEAD_MIB, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
 
@@ -310,6 +311,15 @@ class ExecutorSettings(ExecutorSettingsBase):
             "nargs": "+",
         },
     )
+    no_cost_summary: bool = field(
+        default=False,
+        metadata={
+            "help": "Don't print the per-rule summary of vCPU-hours, memory and estimated cost "
+            "at the end of the run.",
+            "env_var": False,
+            "required": False,
+        },
+    )
     no_auto_tags: bool = field(
         default=False,
         metadata={
@@ -504,6 +514,8 @@ class Executor(RemoteExecutor):
         self._existing_defs: dict = {}  # ref -> ExistingJobDefinition
         self._fair_share: dict = {}  # queue -> has a scheduling policy
         self._warned_existing: set = set()
+        self.usage = Usage()
+        self._spot: dict = {}  # queue -> runs on Spot
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
             self._platforms[s.queue] = s.platform or detected or "ec2"
@@ -868,7 +880,8 @@ class Executor(RemoteExecutor):
             SubmittedJobInfo(
                 job,
                 external_jobid=resp["jobId"],
-                aux={"image": image, "queue": queue, "platform": platform, "warned": False},
+                aux={"image": image, "queue": queue, "platform": platform, "warned": False,
+                     "vcpu": float(req.vcpu), "mem": req.memory_mib},
             )
         )
 
@@ -900,6 +913,8 @@ class Executor(RemoteExecutor):
                 )
                 continue
             status = d["status"]
+            if status in ("SUCCEEDED", "FAILED"):
+                self._record_usage(info, d)
             if status == "SUCCEEDED":
                 self.report_job_success(info)
             elif status == "FAILED":
@@ -910,6 +925,19 @@ class Executor(RemoteExecutor):
                 yield info
             else:
                 yield info
+
+    def _record_usage(self, info: SubmittedJobInfo, d: dict):
+        queue = info.aux.get("queue")
+        if queue not in self._spot:
+            self._spot[queue] = not self.settings.skip_preflight and queue_uses_spot(self.batch, queue)
+        self.usage.add(info.job.name, d, info.aux.get("vcpu", 1.0), info.aux.get("mem", 0),
+                       info.aux.get("platform", "ec2"), self._spot[queue])
+
+    def shutdown(self):
+        super().shutdown()
+        table = None if self.settings.no_cost_summary else self.usage.table()
+        if table:
+            self.logger.info(table)
 
     def additional_general_args(self):
         # A version-tagged wrapper ("v9.19.1/bio/...") is fetched with `git clone` when no prefix is

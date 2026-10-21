@@ -93,3 +93,21 @@ def test_ami_snakemake_version_paths():
     assert ami_snakemake_version(override, _Stub(describe_images={"Images": [{"Tags": []}]}), "q") is None
     denied = ClientError({"Error": {"Code": "UnauthorizedOperation"}}, "DescribeImages")
     assert ami_snakemake_version(override, _Stub(describe_images=denied), "q") is None
+
+
+def test_usage_summary():
+    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    u = Usage()
+    hour = 3600 * 1000
+    # a Spot job retried once: both attempts count
+    u.add("align", {"attempts": [{"startedAt": 0, "stoppedAt": hour}, {"startedAt": hour, "stoppedAt": 2 * hour}]},
+          4, 8192, "ec2", True)
+    u.add("qc", {"startedAt": 0, "stoppedAt": hour}, 1, 2048, "fargate", False)
+    u.add("qc", {"status": "FAILED"}, 1, 2048, "fargate", False)  # never started
+    t = u.table()
+    align = next(l for l in t.splitlines() if l.strip().startswith("align")).split()
+    assert align[1:4] == ["1", "8.00", "16.00"] and float(align[4]) == round(8 * 0.05 * 0.35, 2)
+    qc = next(l for l in t.splitlines() if l.strip().startswith("qc")).split()
+    assert qc[1:4] == ["2", "1.00", "2.00"]
+    assert "total" in t
+    assert Usage().table() is None

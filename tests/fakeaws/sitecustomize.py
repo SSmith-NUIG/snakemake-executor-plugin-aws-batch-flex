@@ -118,6 +118,8 @@ class FakeBatch:
                 d["status"] = "RUNNING"
             else:
                 d["status"] = "SUCCEEDED" if rc == 0 else "FAILED"
+                j.setdefault("stopped", time.time())
+                d["startedAt"], d["stoppedAt"] = int(j["t"] * 1000), int(j["stopped"] * 1000)
                 j["out"] = j.get("out") or j["p"].stdout.read()
                 if os.environ.get("FAKEAWS_OUT"): open(os.environ["FAKEAWS_OUT"], "a").write(j["out"] + "\n=====\n")
                 d["container"] = {"exitCode": rc, "logStreamName": jid,

@@ -343,6 +343,7 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 | `registry-credentials` | none | `REGISTRY=SECRET_ARN` for private registries outside AWS (see below). |
 | `orphan-jobs` | `cancel` | Jobs left running by an interrupted run: `cancel`, `warn` or `ignore` (see below). |
 | `tags` | none | `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`. |
+| `no-cost-summary` | off | Don't print the table of vCPU-hours, memory-hours and estimated cost per rule at the end of a run (see below). |
 | `no-auto-tags` | off | Turn off the automatic tags (and the leftover-job check, which uses them). |
 | `runnable-warn-minutes` | 15 | Warn when a job has waited this long for a machine. |
 | `skip-preflight` | off | Skip the startup checks of the queue and roles. |
@@ -354,6 +355,26 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 
 Jobs are tagged automatically with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule`
 and `snakemake-job-id`, and tags propagate to the ECS tasks.
+
+### What a run used
+
+At the end of a run the plugin prints what each rule used, from Batch's own start and stop
+times (Spot retries included):
+
+```
+AWS Batch usage of this run (cost: rough estimate at list prices, without instance idle time, storage or data transfer):
+  rule         jobs    vCPU-h     GiB-h      ~USD
+  align          24     96.40    385.60      4.82
+  sort           24     12.10     48.40      0.61
+  total          48    108.50    434.00      5.43
+```
+
+The cost uses typical on-demand prices (about $0.05 per vCPU-hour on EC2, less on Spot; Fargate's
+per-vCPU and per-GB prices). On EC2 you pay for whole instances, so the bill is higher when
+jobs leave instances half empty or they wait idle before shutting down. AWS Cost Explorer has
+the real figures: the instances are tagged `ManagedBy=snakemake-batch-flex`, which you can filter
+by once it's switched on under **Billing** > **Cost allocation tags**. Turn the table off with
+`no-cost-summary`.
 
 ### Interrupted runs
 
