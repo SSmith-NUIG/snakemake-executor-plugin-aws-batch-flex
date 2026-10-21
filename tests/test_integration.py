@@ -298,6 +298,45 @@ def test_own_log_group(tmp_path):
     assert logs == [{"logDriver": "awslogs",
                      "options": {"awslogs-group": "/aws/batch/smkflex", "awslogs-region": "eu-west-1"}}]
 
+
+OOM = textwrap.dedent('''
+    rule all:
+        input: "big.txt", "fargate.txt"
+    rule oom_big:
+        output: "big.txt"
+        resources: mem_mb=1000
+        shell: "echo ok > {output}"
+    rule oom_fargate:
+        output: "fargate.txt"
+        resources: mem_mb=1000, batch_queue="my-fargate-queue"
+        shell: "echo ok > {output}"
+''')
+
+
+def _mem(calls, rule):
+    return [next(int(x["value"]) for x in c["res"] if x["type"] == "MEMORY")
+            for c in calls if c["call"] == "submit_job" and f"_{rule}_" in c["jobName"]]
+
+
+def test_out_of_memory_retries_with_more(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_OOM_BELOW_MIB", "3000")
+    r, calls = run(tmp_path, OOM, "--retries", "2", "--aws-batch-flex-execution-role-arn", "arn:aws:iam::1:role/x")
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert _mem(calls, "oom_big") == [1210, 2420, 4840]  # 954 + 256, then twice, then 4 times
+    # Fargate: 1210 -> 2048 (the smallest size for 1 vCPU), then twice what it got
+    assert _mem(calls, "oom_fargate") == [2048, 4096]
+    assert "ran out of memory with 1210 MiB; retrying with 2420 MiB" in out
+    assert "Snakemake retries it with more" in out
+
+
+def test_out_of_memory_without_retries_says_how(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_OOM_BELOW_MIB", "3000")
+    r, calls = run(tmp_path, OOM.replace(', "fargate.txt"', ""))
+    assert r.returncode != 0
+    assert _mem(calls, "oom_big") == [1210]
+    assert "run with --retries 2" in r.stdout + r.stderr
+
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
                           'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')

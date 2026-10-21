@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|rules ...]   (default: script fanout)
+# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
 # (both need enable_fargate=true in terraform), `spot` = fanout on the Spot queue (enable_spot_queue=true)
 # `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
@@ -41,6 +41,8 @@ run() { # name, snakemake args...
       wrapper)    check wrapper results/wr/ref.fa.fai "^chr2	8	";;
       mixed)      check mixed results/mixed/both.txt "AWS_ECS_EC2" && check mixed results/mixed/both.txt "AWS_ECS_FARGATE";;
       disk)       check disk results/disk/check.txt "^disk ok";;
+      oom)        check oom results/oom/out.txt "^ok" && grep -q "ran out of memory with .* retrying with" conformance-oom.log \
+                    && echo "  retried with more memory";;
       spot)       check spot results/total.txt "$(( N * (N - 1) / 2 ))" && grep -q "queue $SQ," conformance-spot.log \
                     && echo "  jobs went to $SQ";;
     esac && pass+=($name) || fail+=($name)
@@ -82,6 +84,7 @@ for t in "${@:-script fanout}"; do
              run existing -s script.smk -j 2 --aws-batch-flex-job-definition "$ARN"
              aws batch deregister-job-definition --job-definition "$ARN" && echo "  deregistered $ARN";;
       pyimage) run pyimage -s pyimage.smk;;
+      oom) run oom -s oom.smk --retries 1;;
       pyrule) run pyrule -s pyrule.smk -j 2;;
       rscript) run rscript -s rscript.smk;;
       wrapper) run wrapper -s wrapper.smk --sdm conda -j 2;;

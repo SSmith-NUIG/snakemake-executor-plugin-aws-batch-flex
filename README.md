@@ -283,7 +283,7 @@ rule align:
 |---|---|
 | `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
 | `threads: 8` | Number of vCPUs requested. |
-| `mem_mb=16000` (or `mem_mib`) | Memory requested. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. |
+| `mem_mb=16000` (or `mem_mib`) | Memory requested. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). |
 | `runtime=120` | Minutes before Batch stops the job (timeout). To give every rule a timeout, put `runtime` in the profile's `default-resources`. |
 | `batch_shm_mb=4096` | Size of `/dev/shm` (Docker's default is 64 MB), for tools that use shared memory, e.g. bwa-mem2 or PyTorch data loaders. What's stored there counts towards `mem_mb`. EC2 only. `shared_memory_size_mb` also works. |
 | `disk_mb=100000` | Fargate: scratch disk for the job (default 20 GiB, up to 200), rounded up to 25 GiB steps. Snakemake sets it to twice the input size by default, which is used too. EC2: ignored; see [Limits](#limits). |
@@ -346,6 +346,7 @@ line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terrafo
 | `registry-credentials` | none | `REGISTRY=SECRET_ARN` for private registries outside AWS (see below). |
 | `orphan-jobs` | `cancel` | Jobs left running by an interrupted run: `cancel`, `warn` or `ignore` (see below). |
 | `tags` | none | `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`. |
+| `oom-memory-factor` | 2 | When a job runs out of memory and Snakemake retries it (`--retries N`, or `retries:` on the rule), the retry asks for this many times more memory, again for each further retry (Fargate: at most 120 GiB). 1 = retry with the same memory. |
 | `no-cost-summary` | off | Don't print the table of vCPU-hours, memory-hours and estimated cost per rule at the end of a run (see below). |
 | `no-auto-tags` | off | Turn off the automatic tags (and the leftover-job check, which uses them). |
 | `runnable-warn-minutes` | 15 | Warn when a job has waited this long for a machine. |

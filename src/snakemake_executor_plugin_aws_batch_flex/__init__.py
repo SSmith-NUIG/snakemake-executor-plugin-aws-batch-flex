@@ -31,7 +31,7 @@ from .naming import batch_job_name
 from .orphans import find_orphans, workflow_id
 from .costs import Usage
 from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
-from .sizing import DEFAULT_MEM_OVERHEAD_MIB, job_requirements
+from .sizing import DEFAULT_MEM_OVERHEAD_MIB, fargate_size, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
 
 
@@ -311,6 +311,15 @@ class ExecutorSettings(ExecutorSettingsBase):
             "nargs": "+",
         },
     )
+    oom_memory_factor: Optional[float] = field(
+        default=2.0,
+        metadata={
+            "help": "When a job ran out of memory and Snakemake retries it (--retries, or a "
+            "rule's retries:), ask for this many times more memory on each retry. 1 = never.",
+            "env_var": False,
+            "required": False,
+        },
+    )
     no_cost_summary: bool = field(
         default=False,
         metadata={
@@ -356,6 +365,7 @@ common_settings = CommonSettings(
 )
 
 FARGATE_MAX_DISK_GIB = 200
+FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
 _STATUS_RUNNING = {"SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"}
@@ -404,6 +414,12 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
     return hints
 
 
+def _out_of_memory(d: dict) -> bool:
+    """Batch/ECS says why a container stopped; out of memory is OutOfMemoryError."""
+    c = d.get("container") or {}
+    return "OutOfMemory" in (c.get("reason") or "") or "OutOfMemory" in (d.get("statusReason") or "")
+
+
 def _pinned(package: str) -> str:
     try:
         return f"{package}=={md.version(package)}"
@@ -432,6 +448,8 @@ class Executor(RemoteExecutor):
             raise WorkflowError("--aws-batch-flex-platform must be 'ec2' or 'fargate'.")
         if s.script_python not in (None, "image", "host"):
             raise WorkflowError("--aws-batch-flex-script-python must be 'image' or 'host'.")
+        if s.oom_memory_factor is not None and s.oom_memory_factor < 1:
+            raise WorkflowError("--aws-batch-flex-oom-memory-factor must be 1 or more.")
         if s.bootstrap not in MODES:
             raise WorkflowError(f"--aws-batch-flex-bootstrap must be one of {MODES}.")
         mounts = []
@@ -515,6 +533,7 @@ class Executor(RemoteExecutor):
         self._fair_share: dict = {}  # queue -> has a scheduling policy
         self._warned_existing: set = set()
         self.usage = Usage()
+        self._oom: dict = {}  # job id -> times it ran out of memory
         self._spot: dict = {}  # queue -> runs on Spot
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
@@ -663,6 +682,24 @@ class Executor(RemoteExecutor):
             return None
         return shm
 
+    def _more_memory_after_oom(self, job: JobExecutorInterface, req, platform: str):
+        """A retry of a job that ran out of memory asks for oom_memory_factor times more,
+        for every time it ran out (Fargate: at most 120 GiB)."""
+        times = self._oom.get(job.jobid, 0)
+        factor = 2.0 if self.settings.oom_memory_factor is None else self.settings.oom_memory_factor
+        if not times or factor <= 1:
+            return
+        before = req.memory_mib
+        mem = int(before * factor**times)
+        if platform == "fargate":
+            mem = min(mem, FARGATE_MAX_MEM_MIB)
+            req.vcpu, mem = fargate_size(float(req.vcpu), mem)
+        req.memory_mib = mem
+        self.logger.info(
+            f"{job.name} (attempt {job.attempt}) ran out of memory with {before} MiB; "
+            f"retrying with {mem} MiB."
+        )
+
     def _disk_for(self, job: JobExecutorInterface, platform: str) -> Optional[int]:
         """Fargate scratch disk in GiB for this job, from disk_mb; None keeps the default
         (20 GiB, or ephemeral-storage-gib). EC2 jobs share the instance's disk."""
@@ -799,6 +836,7 @@ class Executor(RemoteExecutor):
         if overhead is None:
             overhead = DEFAULT_MEM_OVERHEAD_MIB
         req = job_requirements(job.resources, job.threads, platform, overhead)
+        self._more_memory_after_oom(job, req, platform)
         script_python = str(
             job.resources.get("batch_script_python") or self.settings.script_python or "image"
         ).lower()
@@ -918,6 +956,8 @@ class Executor(RemoteExecutor):
             if status == "SUCCEEDED":
                 self.report_job_success(info)
             elif status == "FAILED":
+                if _out_of_memory(d):
+                    self._oom[info.job.jobid] = self._oom.get(info.job.jobid, 0) + 1
                 msg = await asyncio.to_thread(self._failure_message, d, info)
                 self.report_job_error(info, msg=msg)
             elif status in _STATUS_RUNNING:
@@ -980,6 +1020,17 @@ class Executor(RemoteExecutor):
             lines.append(f"  container reason: {c['reason']}")
         if c.get("exitCode") is not None:
             lines.append(f"  exit code: {c['exitCode']}")
+        if _out_of_memory(d):
+            mem = info.aux.get("mem")
+            factor = self.settings.oom_memory_factor
+            retries = getattr(info.job, "restart_times", 0) or 0
+            if retries >= info.job.attempt and (factor is None or factor > 1):
+                lines.append(f"  hint: the job ran out of memory ({mem} MiB); Snakemake retries it with more.")
+            else:
+                lines.append(
+                    f"  hint: the job ran out of memory ({mem} MiB). Raise the rule's mem_mb, or run with "
+                    "--retries 2: the plugin then retries jobs that ran out of memory with twice as much."
+                )
         stream = c.get("logStreamName")
         if stream:
             group = (

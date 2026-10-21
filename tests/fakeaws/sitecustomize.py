@@ -93,8 +93,14 @@ class FakeBatch:
         env.update({e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]})
         env["TMPDIR"] = tempfile.mkdtemp(prefix="fakejob-")  # each real container has its own /tmp
         if os.environ.get("FAKEAWS_CMD"): open(os.environ["FAKEAWS_CMD"], "w").write(cmd[2])
+        # FAKEAWS_OOM_BELOW_MIB: a job of a rule named oom_* runs out of memory when it asks for
+        # less than this
+        mem = next(int(r["value"]) for r in kw["containerOverrides"]["resourceRequirements"] if r["type"] == "MEMORY")
+        oom = "'oom_" in cmd[2] and mem < int(os.environ.get("FAKEAWS_OOM_BELOW_MIB") or 0)
+        if oom:
+            cmd = ["/bin/sh", "-c", "echo killed; exit 137"]
         p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.jobs[jid] = dict(p=p, name=kw["jobName"], t=time.time(), kw=kw)
+        self.jobs[jid] = dict(p=p, name=kw["jobName"], t=time.time(), kw=kw, oom=oom)
         _rec("submit_job", queue=kw["jobQueue"], jobdef=kw["jobDefinition"],
              res=kw["containerOverrides"]["resourceRequirements"], jobName=kw["jobName"],
              tags=kw.get("tags"), propagate=kw.get("propagateTags"),
@@ -123,7 +129,8 @@ class FakeBatch:
                 j["out"] = j.get("out") or j["p"].stdout.read()
                 if os.environ.get("FAKEAWS_OUT"): open(os.environ["FAKEAWS_OUT"], "a").write(j["out"] + "\n=====\n")
                 d["container"] = {"exitCode": rc, "logStreamName": jid,
-                                  "reason": "Essential container in task exited"}
+                                  "reason": "OutOfMemoryError: Container killed due to memory usage"
+                                  if j.get("oom") else "Essential container in task exited"}
             out.append(d)
         return {"jobs": out}
 
