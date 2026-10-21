@@ -17,7 +17,7 @@ the container when the job starts instead.
 
 ## Getting started
 
-These steps take you from nothing to a finished test run, in about an hour. They assume you're
+These steps take you from nothing to a finished test run, in under an hour. They assume you're
 comfortable typing commands into a terminal, but not that you know AWS or Snakemake.
 
 It has been tested on Linux. On Windows, use [WSL](https://learn.microsoft.com/windows/wsl/install)
@@ -27,9 +27,10 @@ and run everything inside it. macOS should work but hasn't been tried.
 
 - An AWS account. Setting this up costs very little: building the machine image runs one small
   machine for about 10 minutes, and keeping the image costs well under $1 a month. The test run
-  in step 8 costs a few cents.
-- Somewhere to run commands: your laptop is fine. It has to stay on (and online) while a
-  workflow runs, because it's what tells AWS what to do next.
+  in step 5 costs a few cents.
+- Somewhere to run commands: your laptop is fine. When you run `snakemake` it has to stay on
+  (and online) until the workflow finishes, because it's what tells AWS what to do next;
+  `smkflex run` hands that to AWS instead (see [Long runs](#long-runs-smkflex)).
 
 ### 2. Install the tools
 
@@ -73,95 +74,34 @@ format empty.
 
 Check it worked: `aws sts get-caller-identity` should print your account number.
 
-### 4. Find your subnets
+### 4. Set up AWS
 
-AWS machines start inside a "subnet", a slice of your account's network. New accounts come
-with default subnets that have internet access, which is what's needed here (to download
-container images). List them:
-
-```bash
-aws ec2 describe-subnets --filters Name=default-for-az,Values=true --query 'Subnets[].SubnetId' --output text
-```
-
-You'll get two or more IDs like `subnet-0a1b2c3d`. Note them down. If the list is empty, your
-account has no default network; create one with `aws ec2 create-default-vpc` and run the
-command again.
-
-### 5. Build the machine image
-
-This starts a temporary machine from Amazon's standard image for Batch, installs Snakemake on
-it, saves the result as your own image, and removes the temporary machine. First look up
-Amazon's current standard image for your region:
+One script does the rest of the setup: it finds your account's network, builds a machine
+image with Snakemake on it, creates the queue, roles and bucket with Terraform, and writes a
+Snakemake profile for the test workflow. Use the region you picked in step 3:
 
 ```bash
-aws ssm get-parameter --name /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id --query Parameter.Value --output text
+bash scripts/setup.sh --region eu-west-1
 ```
 
-Then build (use that image ID, one of your subnets and your region):
+It asks twice before creating anything. The first time is before building the machine image,
+which takes 10 to 20 minutes. The second is after showing what Terraform will create (about 20
+new resources, nothing changed or removed). At the end it checks the whole setup and says
+`All good.`. If it stops halfway, fix what it says and run the same command again: it carries
+on where it stopped.
 
-```bash
-bash scripts/bake-ami.sh --base-ami ami-XXXXXXXX --subnet subnet-XXXXXXXX --region eu-west-1
-```
+Options: `--fargate` also creates a Fargate queue, `--spot` a cheaper Spot queue (see
+[Spot instances](#spot-instances)), and `--conda` puts conda into the image for `conda:` rules.
+`bash scripts/setup.sh --help` lists the rest. To do each step by hand instead, see
+[Setting up by hand](#setting-up-by-hand).
 
-It takes 10 to 20 minutes and ends with:
+Nothing is running (or costing money) yet: machines start when jobs arrive and stop when the
+queue is empty.
 
-```
-DONE. New standalone AMI: ami-0123456789abcdef0 (snakemake-host-env-...)
-Put this in terraform.tfvars:   ami_id = "ami-0123456789abcdef0"
-```
-
-Note that AMI ID.
-
-### 6. Create the AWS resources
-
-[Terraform](https://www.terraform.io) creates everything else from the files in `terraform/`:
-the queue jobs are sent to, the "compute environment" that starts and stops machines for that
-queue, the permissions (IAM roles) the machines and jobs need, and an S3 bucket for your files.
-
-```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-```
-
-Open `terraform.tfvars` in a text editor and fill in the region, your subnet IDs from step 4
-and the AMI ID from step 5. Then:
-
-```bash
-terraform init
-terraform plan
-```
-
-`plan` only shows what would be created. Read the last line: it should say something like
-`Plan: 12 to add, 0 to change, 0 to destroy`. If it says anything will be changed or destroyed,
-stop and check you're in the right folder and account. Otherwise create it all (type `yes` when
-asked):
-
-```bash
-terraform apply
-cd ..
-```
-
-The machines aren't started yet. The compute environment starts them when jobs arrive and
-stops them when the queue is empty, so nothing is running (or costing money) at this point.
-
-### 7. Make a profile
-
-A Snakemake "profile" is a settings file that tells Snakemake to use this plugin, your queue and
-your bucket. Terraform prints one for you. For the test workflow:
+### 5. Run the test workflow
 
 ```bash
 cd examples/smoke-test
-mkdir -p profile
-terraform -chdir=../../terraform output -raw snakemake_profile > profile/config.yaml
-printf 'default-resources: [mem_mb=512]\njobs: 5\n' >> profile/config.yaml
-cat profile/config.yaml
-```
-
-You should see lines like `executor: aws-batch-flex` and `aws-batch-flex-queue: smkflex-queue`.
-
-### 8. Run the test workflow
-
-```bash
 snakemake --profile profile
 ```
 
@@ -180,7 +120,7 @@ aws s3 cp s3://YOUR-BUCKET/snakemake/results/sum.txt -
 The first says hello from Debian and `image has NO python3`; the second is `45`. A few minutes
 later the machine shuts itself down.
 
-### 9. Your own workflow
+### 6. Your own workflow
 
 A Snakemake workflow is a file called `Snakefile` made of rules. Each rule says what files it
 makes (`output`), what it needs (`input`), which container to use, and the command to run:
@@ -202,7 +142,7 @@ there first:
 aws s3 cp data/reads.txt s3://YOUR-BUCKET/snakemake/data/reads.txt
 ```
 
-Put the `Snakefile` in a new folder, make a `profile/config.yaml` there as in step 7, and run
+Put the `Snakefile` in a new folder, copy `examples/smoke-test/profile/` there, and run
 `snakemake --profile profile`. Results appear under `s3://YOUR-BUCKET/snakemake/results/`;
 `smkflex pull results` downloads them into the folder (files already there with the same size
 are skipped; `--dry-run` only lists them).
@@ -213,7 +153,7 @@ under [Limits](#limits).
 `examples/conformance/` has one small workflow per feature (scripts, conda, checkpoints,
 Fargate, ...) if you want to see more.
 
-### 10. Costs and removing everything
+### 7. Costs and removing everything
 
 While idle, the only costs are the files in your bucket, the job logs and the stored machine
 image (all cents per month for small amounts). Job logs are deleted after 30 days
@@ -229,7 +169,7 @@ To remove everything:
 ```bash
 aws s3 rm s3://YOUR-BUCKET --recursive          # empty the bucket (deletes your results!)
 cd terraform && terraform destroy && cd ..       # remove queue, roles, bucket, ...
-bash scripts/cleanup-ami.sh --region eu-west-1 --no-tfvars ami-XXXXXXXX   # remove the machine image
+bash scripts/cleanup-ami.sh --region eu-west-1 --no-tfvars ami-XXXXXXXX   # remove the machine image (its ID is in terraform/terraform.tfvars)
 bash scripts/cleanup-jobdefs.sh --region eu-west-1                       # remove the plugin's job definitions
 ```
 
@@ -477,6 +417,96 @@ points `terraform.tfvars` at it; `terraform apply` then updates the compute envi
 in place (new instances start from the new AMI) and leaves the queue alone. Apply it while no
 jobs are running.
 
+### Setting up by hand
+
+What `scripts/setup.sh` does, step by step.
+
+#### Find your subnets
+
+AWS machines start inside a "subnet", a slice of your account's network. New accounts come
+with default subnets that have internet access, which is what's needed here (to download
+container images). List them:
+
+```bash
+aws ec2 describe-subnets --filters Name=default-for-az,Values=true --query 'Subnets[].SubnetId' --output text
+```
+
+You'll get two or more IDs like `subnet-0a1b2c3d`. Note them down. If the list is empty, your
+account has no default network; create one with `aws ec2 create-default-vpc` and run the
+command again.
+
+#### Build the machine image
+
+This starts a temporary machine from Amazon's standard image for Batch, installs Snakemake on
+it, saves the result as your own image, and removes the temporary machine. First look up
+Amazon's current standard image for your region:
+
+```bash
+aws ssm get-parameter --name /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id --query Parameter.Value --output text
+```
+
+Then build (use that image ID, one of your subnets and your region):
+
+```bash
+bash scripts/bake-ami.sh --base-ami ami-XXXXXXXX --subnet subnet-XXXXXXXX --region eu-west-1
+```
+
+It takes 10 to 20 minutes and ends with:
+
+```
+DONE. New standalone AMI: ami-0123456789abcdef0 (snakemake-host-env-...)
+Put this in terraform.tfvars:   ami_id = "ami-0123456789abcdef0"
+```
+
+Note that AMI ID.
+
+#### Create the AWS resources
+
+[Terraform](https://www.terraform.io) creates everything else from the files in `terraform/`:
+the queue jobs are sent to, the "compute environment" that starts and stops machines for that
+queue, the permissions (IAM roles) the machines and jobs need, and an S3 bucket for your files.
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+```
+
+Open `terraform.tfvars` in a text editor and fill in the region, your subnet IDs and the AMI ID
+from above. Then:
+
+```bash
+terraform init
+terraform plan
+```
+
+`plan` only shows what would be created. Read the last line: it should say something like
+`Plan: 12 to add, 0 to change, 0 to destroy`. If it says anything will be changed or destroyed,
+stop and check you're in the right folder and account. Otherwise create it all (type `yes` when
+asked):
+
+```bash
+terraform apply
+cd ..
+```
+
+The machines aren't started yet. The compute environment starts them when jobs arrive and
+stops them when the queue is empty, so nothing is running (or costing money) at this point.
+
+#### Make a profile
+
+A Snakemake "profile" is a settings file that tells Snakemake to use this plugin, your queue and
+your bucket. Terraform prints one for you. For the test workflow:
+
+```bash
+cd examples/smoke-test
+mkdir -p profile
+terraform -chdir=../../terraform output -raw snakemake_profile > profile/config.yaml
+printf 'default-resources: [mem_mb=512]\njobs: 5\n' >> profile/config.yaml
+cat profile/config.yaml
+```
+
+You should see lines like `executor: aws-batch-flex` and `aws-batch-flex-queue: smkflex-queue`.
+
 ### Without the machine image
 
 To try the plugin on an existing Batch queue without building an AMI, set
@@ -496,7 +526,8 @@ mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`
 checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
 from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating
 the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
-Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job, and cancelling one, jobs on the Spot queue, the usage and cost table, retrying a job that ran out of memory with more.
+Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job, and cancelling one, jobs on the Spot queue, the usage and cost table, retrying a job that ran out of memory with more, the whole setup with `scripts/setup.sh`
+(a second, separate setup in the same account).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 `--aws-batch-flex-volumes`, a single Ctrl-C.

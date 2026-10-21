@@ -1,8 +1,8 @@
 # Setup
 
-You need a Batch queue whose instances have the Snakemake environment. The repository has a
-script that builds the AMI and Terraform for the queue, compute environment, roles and S3
-bucket; the [README](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex#getting-started)
+You need a Batch queue whose instances have the Snakemake environment. In the repository,
+`bash scripts/setup.sh --region eu-west-1` builds the AMI, creates the queue, compute
+environment, roles and S3 bucket with Terraform, and writes a profile; the [README](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex#getting-started)
 walks through it step by step, from an empty AWS account to a finished test run.
 
 To try the plugin on an existing queue without building an AMI, set
