@@ -251,6 +251,9 @@ check, since after `terraform destroy` nothing uses it any more.
 - **A job fails.** Snakemake prints the end of the job's log. Full logs are in the AWS console
   under **CloudWatch** > **Log groups** > `/aws/batch/smkflex` (`/aws/batch/` plus the `name` from
   `terraform.tfvars`; `/aws/batch/job` without the Terraform setup).
+- **Not sure what's wrong?** Run `smkflex check` in your workflow folder (or `smkflex check
+  --profile DIR`). It checks your AWS login, the queue, the roles, that it can write to the
+  bucket, and the Snakemake versions, and says what to fix.
 - **"Startup check failed".** The plugin checks the queue before submitting anything; the
   message says what's wrong (usually a typo in the queue name, or the wrong region).
 - **"IncompleteFilesException" after Snakemake was stopped.** Run again with
@@ -399,6 +402,7 @@ smkflex run                      # uses ./profile; returns once the run is submi
 smkflex logs JOB_ID --follow     # Snakemake's output, live
 smkflex status                   # recent runs
 smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
+smkflex check                    # checks the setup (also useful without smkflex run)
 ```
 
 `smkflex run` packs the workflow folder (the files git would track, or everything except

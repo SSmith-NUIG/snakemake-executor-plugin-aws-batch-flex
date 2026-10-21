@@ -133,3 +133,22 @@ def test_git_stand_in_lists_the_sent_files(tmp_path, monkeypatch):
     assert subprocess.run([os.path.join(d, "git"), "status"], capture_output=True).returncode != 0
     monkeypatch.undo()
     assert headjob.git_shim() is None  # a real git is used when there is one
+
+
+def test_check_all_good_and_with_problems(tmp_path):
+    wf = setup(tmp_path, **{"aws-batch-flex-job-role-arn": "arn:aws:iam::1:role/job"})
+    r, _ = smkflex(wf, "check")
+    assert r.returncode == 0, r.stdout + r.stderr
+    for line in ("AWS login: arn:aws:iam::1:user/tester", "queue default-queue in eu-west-1: enabled, EC2",
+                 "job role job", "head role head", "storage plugin fs installed here", ": write, read, delete"):
+        assert line in r.stdout, r.stdout
+    assert "All good." in r.stdout
+    assert not list((tmp_path / "store" / ".smkflex").glob("check-*"))  # the probe file is removed
+
+    wf = setup(tmp_path / "bad", **{"aws-batch-flex-queue": "no-such-queue",
+                                    "aws-batch-flex-job-role-arn": "arn:aws:iam::1:role/missing-role"})
+    r, _ = smkflex(wf, "check")
+    assert r.returncode == 1
+    assert "FAIL ] queue: Job queue 'no-such-queue' not found" in r.stdout
+    assert "FAIL ] Job role 'arn:aws:iam::1:role/missing-role' does not exist." in r.stdout
+    assert "2 problem(s)" in r.stdout

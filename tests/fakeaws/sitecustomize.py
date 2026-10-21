@@ -160,11 +160,27 @@ class FakeEC2:
         return {"LaunchTemplateVersions": []}
 
 
+class FakeSTS:
+    def get_caller_identity(self):
+        return {"Arn": "arn:aws:iam::1:user/tester"}
+
+
+class FakeIAM:
+    """Every role exists except ones with "missing" in the name."""
+    def get_role(self, RoleName):
+        if "missing" in RoleName:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "NoSuchEntity", "Message": "no role"}}, "GetRole")
+        return {"Role": {"RoleName": RoleName}}
+
+
 _batch = FakeBatch()
 _real = boto3.client
 def client(name, *a, **k):
     if name == "batch": return _batch
     if name == "logs": return FakeLogs(_batch)
     if name == "ec2": return FakeEC2()
+    if name == "sts": return FakeSTS()
+    if name == "iam": return FakeIAM()
     return _real(name, *a, **k)
 boto3.client = client
