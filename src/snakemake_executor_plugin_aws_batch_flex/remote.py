@@ -265,13 +265,15 @@ def cmd_run(a, snakemake_args):
 def follow(batch, logs, jid, follow_logs):
     """Print the head job's log (until it ends, with follow_logs). Returns 0 if it succeeded."""
     token, last_status, group, stream = None, None, None, None
+    ended = False
     while True:
         jobs = batch.describe_jobs(jobs=[jid])["jobs"]
         if not jobs:
             raise Fail(f"no job {jid}")
         d = jobs[0]
         status = d["status"]
-        if status != last_status and (follow_logs or status in ("SUCCEEDED", "FAILED")):
+        done = status in ("SUCCEEDED", "FAILED")
+        if status != last_status and follow_logs and not done:
             print(f"[smkflex] head job {jid}: {status}", file=sys.stderr)
             last_status = status
         c = d.get("container", {})
@@ -298,7 +300,13 @@ def follow(batch, logs, jid, follow_logs):
                 if not new or new == token:
                     break
                 token = new
-        if status in ("SUCCEEDED", "FAILED"):
+        if done and not ended and stream:
+            # the last lines can reach CloudWatch a few seconds after the job ends
+            ended = True
+            time.sleep(3)
+            continue
+        if done:
+            print(f"[smkflex] head job {jid}: {status}", file=sys.stderr)
             if status == "FAILED" and d.get("statusReason"):
                 print(f"[smkflex] {d['statusReason']}", file=sys.stderr)
             return 0 if status == "SUCCEEDED" else 1
