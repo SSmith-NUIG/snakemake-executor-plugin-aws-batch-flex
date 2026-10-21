@@ -60,6 +60,17 @@ def check_queue(batch, queue: str, platform: Optional[str] = None):
     return errors, warnings, detected
 
 
+def queue_uses_spot(batch, queue: str) -> bool:
+    """Best effort: is any compute environment behind the queue Spot (EC2 or Fargate)?"""
+    try:
+        q = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
+        ces = [o["computeEnvironment"] for o in (q[0].get("computeEnvironmentOrder", []) if q else [])]
+        envs = batch.describe_compute_environments(computeEnvironments=ces)["computeEnvironments"] if ces else []
+    except (ClientError, BotoCoreError):
+        return False
+    return any(ce.get("computeResources", {}).get("type", "").endswith("SPOT") for ce in envs)
+
+
 def check_role(iam, role_arn: str, label: str):
     """Best effort: does the role exist? Only a definite 'no such role' is an error."""
     name = role_arn.rsplit("/", 1)[-1]

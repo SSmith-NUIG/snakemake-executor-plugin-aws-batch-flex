@@ -178,8 +178,8 @@ resource "aws_batch_compute_environment" "this" {
   service_role = var.batch_service_role_arn
 
   compute_resources {
-    type                = var.use_spot ? "SPOT" : "EC2"
-    allocation_strategy = var.use_spot ? "SPOT_CAPACITY_OPTIMIZED" : "BEST_FIT_PROGRESSIVE"
+    type                = "EC2"
+    allocation_strategy = "BEST_FIT_PROGRESSIVE"
     min_vcpus           = var.min_vcpus
     max_vcpus           = var.max_vcpus
     instance_type       = var.instance_types
@@ -254,6 +254,7 @@ data "aws_iam_policy_document" "launcher" {
     resources = concat(
       [aws_batch_job_queue.this.arn],
       aws_batch_job_queue.fargate[*].arn,
+      aws_batch_job_queue.spot[*].arn,
       ["arn:aws:batch:${var.region}:${data.aws_caller_identity.me.account_id}:job-definition/snakemake-*"],
     )
   }

@@ -29,7 +29,7 @@ from .bootstrap import build_host_prelude, build_prelude, conda_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
 from .naming import batch_job_name
-from .preflight import check_queue
+from .preflight import check_queue, queue_uses_spot
 from .sizing import fargate_size
 
 ACTIVE = ("SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING")
@@ -205,6 +205,9 @@ def cmd_run(a, snakemake_args):
     if errors:
         raise Fail("; ".join(errors))
     platform = profile.get("aws-batch-flex-platform") or detected or "ec2"
+    if queue_uses_spot(batch, queue):
+        print(f"warning: queue {queue} uses Spot instances; if AWS takes the head job's instance back, "
+              "the whole run stops. Use an on-demand queue for it (--queue).", file=sys.stderr)
     if not a.force:
         running = _active_heads(batch, queue, state_key)
         if running:

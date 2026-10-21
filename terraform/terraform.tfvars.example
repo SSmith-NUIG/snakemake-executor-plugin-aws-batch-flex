@@ -13,7 +13,7 @@ root_volume_gib = 100                  # disk per instance (container images + j
 
 # Optional:
 # enable_fargate = true                # also create a Fargate queue
-# use_spot       = true                # cheaper Spot instances (can be interrupted; untested)
+# enable_spot_queue = true             # also create a Spot queue (<name>-spot-queue): much cheaper, can be interrupted
 # max_vcpus      = 256                 # upper limit on instances running at once
 # s3_bucket      = "my-bucket"         # use an existing bucket instead of creating one
 # s3_expire_days = 30                  # delete workflow files from the bucket after 30 days

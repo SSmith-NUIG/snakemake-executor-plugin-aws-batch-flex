@@ -43,7 +43,7 @@ class FakeBatch:
         return "RUNNING" if rc is None else ("SUCCEEDED" if rc == 0 else "FAILED")
 
     # Startup checks: every queue exists except "no-such-queue"; a queue whose name contains
-    # "fargate" sits on a FARGATE compute environment, all others on EC2.
+    # "fargate" sits on a FARGATE compute environment, one with "spot" on SPOT, all others on EC2.
     def describe_job_queues(self, jobQueues=None):
         names = jobQueues or ["default-queue"]
         return {"jobQueues": [
@@ -55,7 +55,7 @@ class FakeBatch:
     def describe_compute_environments(self, computeEnvironments):
         return {"computeEnvironments": [
             {"computeEnvironmentName": ce, "status": "VALID",
-             "computeResources": {"type": "FARGATE" if "fargate" in ce else "EC2",
+             "computeResources": {"type": "FARGATE" if "fargate" in ce else "SPOT" if "spot" in ce else "EC2",
                                   "ec2Configuration": [{"imageType": "ECS_AL2023", "imageIdOverride": "ami-fake"}]}}
             for ce in computeEnvironments]}
 

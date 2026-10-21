@@ -85,10 +85,6 @@ variable "ecs_image_type" {
   default = "ECS_AL2023"
 }
 
-variable "use_spot" {
-  type    = bool
-  default = false
-}
 
 variable "instance_types" {
   type    = list(string)

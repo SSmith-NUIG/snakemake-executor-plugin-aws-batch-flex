@@ -398,6 +398,23 @@ ends.
 - The head job runs the plugin version installed where you run `smkflex`, and the AMI's
   Snakemake (in `host` mode) or one installed at start.
 
+### Spot instances
+
+Spot instances are AWS's spare capacity: the same machines, usually 60-90% cheaper, but AWS can
+take one back with two minutes' warning, which kills the job on it. Batch then starts the job
+again on another machine (`spot-retries`, 2 by default; real failures aren't retried this way).
+Set `enable_spot_queue = true` in `terraform.tfvars` to get a second queue, `<name>-spot-queue`,
+next to the normal one, and send rules to it:
+
+```python
+rule call_variants:
+    resources: batch_queue="smkflex-spot-queue"
+```
+
+or make it the profile's `aws-batch-flex-queue` and send the rest to the normal queue. Keep
+very long jobs (a restart begins from scratch) and `smkflex` head jobs (losing one stops the
+run) on the normal queue.
+
 ### Private images
 
 ECR images need nothing extra: the instance role (EC2) or execution role (Fargate) pulls them,

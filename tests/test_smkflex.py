@@ -91,6 +91,14 @@ def test_refuses_a_second_run_of_the_same_workflow(tmp_path):
     assert not any(c["call"] == "submit_job" for c in calls)
 
 
+def test_warns_about_a_spot_queue(tmp_path):
+    wf = setup(tmp_path)
+    r, calls = smkflex(wf, "run", "--queue", "my-spot-queue")
+    assert r.returncode == 0, r.stderr
+    assert "uses Spot instances" in r.stderr
+    assert any(c["call"] == "submit_job" and c["queue"] == "my-spot-queue" for c in calls)
+
+
 def test_needs_remote_storage_and_a_head_role(tmp_path):
     wf = setup(tmp_path, **{"aws-batch-flex-head-role-arn": None})
     r, _ = smkflex(wf, "run")

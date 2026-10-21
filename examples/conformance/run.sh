@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|rules ...]   (default: script fanout)
+# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
-# (both need enable_fargate=true in terraform)
+# (both need enable_fargate=true in terraform), `spot` = fanout on the Spot queue (enable_spot_queue=true)
 # `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
 set -u
 N=${N:-100}
@@ -41,6 +41,8 @@ run() { # name, snakemake args...
       wrapper)    check wrapper results/wr/ref.fa.fai "^chr2	8	";;
       mixed)      check mixed results/mixed/both.txt "AWS_ECS_EC2" && check mixed results/mixed/both.txt "AWS_ECS_FARGATE";;
       disk)       check disk results/disk/check.txt "^disk ok";;
+      spot)       check spot results/total.txt "$(( N * (N - 1) / 2 ))" && grep -q "queue $SQ," conformance-spot.log \
+                    && echo "  jobs went to $SQ";;
     esac && pass+=($name) || fail+=($name)
   else echo "  snakemake FAILED (see conformance-$name.log)"; fail+=($name); fi
 }
@@ -87,6 +89,8 @@ for t in "${@:-script fanout}"; do
              XR=$(terraform -chdir=../../terraform output -raw snakemake_profile_fargate | sed -n 's/^aws-batch-flex-execution-role-arn: //p')
              run $name -s $name.smk --config fargate_queue=$FQ --aws-batch-flex-execution-role-arn "$XR" \
                --aws-batch-flex-install-prereqs -j 2;;
+      spot) SQ=$(terraform -chdir=../../terraform output -raw spot_queue_name)
+            run spot -s fanout.smk --config n_units=$N -j $N --aws-batch-flex-queue "$SQ";;
       rules) bash "$0" checkpoint group shadow benchmark retries pipe tempdir directory; exit;;
       checkpoint|group|shadow|benchmark|retries|pipe|tempdir|directory) run $name -s $name.smk -j 4;;
     esac
