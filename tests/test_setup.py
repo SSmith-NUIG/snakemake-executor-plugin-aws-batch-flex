@@ -20,8 +20,10 @@ STUB = textwrap.dedent('''\\
 
 def run(tmp_path, *args, **env_extra):
     stub = tmp_path / "aws"; stub.write_text(STUB); stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    # Terraform isn't needed before anything is created (and isn't installed in CI)
+    tf = tmp_path / "terraform"; tf.write_text("#!/bin/sh\nexit 0\n"); tf.chmod(0o755)
     log = tmp_path / "calls.log"
-    env = dict(os.environ, AWS=str(stub), AWS_STUB_LOG=str(log), **env_extra)
+    env = dict(os.environ, AWS=str(stub), TERRAFORM=str(tf), AWS_STUB_LOG=str(log), **env_extra)
     r = subprocess.run(["bash", str(SCRIPT), "--region", "eu-west-1", "--tf-dir", str(tmp_path / "tf"),
                         "--workflow-dir", str(tmp_path / "wf"), "--dry-run", *args],
                        env=env, capture_output=True, text=True, cwd=tmp_path)

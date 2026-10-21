@@ -38,7 +38,7 @@ snakemake-batch-flex-host-env = "snakemake_executor_plugin_aws_batch_flex.hosten
 smkflex = "snakemake_executor_plugin_aws_batch_flex.remote:main"
 
 [project.optional-dependencies]
-test = ["pytest", "snakemake", "snakemake-storage-plugin-fs"]
+test = ["pytest", "snakemake", "snakemake-storage-plugin-fs", "snakemake-storage-plugin-s3"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snakemake_executor_plugin_aws_batch_flex"]
