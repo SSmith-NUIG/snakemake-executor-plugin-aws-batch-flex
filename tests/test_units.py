@@ -129,3 +129,11 @@ def test_usage_hints_at_grouping_many_short_jobs():
     t = u.table()
     assert "Hint: tiny ran 25 jobs of 5 s each" in t
     assert "Hint: long" not in t and "Hint: few" not in t
+
+
+def test_keep_unneeded_temp():
+    from snakemake_executor_plugin_aws_batch_flex import _keep_unneeded_temp as k
+    cmd = "python -m snakemake --target-jobs a: --unneeded-temp-files x.db 'y z.db' --force --cores all"
+    assert k(cmd) == "python -m snakemake --target-jobs a: --force --cores all"
+    assert k("python -m snakemake --unneeded-temp-files a.db") == "python -m snakemake"
+    assert k("python -m snakemake --force") == "python -m snakemake --force"

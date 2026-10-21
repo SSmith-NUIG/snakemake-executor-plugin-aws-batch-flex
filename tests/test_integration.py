@@ -337,6 +337,25 @@ def test_out_of_memory_without_retries_says_how(tmp_path, monkeypatch):
     assert _mem(calls, "oom_big") == [1210]
     assert "run with --retries 2" in r.stdout + r.stderr
 
+
+UNUSED_TEMP = textwrap.dedent('''
+    rule all:
+        input: "x.bed"
+    rule make:
+        output: bed="x.bed", db=temp("x.db")
+        shell: "echo db > {output.db}; echo bed > {output.bed}"
+''')
+
+
+def test_temp_output_nobody_uses(tmp_path):
+    # Snakemake tells the job to delete x.db (--unneeded-temp-files) but then waits for it in
+    # storage; the plugin drops that instruction, so the job uploads it and Snakemake removes it
+    r, calls = run(tmp_path, UNUSED_TEMP)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "x.bed").read_text() == "bed\n"
+    assert not (tmp_path / "store" / "x.db").exists()
+    assert not any("--unneeded-temp-files" in c["cmdtail"] for c in calls if c["call"] == "submit_job")
+
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
                           'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')

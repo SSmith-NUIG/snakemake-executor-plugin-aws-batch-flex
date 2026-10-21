@@ -430,6 +430,14 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
     return hints
 
 
+def _keep_unneeded_temp(cmd: str) -> str:
+    """Drop --unneeded-temp-files from a job's command. Snakemake (9.x) tells the job to delete
+    temp() outputs that no other job needs, but then waits for every output in storage after
+    the job, and fails with "Missing files". Without the option the job uploads them, and
+    Snakemake removes them from storage itself as with any other temp file."""
+    return re.sub(r" --unneeded-temp-files(?: (?!-)(?:'[^']*'|\S+))+", "", cmd)
+
+
 def _out_of_memory(d: dict) -> bool:
     """Batch/ECS says why a container stopped; out of memory is OutOfMemoryError."""
     c = d.get("container") or {}
@@ -871,7 +879,7 @@ class Executor(RemoteExecutor):
             jobdef = self.jobdefs.ensure(image, platform, shm_mb, disk_gib)
             host_mount = conda_mount = True
 
-        script = f"{self._prelude_for(platform, host_mount, conda_mount)}\n{self.format_job_exec(job)}"
+        script = f"{self._prelude_for(platform, host_mount, conda_mount)}\n{_keep_unneeded_temp(self.format_job_exec(job))}"
         resource_reqs = [
             {"type": "VCPU", "value": req.vcpu},
             {"type": "MEMORY", "value": str(req.memory_mib)},
