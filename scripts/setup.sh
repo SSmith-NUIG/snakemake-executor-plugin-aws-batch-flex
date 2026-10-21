@@ -11,7 +11,8 @@
 #   bash scripts/setup.sh --region eu-west-1 --fargate --spot
 #
 # Options: --region R, --name N (prefix of everything created, default smkflex), --fargate,
-#   --spot, --conda (conda in the image, for --sdm conda), --ami ID (skip building one),
+#   --spot, --conda (conda in the image, for --sdm conda), --extra-package REQ (a Python package
+#   your Snakefile imports, e.g. pandas; repeatable), --ami ID (skip building one),
 #   --subnets a,b (default: the default subnets), --tf-dir DIR (default terraform/; another
 #   folder keeps a separate setup with its own state), --workflow-dir DIR (where the profile
 #   and the test Snakefile go; default examples/smoke-test), --dry-run (only check and print).
@@ -21,6 +22,7 @@ AWS=${AWS:-aws}
 TERRAFORM=${TERRAFORM:-terraform}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 REGION="" NAME="" AMI="" SUBNETS="" FARGATE=false SPOT=false CONDA=0 DRY=0
+EXTRA_PKGS=()
 TF_DIR="$HERE/terraform" WF_DIR="$HERE/examples/smoke-test"
 
 usage() { sed -n '2,19p' "$0"; exit 2; }
@@ -33,6 +35,7 @@ while [ $# -gt 0 ]; do
     --fargate) FARGATE=true; shift;;
     --spot) SPOT=true; shift;;
     --conda) CONDA=1; shift;;
+    --extra-package) EXTRA_PKGS+=(--extra-package "$2"); shift 2;;
     --tf-dir) TF_DIR=$2; shift 2;;
     --workflow-dir) WF_DIR=$2; shift 2;;
     --dry-run) DRY=1; shift;;
@@ -105,7 +108,7 @@ if [ -z "$AMI" ]; then
   BASE=$($AWS ssm get-parameter --name /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id \
     --query Parameter.Value --output text)
   LOG=$(mktemp)
-  EXTRA=(); [ "$CONDA" = 1 ] && EXTRA=(--conda)
+  EXTRA=("${EXTRA_PKGS[@]}"); [ "$CONDA" = 1 ] && EXTRA+=(--conda)
   bash "$HERE/scripts/bake-ami.sh" --base-ami "$BASE" --subnet "${SUBNET_LIST[0]}" --region "$REGION" "${EXTRA[@]}" | tee "$LOG"
   AMI=$(sed -n 's/^DONE\. New standalone AMI: \(ami-[0-9a-f]*\).*/\1/p' "$LOG")
   rm -f "$LOG"

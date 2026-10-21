@@ -54,6 +54,8 @@ def test_known_problem_hints():
     two = hints(["snakemake: error: unrecognized arguments: --storage-gcs-project x --storage-http-retries 5"])
     assert len(two) == 2 and "snakemake-storage-plugin-gcs" in two[0] and "plugin-http" in two[1]
     assert "versions are probably too far apart" in hints(["error: unrecognized arguments: --new-flag"])[0]
+    h = hints(['ModuleNotFoundError in file "x/common.smk", line 3:', "ModuleNotFoundError: No module named 'pandas'"])
+    assert len(h) == 1 and "update-ami.sh --extra-package pandas" in h[0]
     assert "ran out of disk" in hints(["cp: error writing 'x': No space left on device"])[0]
     assert hints(["all fine"]) == []
 

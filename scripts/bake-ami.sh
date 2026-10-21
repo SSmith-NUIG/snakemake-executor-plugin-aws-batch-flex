@@ -17,13 +17,14 @@ ENV_PATH=/opt/snakemake-env
 STAMP=$(date +%Y%m%d-%H%M%S)
 NAME="snakemake-host-env-$STAMP"
 PLUGINS=()
+EXTRA_PKGS=()
 TIMEOUT=${SMK_BAKE_TIMEOUT:-1200}            # builder: boot + install + stop
 IMAGE_TIMEOUT=${SMK_BAKE_IMAGE_TIMEOUT:-3600}  # snapshot + register the AMI
 DRY_RUN=0
 BASE="" SUBNET="" REGION=""
 CONDA=0; CONDA_PATH=/opt/miniforge3; CONDA_ENVS=()
 
-usage() { sed -n '2,12p' "$0"; echo "options: --base-ami --subnet --region [--name N] [--instance-type T] [--storage-plugin s3 ...] [--env-path P] [--conda] [--conda-path P] [--conda-env env.yaml ...] [--dry-run]"; exit 2; }
+usage() { sed -n '2,12p' "$0"; echo "options: --base-ami --subnet --region [--name N] [--instance-type T] [--storage-plugin s3 ...] [--extra-package REQ ...] [--env-path P] [--conda] [--conda-path P] [--conda-env env.yaml ...] [--dry-run]"; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --base-ami) BASE=$2; shift 2;;
@@ -32,6 +33,7 @@ while [ $# -gt 0 ]; do
     --name) NAME=$2; shift 2;;
     --instance-type) INSTANCE_TYPE=$2; shift 2;;
     --storage-plugin) PLUGINS+=("$2"); shift 2;;
+    --extra-package) EXTRA_PKGS+=("$2"); shift 2;;
     --env-path) ENV_PATH=$2; shift 2;;
     --conda) CONDA=1; shift;;
     --conda-path) CONDA=1; CONDA_PATH=$2; shift 2;;
@@ -47,6 +49,8 @@ command -v snakemake-batch-flex-host-env >/dev/null || { echo "snakemake-batch-f
 
 PLUGIN_ARGS=()
 for p in "${PLUGINS[@]}"; do PLUGIN_ARGS+=(--storage-plugin "$p"); done
+# Python packages the workflow's own code imports (Snakemake reads the Snakefile in every job)
+for p in "${EXTRA_PKGS[@]}"; do PLUGIN_ARGS+=(--extra-package "$p"); done
 INSTALLER=$(snakemake-batch-flex-host-env script --path "$ENV_PATH" "${PLUGIN_ARGS[@]}")
 # the Snakemake version going into the AMI; tagged on the image so the plugin can compare it
 SMK_VERSION=$(printf '%s\n' "$INSTALLER" | grep -o 'snakemake==[0-9][0-9.]*' | head -1 | cut -d= -f3)
@@ -86,7 +90,7 @@ UD=$(mktemp)
 
 echo "base AMI (read-only use): $BASE   region: $REGION   subnet: $SUBNET"
 [ "$(wc -c < "$UD")" -le 16000 ] || { echo "builder user-data is over EC2's 16 KB limit: use fewer or smaller --conda-env files" >&2; exit 1; }
-echo "new AMI name: $NAME   env path: $ENV_PATH   storage plugins: ${PLUGINS[*]}"
+echo "new AMI name: $NAME   env path: $ENV_PATH   storage plugins: ${PLUGINS[*]}   extra packages: ${EXTRA_PKGS[*]:-none}"
 if [ "$DRY_RUN" = 1 ]; then echo "--dry-run: nothing created. Builder user-data:"; cat "$UD"; rm -f "$UD"; exit 0; fi
 
 TAGS='{Key=ManagedBy,Value=snakemake-batch-flex}'

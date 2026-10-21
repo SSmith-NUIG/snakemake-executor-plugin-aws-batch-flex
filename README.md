@@ -434,6 +434,22 @@ aws-batch-flex-execution-role-arn: arn:aws:iam::123456789012:role/my-exec-role
 Only images from that registry get the credentials. ECS reads the secret with the execution
 role, so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the secret.
 
+### Python packages your Snakefile imports
+
+Snakemake reads the Snakefile not only where you start it but again inside every job, so a
+package the Snakefile (or a file it `include:`s) imports at the top, like `import pandas`, is
+needed in the jobs as well. Many published pipelines do this. Put it into the machine image:
+
+```bash
+bash scripts/update-ami.sh --subnet subnet-XXXX --region eu-west-1 --extra-package pandas
+```
+
+(or `setup.sh --extra-package pandas` for a new setup; repeat it for more packages). Jobs that
+install Snakemake at start (Fargate, `bootstrap: auto`) take
+`aws-batch-flex-extra-packages: [pandas]` in the profile instead. It has to be installed where
+you run `snakemake`, too. A job that fails this way says which package it was. Packages that
+only a `script:` uses belong in that rule's image or conda env instead.
+
 ### Conda and wrappers
 
 Run with `--sdm conda`. Jobs need `conda`: either the image has it, or bake Miniforge into

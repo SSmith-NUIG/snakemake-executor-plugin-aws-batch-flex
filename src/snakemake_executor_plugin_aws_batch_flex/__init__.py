@@ -398,6 +398,15 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
             f"plugin's options to its jobs. Uninstall it here (pip uninstall "
             f"snakemake-storage-plugin-{name}) or bake an AMI with --storage-plugin {name}."
         )
+    missing = sorted(set(re.findall(r"ModuleNotFoundError: No module named '([A-Za-z0-9_.]+)'", text)))
+    for mod in missing:
+        hints.append(
+            f"  hint: Python couldn't import {mod}. If the Snakefile (or a file it includes) imports "
+            f"it, it's needed in every job too, because Snakemake reads the Snakefile there as well: "
+            f"add it to the AMI with scripts/update-ami.sh --extra-package {mod.split('.')[0]} (the pip "
+            f"name can differ), or to --aws-batch-flex-extra-packages for jobs that install Snakemake "
+            f"at start. If a script: imports it, it belongs in the rule's image or conda env."
+        )
     if "No space left on device" in text:
         hints.append(
             "  hint: the job ran out of disk. On EC2, all jobs on an instance share its disk "
