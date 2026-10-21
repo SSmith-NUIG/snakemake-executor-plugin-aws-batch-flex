@@ -59,11 +59,16 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     head = next(c for c in calls if c["call"] == "submit_job" and c["jobName"] == "smkflex-wf")
     assert head["tags"]["smkflex-workflow"] == "wf"
     assert {"type": "MEMORY", "value": "2048"} in head["res"]
-    bundles = list((store / ".smkflex" / "wf" / "runs").glob("*/workflow.tar.gz"))
-    names = tarfile.open(bundles[0]).getnames()
+    # the head job removes the uploaded workflow when it's done
+    assert not list((store / ".smkflex" / "wf" / "runs").glob("*/workflow.tar.gz"))
+    import io
+    from snakemake_executor_plugin_aws_batch_flex.remote import make_bundle
+    bundle = io.BytesIO(make_bundle(str(wf), str(wf / "profile"), 100))
+    names = tarfile.open(fileobj=bundle).getnames()
     assert "Snakefile" in names and ".smkflex/profile/config.yaml" in names and ".smkflex/head.py" in names
     assert ".smkflex/site/snakemake_executor_plugin_aws_batch_flex/__init__.py" in names
-    assert tarfile.open(bundles[0]).extractfile(".smkflex/files.txt").read().decode().split() == ["Snakefile", "profile/config.yaml"]
+    bundle.seek(0)
+    assert tarfile.open(fileobj=bundle).extractfile(".smkflex/files.txt").read().decode().split() == ["Snakefile", "profile/config.yaml"]
     assert not any(n.startswith(".snakemake") for n in names)
     state = tarfile.open(store / ".smkflex" / "wf" / "state.tar.gz").getnames()
     assert any(n.startswith(".snakemake/metadata") for n in state)

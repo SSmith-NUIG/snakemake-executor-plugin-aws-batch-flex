@@ -111,3 +111,17 @@ def test_usage_summary():
     assert qc[1:4] == ["2", "1.00", "2.00"]
     assert "total" in t
     assert Usage().table() is None
+
+
+def test_usage_hints_at_grouping_many_short_jobs():
+    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    u = Usage()
+    for i in range(25):
+        u.add("tiny", {"startedAt": 0, "stoppedAt": 5000}, 1, 1024, "ec2", False)
+    for i in range(25):
+        u.add("long", {"startedAt": 0, "stoppedAt": 600000}, 1, 1024, "ec2", False)
+    for i in range(5):
+        u.add("few", {"startedAt": 0, "stoppedAt": 5000}, 1, 1024, "ec2", False)
+    t = u.table()
+    assert "Hint: tiny ran 25 jobs of 5 s each" in t
+    assert "Hint: long" not in t and "Hint: few" not in t

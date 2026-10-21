@@ -4,6 +4,7 @@
 The cost is a rough estimate at list prices. On EC2 you pay for whole instances, so their idle
 time and how well jobs fill them aren't in it; neither are storage, data transfer or logs."""
 
+import statistics
 from collections import defaultdict
 from typing import Optional
 
@@ -13,6 +14,11 @@ SPOT_FACTOR = 0.35  # Spot is typically 60-70% below on-demand
 FARGATE_PER_VCPU_HOUR = 0.0405
 FARGATE_PER_GB_HOUR = 0.0045
 FARGATE_SPOT_FACTOR = 0.3
+
+# A Batch job costs roughly 30-60 s on top of its command (scheduling, starting the container,
+# copying files from and to storage), so many short jobs of one rule are better grouped.
+SHORT_JOB_SECONDS = 60
+MANY_JOBS = 20
 
 
 def _seconds(d: dict) -> float:
@@ -31,9 +37,13 @@ def estimate(platform: str, spot: bool, vcpu_hours: float, gib_hours: float) -> 
 class Usage:
     def __init__(self):
         self.rows = defaultdict(lambda: [0, 0.0, 0.0, 0.0])  # rule -> jobs, vCPU-h, GiB-h, USD
+        self.seconds = defaultdict(list)  # rule -> run time of each job that ran
 
     def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str, spot: bool):
-        hours = _seconds(d) / 3600
+        secs = _seconds(d)
+        if secs:
+            self.seconds[rule].append(secs)
+        hours = secs / 3600
         row = self.rows[rule]
         row[0] += 1
         row[1] += vcpu * hours
@@ -58,4 +68,11 @@ class Usage:
             total = [total[0] + n, total[1] + v, total[2] + g, total[3] + c]
         if len(self.rows) > 1:
             lines.append(f"  {'total':<{width}}  {total[0]:>5}  {total[1]:>8.2f}  {total[2]:>8.2f}  {usd(total[3]):>8}")
+        for rule, secs in sorted(self.seconds.items()):
+            if len(secs) >= MANY_JOBS and statistics.median(secs) < SHORT_JOB_SECONDS:
+                lines.append(
+                    f"Hint: {rule} ran {len(secs)} jobs of {statistics.median(secs):.0f} s each (median). Every "
+                    "Batch job adds about 30-60 s of overhead, so grouping them makes the run faster: "
+                    "see \"Many small jobs\" in the plugin's README."
+                )
         return "\n".join(lines)

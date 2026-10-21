@@ -49,6 +49,14 @@ def put(url, data):
             f.write(data)
 
 
+def delete(url):
+    if url.startswith("s3://"):
+        s3, bucket, key = _s3(url)
+        s3.delete_object(Bucket=bucket, Key=key)
+    elif os.path.exists(url):
+        os.remove(url)
+
+
 def unpack(data, dest):
     with tarfile.open(fileobj=io.BytesIO(data)) as t:
         if hasattr(tarfile, "data_filter"):
@@ -120,6 +128,12 @@ def main(argv):
         print("[smkflex] saved .snakemake state", file=sys.stderr)
     except Exception as e:
         print(f"[smkflex] could not save .snakemake state: {e!r}", file=sys.stderr)
+    bundle = os.environ.get("SMKFLEX_BUNDLE_URL")
+    if bundle:  # the uploaded workflow isn't needed any more
+        try:
+            delete(bundle)
+        except Exception as e:
+            print(f"[smkflex] could not remove {bundle}: {e!r}", file=sys.stderr)
     print(f"[smkflex] snakemake exited with {rc}", file=sys.stderr)
     return rc
 

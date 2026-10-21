@@ -322,6 +322,28 @@ the real figures: the instances are tagged `ManagedBy=snakemake-batch-flex`, whi
 by once it's switched on under **Billing** > **Cost allocation tags**. Turn the table off with
 `no-cost-summary`.
 
+### Many small jobs
+
+Every Batch job costs about 30-60 seconds on top of its command: Batch has to schedule it,
+start its container and copy its files from and to the bucket. For a rule with thousands of
+jobs that take a few seconds each, that overhead is most of the run. Snakemake can put many
+of them into one Batch job:
+
+```python
+rule index_reads:
+    input: "reads/{sample}.fq"
+    output: "index/{sample}.idx"
+    group: "index"
+    shell: "..."
+```
+
+and then run with `--group-components index=50` (or `group-components: [index=50]` in the
+profile): each Batch job then does 50 of them. The jobs in one group run in one container, so
+the rules in a group must use the same image; how Snakemake adds up their CPU and memory is in
+its [grouping docs](https://snakemake.readthedocs.io/en/stable/executing/grouping.html). When a
+rule ran at least 20 jobs with a median of under a minute, the table at the end of the run
+suggests this.
+
 ### Interrupted runs
 
 If `snakemake` is killed or loses its connection, its Batch jobs keep running, and a restart
@@ -351,8 +373,9 @@ smkflex pull results             # downloads results/ from the bucket into this 
 
 `smkflex run` packs the workflow folder (the files git would track, or everything except
 `.snakemake/` outside a git checkout) together with the profile, uploads it next to your
-workflow's files in the bucket, and submits one "head job" that runs `snakemake` there. Your
-machine can be switched off once it returns. Anything after the options goes to Snakemake,
+workflow's files in the bucket (the head job removes the upload again when it's done), and
+submits one "head job" that runs `snakemake` there. Your machine can be switched off once it
+returns. Anything after the options goes to Snakemake,
 e.g. `smkflex run -- --forceall all`; `--wait` stays attached and prints the log until the run
 ends.
 

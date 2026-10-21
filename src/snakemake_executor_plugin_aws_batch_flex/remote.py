@@ -245,6 +245,7 @@ def cmd_run(a, snakemake_args):
     if platform == "fargate":
         vcpu, mem = fargate_size(a.vcpus, a.mem_mb)
     env = [{"name": "AWS_REGION", "value": region}, {"name": "AWS_DEFAULT_REGION", "value": region}] if region else []
+    env.append({"name": "SMKFLEX_BUNDLE_URL", "value": bundle_url})
     resp = batch.submit_job(
         jobName=batch_job_name(f"smkflex-{name}"),
         jobQueue=queue,
