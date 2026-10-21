@@ -203,7 +203,9 @@ aws s3 cp data/reads.txt s3://YOUR-BUCKET/snakemake/data/reads.txt
 ```
 
 Put the `Snakefile` in a new folder, make a `profile/config.yaml` there as in step 7, and run
-`snakemake --profile profile`. Results appear under `s3://YOUR-BUCKET/snakemake/results/`.
+`snakemake --profile profile`. Results appear under `s3://YOUR-BUCKET/snakemake/results/`;
+`smkflex pull results` downloads them into the folder (files already there with the same size
+are skipped; `--dry-run` only lists them).
 The [Snakemake tutorial](https://snakemake.readthedocs.io/en/stable/tutorial/tutorial.html)
 explains rules, wildcards and the rest; everything in it works here, with the differences listed
 under [Limits](#limits).
@@ -404,6 +406,7 @@ smkflex logs JOB_ID --follow     # Snakemake's output, live
 smkflex status                   # recent runs
 smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
 smkflex check                    # checks the setup (also useful without smkflex run)
+smkflex pull results             # downloads results/ from the bucket into this folder
 ```
 
 `smkflex run` packs the workflow folder (the files git would track, or everything except

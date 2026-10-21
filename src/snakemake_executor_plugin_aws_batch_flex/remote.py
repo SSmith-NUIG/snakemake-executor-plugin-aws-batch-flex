@@ -364,6 +364,72 @@ def cmd_status(a):
     return 0
 
 
+def _remote_files(prefix, path, s3):
+    """(relative path, size) of the files under prefix/path, in storage."""
+    path = path.strip("/")
+    if prefix.startswith("s3://"):
+        bucket, _, base = prefix[len("s3://"):].partition("/")
+        base = base.strip("/")
+        key = f"{base}/{path}" if base else path
+        out = []
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key):
+            for o in page.get("Contents", []):
+                rel = o["Key"][len(base) + 1:] if base else o["Key"]
+                # "results" must not also match "results2/..."
+                if rel == path or rel.startswith(path + "/") or not path:
+                    out.append((rel, o["Size"]))
+        return out
+    root = os.path.join(prefix, path)
+    if os.path.isfile(root):
+        return [(path, os.path.getsize(root))]
+    out = []
+    for d, _dirs, names in os.walk(root):
+        for n in names:
+            full = os.path.join(d, n)
+            out.append((os.path.relpath(full, prefix), os.path.getsize(full)))
+    return sorted(out)
+
+
+def cmd_pull(a):
+    _dir, profile = _load_profile(a.profile)
+    prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
+    if not prefix:
+        raise Fail("no default-storage-prefix in the profile")
+    region = profile.get("aws-batch-flex-region")
+    s3 = boto3.client("s3", config=BotoConfig(region_name=region)) if prefix.startswith("s3://") else None
+    if not a.paths:
+        tops = sorted({rel.split("/")[0] for rel, _ in _remote_files(prefix, "", s3)
+                       if not rel.startswith((".smkflex/", "snakemake-workflow-sources."))})
+        raise Fail("say what to download, e.g. `smkflex pull results`. In storage: " + (", ".join(tops) or "nothing"))
+    got = skipped = 0
+    for path in a.paths:
+        files = _remote_files(prefix, path, s3)
+        if not files:
+            print(f"nothing in storage under {path}", file=sys.stderr)
+        for rel, size in files:
+            dest = os.path.join(a.to, rel)
+            if not a.force and os.path.isfile(dest) and os.path.getsize(dest) == size:
+                skipped += 1
+                continue
+            if a.dry_run:
+                print(f"would download {rel} ({size} bytes)")
+                continue
+            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+            if s3:
+                bucket, _, base = prefix[len("s3://"):].partition("/")
+                key = f"{base.strip('/')}/{rel}" if base.strip("/") else rel
+                s3.download_file(bucket, key, dest)
+            else:
+                with open(os.path.join(prefix, rel), "rb") as src, open(dest, "wb") as out:
+                    out.write(src.read())
+            print(f"downloaded {rel}")
+            got += 1
+    if not a.dry_run:
+        print(f"{got} downloaded, {skipped} already here (same size; --force downloads them again)"
+              if skipped else f"{got} downloaded")
+    return 0
+
+
 def cmd_check(a):
     """Check the setup from this machine, one line per check, with what to do about failures."""
     results = []
@@ -504,6 +570,12 @@ def main(argv=None):
         s.add_argument("--region")
         if name == "logs":
             s.add_argument("--follow", "-f", action="store_true")
+    s = sub.add_parser("pull", help="download files or folders from the workflow's storage, e.g. results")
+    s.add_argument("paths", nargs="*", help="paths as the workflow names them, e.g. results or results/summary.tsv")
+    s.add_argument("--profile")
+    s.add_argument("--to", default=".", help="folder to download into (default: here)")
+    s.add_argument("--dry-run", action="store_true", help="only list what would be downloaded")
+    s.add_argument("--force", action="store_true", help="download files that are already here too")
     s = sub.add_parser("check", help="check the setup (AWS login, queue, roles, storage, versions)")
     s.add_argument("--profile")
     s = sub.add_parser("status", help="list recent runs")
@@ -519,7 +591,8 @@ def main(argv=None):
     try:
         if a.cmd == "run":
             return cmd_run(a, extra)
-        return {"logs": cmd_logs, "cancel": cmd_cancel, "status": cmd_status, "check": cmd_check}[a.cmd](a)
+        return {"logs": cmd_logs, "cancel": cmd_cancel, "status": cmd_status, "check": cmd_check,
+                "pull": cmd_pull}[a.cmd](a)
     except Fail as e:
         print(f"smkflex: {e}", file=sys.stderr)
         return 2

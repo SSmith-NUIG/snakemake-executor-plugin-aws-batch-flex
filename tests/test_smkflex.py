@@ -152,3 +152,22 @@ def test_check_all_good_and_with_problems(tmp_path):
     assert "FAIL ] queue: Job queue 'no-such-queue' not found" in r.stdout
     assert "FAIL ] Job role 'arn:aws:iam::1:role/missing-role' does not exist." in r.stdout
     assert "2 problem(s)" in r.stdout
+
+
+def test_pull(tmp_path):
+    wf = setup(tmp_path)
+    store = tmp_path / "store"
+    for rel, text in (("results/a.txt", "A"), ("results/sub/b.txt", "BB"), ("results2/c.txt", "C"),
+                      (".smkflex/wf/state.tar.gz", "x")):
+        (store / rel).parent.mkdir(parents=True, exist_ok=True)
+        (store / rel).write_text(text)
+    r, _ = smkflex(wf, "pull")
+    assert r.returncode == 2 and "In storage: results, results2" in r.stderr
+    r, _ = smkflex(wf, "pull", "results")
+    assert r.returncode == 0, r.stderr
+    assert (wf / "results/a.txt").read_text() == "A" and (wf / "results/sub/b.txt").read_text() == "BB"
+    assert not (wf / "results2").exists()
+    r, _ = smkflex(wf, "pull", "results")
+    assert "0 downloaded, 2 already here" in r.stdout
+    r, _ = smkflex(wf, "pull", "results2/c.txt", "--to", str(tmp_path / "out"), "--dry-run")
+    assert "would download results2/c.txt" in r.stdout and not (tmp_path / "out").exists()
