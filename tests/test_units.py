@@ -56,6 +56,8 @@ def test_known_problem_hints():
     assert "versions are probably too far apart" in hints(["error: unrecognized arguments: --new-flag"])[0]
     h = hints(['ModuleNotFoundError in file "x/common.smk", line 3:', "ModuleNotFoundError: No module named 'pandas'"])
     assert len(h) == 1 and "update-ami.sh --extra-package pandas" in h[0]
+    h = hints(["botocore.exceptions.ClientError: An error occurred (403) when calling the HeadObject operation: Forbidden"])
+    assert len(h) == 1 and "job role" in h[0] and "s3_prefix" in h[0]
     assert "ran out of disk" in hints(["cp: error writing 'x': No space left on device"])[0]
     assert hints(["all fine"]) == []
 

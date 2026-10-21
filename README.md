@@ -193,6 +193,13 @@ check, since after `terraform destroy` nothing uses it any more.
 - **A job fails.** Snakemake prints the end of the job's log. Full logs are in the AWS console
   under **CloudWatch** > **Log groups** > `/aws/batch/smkflex` (`/aws/batch/` plus the `name` from
   `terraform.tfvars`; `/aws/batch/job` without the Terraform setup).
+- **A job fails with "403" or "Forbidden" from S3.** Jobs use the job role, not your login,
+  and the Terraform setup only lets it use `s3://BUCKET/snakemake/`. Keep
+  `default-storage-prefix` inside that folder (e.g. `s3://BUCKET/snakemake/project-x`).
+- **"Ignoring source file ../workflow/...".** Snakemake only sends the jobs code that's inside
+  the folder you start it from, so start it from the top of the pipeline (not with
+  `--directory` pointing at a subfolder). Published pipelines' tests often use
+  `--directory .test`; run from the top with `--configfile .test/...` instead.
 - **Not sure what's wrong?** Run `smkflex check` in your workflow folder (or `smkflex check
   --profile DIR`). It checks your AWS login, the queue, the roles, that it can write to the
   bucket, and the Snakemake versions, and says what to fix.
@@ -579,9 +586,6 @@ Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex`
 (a second, separate setup in the same account).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
-`--aws-batch-flex-volumes`, a single Ctrl-C.
-Not tested yet: `notebook:`, Julia, GPU, a Spot instance being taken back mid-job (the
-retry is only tested against the fake Batch).
 
 ### Limits
 

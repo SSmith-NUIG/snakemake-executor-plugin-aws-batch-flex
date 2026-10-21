@@ -407,6 +407,13 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
             f"name can differ), or to --aws-batch-flex-extra-packages for jobs that install Snakemake "
             f"at start. If a script: imports it, it belongs in the rule's image or conda env."
         )
+    if re.search(r"\(403\).*(HeadObject|GetObject|PutObject|ListObjects).*Forbidden|AccessDenied.*(GetObject|PutObject)", text):
+        hints.append(
+            "  hint: the job wasn't allowed to read or write the bucket. Jobs use the job role "
+            "(aws-batch-flex-job-role-arn), not your own login, and the Terraform setup only lets "
+            "it use the s3_prefix folder (s3://BUCKET/snakemake/...). Keep default-storage-prefix "
+            "inside that folder, or give the role access to the other one."
+        )
     if "No space left on device" in text:
         hints.append(
             "  hint: the job ran out of disk. On EC2, all jobs on an instance share its disk "
