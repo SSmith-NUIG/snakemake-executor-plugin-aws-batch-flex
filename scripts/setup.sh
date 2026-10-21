@@ -168,7 +168,7 @@ P="$WF_DIR/profile/config.yaml"
 [ -f "$P" ] && cp "$P" "$P.bak" && echo "(the old profile is in $P.bak)"
 {
   $TERRAFORM -chdir="$TF_DIR" output -raw snakemake_profile
-  echo "default-resources: [mem_mb=512]"
+  echo "default-resources: [mem_mb=4000]   # many pipelines set no memory; 4 GB suits most tools"
   echo "jobs: 5"
   if [ "$CONDA" = 1 ]; then echo "aws-batch-flex-conda-path: /opt/miniforge3"; fi
 } > "$P"

@@ -232,7 +232,7 @@ rule align:
 |---|---|
 | `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
 | `threads: 8` | Number of vCPUs requested. |
-| `mem_mb=16000` (or `mem_mib`) | Memory requested. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). |
+| `mem_mb=16000` (or `mem_mib`) | Memory requested. Many published pipelines don't set it, so the profile's `default-resources: [mem_mb=4000]` (what `setup.sh` writes) is what most rules get. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). |
 | `runtime=120` | Minutes before Batch stops the job (timeout). To give every rule a timeout, put `runtime` in the profile's `default-resources`. |
 | `batch_shm_mb=4096` | Size of `/dev/shm` (Docker's default is 64 MB), for tools that use shared memory, e.g. bwa-mem2 or PyTorch data loaders. What's stored there counts towards `mem_mb`. EC2 only. `shared_memory_size_mb` also works. |
 | `disk_mb=100000` | Fargate: scratch disk for the job (default 20 GiB, up to 200), rounded up to 25 GiB steps. Snakemake sets it to twice the input size by default, which is used too. EC2: ignored; see [Limits](#limits). |
