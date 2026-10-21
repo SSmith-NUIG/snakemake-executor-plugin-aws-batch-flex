@@ -441,6 +441,36 @@ aws-batch-flex-execution-role-arn: arn:aws:iam::123456789012:role/my-exec-role
 Only images from that registry get the credentials. ECS reads the secret with the execution
 role, so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the secret.
 
+### Running a published pipeline
+
+Pipelines from e.g. the [Snakemake workflow catalog](https://snakemake.github.io/snakemake-workflow-catalog/)
+run unchanged. Tested with
+[rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) (53 jobs,
+13 minutes, about $0.10 of compute on its yeast test data):
+
+```bash
+git clone https://github.com/snakemake-workflows/rna-seq-star-deseq2 && cd rna-seq-star-deseq2
+cp .test/config_basic/config.yaml config/config.yaml          # its test config (or your own)
+aws s3 cp --recursive .test/ngs-test-data/reads s3://BUCKET/snakemake/rnaseq/ngs-test-data/reads
+snakemake --profile PROFILE --default-storage-prefix s3://BUCKET/snakemake/rnaseq \
+  --config samples=.test/config_basic/samples.tsv units=.test/config_basic/units.tsv \
+  --default-resources mem_mb=4000 --sdm conda --max-threads 4 --retries 2 -j 20
+```
+
+What to watch for with any published pipeline:
+
+- **Start from its top folder.** Snakemake only sends the jobs code from inside the folder it
+  starts in, so don't use `--directory .test` the way the pipelines' own tests do. Put the config
+  you want at `config/config.yaml` instead of passing `--configfile`: the pipeline loads its
+  example config anyway, and Snakemake merges the two, so leftover example settings can break a
+  run.
+- **Input files go into the bucket**, under the storage prefix, at the paths the config names.
+- **Memory:** most pipelines don't set it per rule, so `default-resources: [mem_mb=4000]` (or
+  more) is what their rules get; `--set-resources RULE:mem_mb=N` for the ones that need more.
+  Rules asking for many threads are capped with `--max-threads`.
+- **Packages its Snakefile imports** (often pandas) must be in the machine image (next section).
+- **`--retries 2`** covers jobs that run out of memory and flaky downloads (e.g. Ensembl).
+
 ### Python packages your Snakefile imports
 
 Snakemake reads the Snakefile not only where you start it but again inside every job, so a
@@ -583,7 +613,8 @@ checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling 
 from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating
 the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
 Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from a folder and with `--git`), and cancelling one, jobs on the Spot queue, the usage and cost table (and its hint about many short jobs), retrying a job that ran out of memory with more, the whole setup with `scripts/setup.sh`
-(a second, separate setup in the same account).
+(a second, separate setup in the same account), and the published rna-seq-star-deseq2 pipeline
+on its test data.
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 
