@@ -67,6 +67,32 @@ def save_state(url):
     put(url, buf.getvalue())
 
 
+GIT_SHIM = """#!{python}
+# Stand-in for git, which the image doesn't have: Snakemake runs `git ls-files` to find the
+# workflow's source files, and these are exactly the files smkflex sent.
+import sys
+if sys.argv[1:2] == ["ls-files"]:
+    sys.stdout.write(open({files!r}).read())
+else:
+    sys.exit("git is not installed in the head job's image (smkflex only provides git ls-files)")
+"""
+
+
+def git_shim():
+    """Directory with a stand-in `git`, or None when the image has a real one."""
+    import shutil
+
+    if shutil.which("git"):
+        return None
+    d = os.path.abspath(os.path.join(".smkflex", "bin"))
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, "git")
+    with open(path, "w") as f:
+        f.write(GIT_SHIM.format(python=sys.executable, files=os.path.abspath(".smkflex/files.txt")))
+    os.chmod(path, 0o755)
+    return d
+
+
 def main(argv):
     state_url, args = argv[0], argv[1:]
     state = get(state_url)
@@ -76,6 +102,9 @@ def main(argv):
     site = os.path.abspath(os.path.join(".smkflex", "site"))
     env = dict(os.environ)
     env["PYTHONPATH"] = site + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    shim = git_shim()
+    if shim:
+        env["PATH"] = shim + os.pathsep + env.get("PATH", "")
     cmd = [sys.executable, "-m", "snakemake", "--profile", ".smkflex/profile", *args]
     print("[smkflex] " + " ".join(cmd), file=sys.stderr, flush=True)
     proc = subprocess.Popen(cmd, env=env)

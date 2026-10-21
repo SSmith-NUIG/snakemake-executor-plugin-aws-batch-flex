@@ -45,7 +45,8 @@ _FETCH = (
     " data=boto3.client('s3').get_object(Bucket=b,Key=k)['Body'].read()\n"
     "else:\n"
     " data=open(u,'rb').read()\n"
-    "tarfile.open(fileobj=io.BytesIO(data)).extractall(d)\n"
+    "t=tarfile.open(fileobj=io.BytesIO(data))\n"
+    "t.extractall(d,**({'filter':'data'} if hasattr(tarfile,'data_filter') else {}))\n"
 )
 
 
@@ -101,13 +102,19 @@ def workflow_files(root):
 def make_bundle(root, profile_dir, max_mb):
     buf = io.BytesIO()
     total = 0
+    files = workflow_files(root)
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
-        for f in workflow_files(root):
+        for f in files:
             total += os.path.getsize(os.path.join(root, f))
             if total > max_mb * 1024 * 1024:
                 raise Fail(f"the workflow folder has more than {max_mb} MB of files (at {f}); data "
                            "belongs in storage. Add big files to .gitignore, or raise --max-bundle-mb.")
             t.add(os.path.join(root, f), arcname=f)
+        # what `git ls-files` would say, for the head job's stand-in git
+        listing = "".join(f + "\n" for f in files).encode()
+        info = tarfile.TarInfo(".smkflex/files.txt")
+        info.size = len(listing)
+        t.addfile(info, io.BytesIO(listing))
         for d, dirs, names in os.walk(profile_dir):
             dirs[:] = [x for x in dirs if x != "__pycache__"]
             for n in names:
@@ -285,9 +292,10 @@ def follow(batch, logs, jid, follow_logs):
                 for e in resp.get("events", []):
                     print(e["message"].rstrip())
                 got += len(resp.get("events", []))
+                # CloudWatch can return empty pages before the end; the end is when the
+                # token stops changing
                 new = resp.get("nextForwardToken")
-                if not resp.get("events") or new == token:
-                    token = new
+                if not new or new == token:
                     break
                 token = new
         if status in ("SUCCEEDED", "FAILED"):

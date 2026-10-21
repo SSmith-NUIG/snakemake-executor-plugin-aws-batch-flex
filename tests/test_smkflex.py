@@ -63,6 +63,7 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     names = tarfile.open(bundles[0]).getnames()
     assert "Snakefile" in names and ".smkflex/profile/config.yaml" in names and ".smkflex/head.py" in names
     assert ".smkflex/site/snakemake_executor_plugin_aws_batch_flex/__init__.py" in names
+    assert tarfile.open(bundles[0]).extractfile(".smkflex/files.txt").read().decode().split() == ["Snakefile", "profile/config.yaml"]
     assert not any(n.startswith(".snakemake") for n in names)
     state = tarfile.open(store / ".smkflex" / "wf" / "state.tar.gz").getnames()
     assert any(n.startswith(".snakemake/metadata") for n in state)
@@ -108,3 +109,19 @@ def test_bundle_follows_gitignore(tmp_path):
     (tmp_path / ".snakemake" / "x").write_text("")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     assert workflow_files(str(tmp_path)) == [".gitignore", "Snakefile"]
+
+
+def test_git_stand_in_lists_the_sent_files(tmp_path, monkeypatch):
+    import shutil
+    from snakemake_executor_plugin_aws_batch_flex import headjob
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".smkflex").mkdir()
+    (tmp_path / ".smkflex" / "files.txt").write_text("Snakefile\nscripts/a.py\n")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    d = headjob.git_shim()
+    out = subprocess.run([os.path.join(d, "git"), "ls-files", "--recurse-submodules", "."],
+                         capture_output=True, text=True)
+    assert out.returncode == 0 and out.stdout == "Snakefile\nscripts/a.py\n"
+    assert subprocess.run([os.path.join(d, "git"), "status"], capture_output=True).returncode != 0
+    monkeypatch.undo()
+    assert headjob.git_shim() is None  # a real git is used when there is one
