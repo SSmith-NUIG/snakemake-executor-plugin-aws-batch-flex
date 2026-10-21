@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Set everything up in one go: from a working AWS login to a queue, a bucket and a Snakemake
-# profile, with a test workflow ready to run. It does what README steps 4-7 describe:
+# profile, with a test workflow ready to run. It does what "Setting up by hand" in the README describes:
 #   1. checks the tools and your AWS login, and finds the default subnets
 #   2. builds the machine image (scripts/bake-ami.sh, 10-20 min)
 #   3. writes terraform.tfvars, shows `terraform plan` and asks before creating anything
