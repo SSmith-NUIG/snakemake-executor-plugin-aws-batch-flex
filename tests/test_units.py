@@ -137,3 +137,24 @@ def test_keep_unneeded_temp():
     assert k(cmd) == "python -m snakemake --target-jobs a: --force --cores all"
     assert k("python -m snakemake --unneeded-temp-files a.db") == "python -m snakemake"
     assert k("python -m snakemake --force") == "python -m snakemake --force"
+
+
+def test_s3_directory_is_looked_up_again():
+    import pytest
+    s3 = pytest.importorskip("snakemake_storage_plugin_s3")
+    from snakemake_executor_plugin_aws_batch_flex import _recheck_s3_directories
+    _recheck_s3_directories()
+    _recheck_s3_directories()  # patching twice is harmless
+
+    class Obj:
+        is_dir = s3.StorageObject.is_dir
+        def __init__(self):
+            self._is_dir = None
+            self.keys = []
+        def get_subkeys(self):
+            return iter(self.keys)
+
+    o = Obj()
+    assert o.is_dir() is False  # before the job: no files under the prefix
+    o.keys = ["star_genome/SA"]  # the job uploaded the directory
+    assert o.is_dir() is True

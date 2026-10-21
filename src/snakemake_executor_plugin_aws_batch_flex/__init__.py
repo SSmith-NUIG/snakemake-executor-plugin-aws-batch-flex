@@ -430,6 +430,27 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
     return hints
 
 
+def _recheck_s3_directories():
+    """Work around snakemake-storage-plugin-s3 (0.3.6): a storage object remembers is_dir() =
+    False from before the job ran, so a directory() output the job then uploads is reported
+    "missing in storage". A remembered False is looked up again; a True still counts."""
+    try:
+        from snakemake_storage_plugin_s3 import StorageObject
+    except Exception:
+        return
+    orig = getattr(StorageObject, "is_dir", None)
+    if orig is None or getattr(orig, "_rechecks", False):
+        return
+
+    def is_dir(self):
+        if getattr(self, "_is_dir", None) is False:
+            self._is_dir = None
+        return orig(self)
+
+    is_dir._rechecks = True
+    StorageObject.is_dir = is_dir
+
+
 def _keep_unneeded_temp(cmd: str) -> str:
     """Drop --unneeded-temp-files from a job's command. Snakemake (9.x) tells the job to delete
     temp() outputs that no other job needs, but then waits for every output in storage after
@@ -472,6 +493,7 @@ class Executor(RemoteExecutor):
             raise WorkflowError("--aws-batch-flex-platform must be 'ec2' or 'fargate'.")
         if s.script_python not in (None, "image", "host"):
             raise WorkflowError("--aws-batch-flex-script-python must be 'image' or 'host'.")
+        _recheck_s3_directories()
         if s.oom_memory_factor is not None and s.oom_memory_factor < 1:
             raise WorkflowError("--aws-batch-flex-oom-memory-factor must be 1 or more.")
         if s.bootstrap not in MODES:
