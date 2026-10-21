@@ -467,11 +467,12 @@ mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`
 checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
 from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating
 the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
-Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job, and cancelling one.
+Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job, and cancelling one, jobs on the Spot queue.
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 `--aws-batch-flex-volumes`, a single Ctrl-C.
-Not tested yet: `notebook:`, Julia, GPU, Spot.
+Not tested yet: `notebook:`, Julia, GPU, a Spot instance being taken back mid-job (the
+retry is only tested against the fake Batch).
 
 ### Limits
 
