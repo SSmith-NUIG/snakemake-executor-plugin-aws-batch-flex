@@ -381,8 +381,10 @@ ends.
 
 - `smkflex run --git https://github.com/lab/rnaseq --rev v2.1` runs a workflow straight from a
   git repository instead of the current folder: `--rev` is a branch, tag or commit (default:
-  the default branch), `--path` the folder with the Snakefile if it's not at the top. The
-  repository is cloned on your machine, so private repositories work with your usual git
+  the default branch), `--path` a folder to run from instead of the top (only what's inside it is sent;
+  repositories in Snakemake's standard layout, with `workflow/Snakefile`, need no `--path`). The
+  repository is cloned into a temporary folder on your machine (your current folder isn't
+  touched), so private repositories work with your usual git
   login; the profile still comes from here (`--profile`). The run's name defaults to the
   repository's name.
 - Each run records the commit it ran (for a local folder in git, with `-modified` if it had
