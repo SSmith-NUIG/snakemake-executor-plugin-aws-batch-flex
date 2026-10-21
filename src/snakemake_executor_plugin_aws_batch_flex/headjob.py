@@ -15,6 +15,7 @@ import tarfile
 # made with which code and parameters, and which jobs didn't finish. Conda envs, local
 # copies of storage files and the like are left out.
 STATE_DIRS = ("metadata", "incomplete", "log")
+WRAPPER_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
 
 def _s3(url):
@@ -114,6 +115,10 @@ def main(argv):
     if shim:
         env["PATH"] = shim + os.pathsep + env.get("PATH", "")
     cmd = [sys.executable, "-m", "snakemake", "--profile", ".smkflex/profile", *args]
+    if not any(a == "--wrapper-prefix" or a.startswith("--wrapper-prefix=") for a in args):
+        # Without a prefix, Snakemake fetches version-tagged wrappers with git clone, and the
+        # head job's image usually has no git; the same files are on GitHub over plain HTTPS.
+        cmd += ["--wrapper-prefix", WRAPPER_PREFIX]
     print("[smkflex] " + " ".join(cmd), file=sys.stderr, flush=True)
     proc = subprocess.Popen(cmd, env=env)
 

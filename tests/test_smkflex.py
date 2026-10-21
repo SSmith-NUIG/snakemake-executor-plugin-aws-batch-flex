@@ -73,6 +73,7 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     state = tarfile.open(store / ".smkflex" / "wf" / "state.tar.gz").getnames()
     assert any(n.startswith(".snakemake/metadata") for n in state)
     assert "snakemake exited with 0" in out
+    assert "--wrapper-prefix https://github.com/snakemake/snakemake-wrappers/raw/" in out
 
     # second run: state comes back, nothing left to do
     r, _ = smkflex(wf, "run", "--wait")
