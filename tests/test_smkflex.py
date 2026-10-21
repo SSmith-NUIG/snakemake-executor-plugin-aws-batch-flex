@@ -176,3 +176,55 @@ def test_pull(tmp_path):
     assert "0 downloaded, 2 already here" in r.stdout
     r, _ = smkflex(wf, "pull", "results2/c.txt", "--to", str(tmp_path / "out"), "--dry-run")
     assert "would download results2/c.txt" in r.stdout and not (tmp_path / "out").exists()
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd,
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_run_from_git(tmp_path):
+    wf = setup(tmp_path)
+    repo = tmp_path / "pipeline"
+    (repo / "workflow").mkdir(parents=True)
+    (repo / "workflow" / "Snakefile").write_text(SNAKEFILE.replace("echo B", "echo v1"))
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "v1")
+    _git(repo, "tag", "v1")
+    v1 = _git(repo, "rev-parse", "HEAD")
+    (repo / "workflow" / "Snakefile").write_text(SNAKEFILE.replace("echo B", "echo v2"))
+    _git(repo, "commit", "-q", "-am", "v2")
+    url = f"file://{repo}"
+
+    r, calls = smkflex(wf, "run", "--wait", "--git", url, "--rev", "v1", "--path", "workflow")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "b.txt").read_text() == "A\nv1\n"
+    head = next(c for c in calls if c["call"] == "submit_job" and c["jobName"] == "smkflex-pipeline")
+    assert head["tags"]["smkflex-commit"] == v1[:12] and head["tags"]["smkflex-source"] == f"{url} v1"
+    assert f"Submitted workflow 'pipeline' at {v1[:12]}" in r.stdout
+
+    # a commit (not a branch or tag) needs a full clone; default branch is v2
+    r, _ = smkflex(wf, "run", "--wait", "--git", url, "--rev", v1, "--path", "workflow", "--", "--forceall")
+    assert r.returncode == 0, r.stdout + r.stderr
+    r, _ = smkflex(wf, "run", "--wait", "--git", url, "--path", "workflow", "--", "--forceall")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "b.txt").read_text() == "A\nv2\n"
+
+    r, _ = smkflex(wf, "run", "--git", url, "--rev", "no-such-tag")
+    assert r.returncode == 2 and "has no branch, tag or commit 'no-such-tag'" in r.stderr
+    r, _ = smkflex(wf, "run", "--rev", "v1")
+    assert r.returncode == 2 and "go with --git" in r.stderr
+
+
+def test_local_runs_record_the_commit(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.remote import local_commit
+    assert local_commit(str(tmp_path)) is None
+    (tmp_path / "Snakefile").write_text("x")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "x")
+    sha = _git(tmp_path, "rev-parse", "HEAD")[:12]
+    assert local_commit(str(tmp_path)) == sha
+    (tmp_path / "Snakefile").write_text("y")
+    assert local_commit(str(tmp_path)) == sha + "-modified"

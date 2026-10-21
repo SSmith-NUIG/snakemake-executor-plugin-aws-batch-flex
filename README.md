@@ -379,6 +379,14 @@ returns. Anything after the options goes to Snakemake,
 e.g. `smkflex run -- --forceall all`; `--wait` stays attached and prints the log until the run
 ends.
 
+- `smkflex run --git https://github.com/lab/rnaseq --rev v2.1` runs a workflow straight from a
+  git repository instead of the current folder: `--rev` is a branch, tag or commit (default:
+  the default branch), `--path` the folder with the Snakefile if it's not at the top. The
+  repository is cloned on your machine, so private repositories work with your usual git
+  login; the profile still comes from here (`--profile`). The run's name defaults to the
+  repository's name.
+- Each run records the commit it ran (for a local folder in git, with `-modified` if it had
+  uncommitted changes); `smkflex status` shows it.
 - The head job uses 1 vCPU and 2 GiB (`--vcpus`, `--mem-mb`) for as long as the workflow
   runs, on the profile's queue (`--queue` for another one). Don't use a Spot queue for it.
 - It needs remote storage (`default-storage-prefix`) and the profile setting

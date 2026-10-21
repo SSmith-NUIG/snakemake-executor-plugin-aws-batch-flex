@@ -15,7 +15,9 @@ import re
 import shlex
 import subprocess
 import sys
+import shutil
 import tarfile
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -181,7 +183,75 @@ def head_command(profile, platform, bundle_url, state_url, snakemake_args):
     )
 
 
+def _git(*args, cwd=None):
+    try:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+    except FileNotFoundError:
+        raise Fail("git isn't installed here; it's needed for --git")
+    except subprocess.CalledProcessError as e:
+        raise Fail(f"git {' '.join(args[:2])} failed: {(e.stderr or e.stdout).strip()}")
+
+
+def clone(url, rev, dest):
+    """Shallow clone of `rev` (branch, tag; default: the default branch), or a full clone
+    when it's a commit. Returns the commit."""
+    opts = ["--quiet", "--recurse-submodules", "--shallow-submodules"]
+    try:
+        _git("clone", *opts, "--depth", "1", *(["--branch", rev] if rev else []), url, dest)
+    except Fail:
+        if not rev:
+            raise
+        shutil.rmtree(dest, ignore_errors=True)
+        _git("clone", "--quiet", "--recurse-submodules", url, dest)
+        try:
+            _git("checkout", "--quiet", rev, cwd=dest)
+        except Fail:
+            raise Fail(f"{url} has no branch, tag or commit '{rev}'")
+        _git("submodule", "update", "--quiet", "--init", "--recursive", cwd=dest)
+    return _git("rev-parse", "HEAD", cwd=dest)
+
+
+def local_commit(root):
+    """The commit of a local git checkout, with -modified if it has uncommitted changes."""
+    try:
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "."], cwd=root,
+                               capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return sha[:12] + ("-modified" if dirty else "")
+
+
+def _tag(value):
+    return re.sub(r"[^A-Za-z0-9 _.:/=+\-@]", "_", str(value))[:256]
+
+
 def cmd_run(a, snakemake_args):
+    tmp = None
+    try:
+        if a.git:
+            tmp = tempfile.mkdtemp(prefix="smkflex-git-")
+            commit = clone(a.git, a.rev, os.path.join(tmp, "repo"))
+            root = os.path.join(tmp, "repo", a.path or "")
+            if not os.path.isdir(root):
+                raise Fail(f"{a.path} isn't a folder in {a.git}")
+            print(f"Cloned {a.git} at {commit[:12]}" + (f" ({a.rev})" if a.rev else ""), file=sys.stderr)
+            source = {"smkflex-source": _tag(a.git + (f" {a.rev}" if a.rev else "")), "smkflex-commit": commit[:12]}
+            default_name = re.sub(r"\.git$", "", a.git.rstrip("/").rsplit("/", 1)[-1])
+        else:
+            if a.rev or a.path:
+                raise Fail("--rev and --path go with --git")
+            root = "."
+            commit = local_commit(root)
+            source = {"smkflex-commit": commit} if commit else {}
+            default_name = os.path.basename(os.path.abspath("."))
+        return _run(a, snakemake_args, root, source, default_name)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _run(a, snakemake_args, root, source, default_name):
     profile_dir, profile = _load_profile(a.profile)
     queue = a.queue or profile.get("aws-batch-flex-queue")
     prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
@@ -194,7 +264,7 @@ def cmd_run(a, snakemake_args):
     if not role:
         raise Fail("no role for the head job: set aws-batch-flex-head-role-arn in the profile (Terraform "
                    "prints it as head_role_arn) or pass --role")
-    name = re.sub(r"[^A-Za-z0-9_-]", "-", a.name or os.path.basename(os.path.abspath(".")))
+    name = re.sub(r"[^A-Za-z0-9_-]", "-", a.name or default_name)
     state_url = f"{prefix}/.smkflex/{name}/state.tar.gz"
     state_key = hashlib.sha256(state_url.encode()).hexdigest()[:16]
     batch, _logs, region = _clients(profile)
@@ -214,7 +284,7 @@ def cmd_run(a, snakemake_args):
             raise Fail(f"workflow '{name}' is already running as head job {running[0]}; wait for it, "
                        f"`smkflex cancel {running[0]}`, or pass --force")
 
-    bundle = make_bundle(".", profile_dir, a.max_bundle_mb)
+    bundle = make_bundle(root, profile_dir, a.max_bundle_mb)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     bundle_url = f"{prefix}/.smkflex/{name}/runs/{stamp}/workflow.tar.gz"
     headjob.put(bundle_url, bundle)
@@ -255,11 +325,12 @@ def cmd_run(a, snakemake_args):
             "resourceRequirements": [{"type": "VCPU", "value": vcpu}, {"type": "MEMORY", "value": str(mem)}],
             "environment": env,
         },
-        tags={"smkflex-workflow": name[:256], "smkflex-state": state_key},
+        tags={"smkflex-workflow": name[:256], "smkflex-state": state_key, **source},
         propagateTags=True,
     )
     jid = resp["jobId"]
-    print(f"Submitted workflow '{name}' as head job {jid} (queue {queue}, {platform}).")
+    at = f" at {source['smkflex-commit']}" if source.get("smkflex-commit") else ""
+    print(f"Submitted workflow '{name}'{at} as head job {jid} (queue {queue}, {platform}).")
     if a.wait:
         return follow(batch, _logs, jid, follow_logs=True)
     print(f"  follow it:  smkflex logs {jid} --follow\n  cancel it:  smkflex cancel {jid}")
@@ -359,9 +430,16 @@ def cmd_status(a):
     rows = sorted(resp.get("jobSummaryList", []), key=lambda j: j.get("createdAt", 0), reverse=True)[:a.limit]
     if not rows:
         print(f"no smkflex runs in queue {queue}")
+        return 0
+    # the summaries have no tags; the commit is on the job itself
+    tags = {d["jobId"]: d.get("tags") or {} for d in batch.describe_jobs(jobs=[j["jobId"] for j in rows])["jobs"]}
     for j in rows:
         when = datetime.fromtimestamp(j.get("createdAt", 0) / 1000).strftime("%Y-%m-%d %H:%M")
-        print(f"{j['jobId']}  {j.get('status', ''):<9}  {when}  {j.get('jobName', '')[len('smkflex-'):]}")
+        t = tags.get(j["jobId"], {})
+        what = j.get("jobName", "")[len("smkflex-"):]
+        if t.get("smkflex-commit"):
+            what += f"  {t['smkflex-commit']}" + (f"  ({t['smkflex-source']})" if t.get("smkflex-source") else "")
+        print(f"{j['jobId']}  {j.get('status', ''):<9}  {when}  {what}")
     return 0
 
 
@@ -555,7 +633,12 @@ def main(argv=None):
     r = sub.add_parser("run", help="run the workflow in this folder on AWS Batch; other arguments "
                        "(e.g. targets, --forceall) go to snakemake")
     r.add_argument("--profile", help="profile folder (default: ./profile, or $SNAKEMAKE_PROFILE)")
-    r.add_argument("--name", help="workflow name; runs with the same name share state (default: folder name)")
+    r.add_argument("--git", metavar="URL", help="run the workflow from this git repository instead of this folder "
+                   "(cloned here with your git login, so private repositories work)")
+    r.add_argument("--rev", help="with --git: branch, tag or commit (default: the default branch)")
+    r.add_argument("--path", help="with --git: folder in the repository that has the workflow")
+    r.add_argument("--name", help="workflow name; runs with the same name share state "
+                   "(default: the folder's or repository's name)")
     r.add_argument("--queue", help="queue for the head job (default: the profile's)")
     r.add_argument("--role", help="IAM role for the head job (default: aws-batch-flex-head-role-arn)")
     r.add_argument("--image", help="image for the head job (default: the profile's default image)")
