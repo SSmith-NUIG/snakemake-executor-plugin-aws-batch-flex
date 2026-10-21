@@ -331,8 +331,19 @@ def cmd_cancel(a):
     if a.region:
         profile["aws-batch-flex-region"] = a.region
     batch, _logs, _r = _clients(profile)
+    jobs = batch.describe_jobs(jobs=[a.job_id])["jobs"]
+    if not jobs:
+        raise Fail(f"no job {a.job_id}")
+    status = jobs[0]["status"]
+    if status in ("SUCCEEDED", "FAILED"):
+        print(f"Head job {a.job_id} has already ended ({status}).")
+        return 0
     batch.terminate_job(jobId=a.job_id, reason="smkflex cancel")
-    print(f"Asked head job {a.job_id} to stop; Snakemake cancels the workflow's jobs and saves its state.")
+    if status == "RUNNING":
+        print(f"Asked head job {a.job_id} to stop; Snakemake cancels the workflow's jobs and saves "
+              "its state (about a minute).")
+    else:
+        print(f"Cancelled head job {a.job_id} before it started ({status}); no jobs were submitted.")
     return 0
 
 
