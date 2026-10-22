@@ -472,7 +472,9 @@ snakemake --profile smkflex        # or: smkflex run --profile smkflex
 ```
 
 Tested with [rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) on
-its yeast test data: 53 jobs, 13 minutes, about $0.10 of compute (16 minutes as a `smkflex run`).
+its yeast test data, set up with `snakedeploy` as above (v3.1.2): 53 jobs, 13 minutes, about
+$0.10 of compute with these settings. Without the thread cap it was $0.28, because STAR's 24-thread
+jobs needed big instances and ran out of memory once.
 
 - **The project's settings** go in `workflow/profiles/default/config.yaml`, which Snakemake
   loads on top of `--profile` by itself (`smkflex` reads it too). Its own bucket folder
@@ -640,7 +642,7 @@ from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_
 the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
 Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from a folder and with `--git`), and cancelling one, jobs on the Spot queue, the usage and cost table (and its hint about many short jobs), retrying a job that ran out of memory with more, the whole setup with `scripts/setup.sh`
 (a second, separate setup in the same account), and the published rna-seq-star-deseq2 pipeline
-on its test data (with `snakemake` and as a `smkflex` head job).
+on its test data (with `snakemake`, as a `smkflex` head job, and set up with `snakedeploy`).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 
