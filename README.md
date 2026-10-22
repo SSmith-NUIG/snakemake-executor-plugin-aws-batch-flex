@@ -184,8 +184,8 @@ and when the month's forecast goes over. It takes two minutes and costs nothing.
 As a rough guide to run costs: compute is about $0.05 per vCPU-hour on normal instances (a third
 of that on Spot), so a job using 4 vCPUs for an hour costs about $0.20. The published RNA-seq
 pipeline below ran its 53 test jobs for $0.10; a real run with 20 samples of 30 million reads
-should be a few dollars (an estimate, not measured). Storage in S3 is about $0.02 per GB per month. The table
-at the end of every run shows what it used.
+should be a few dollars (an estimate, not measured). Storage in S3 is about $0.02 per GB per
+month. The table at the end of every run shows what it used.
 
 While idle, the only costs are the files in your bucket, the job logs and the stored machine
 image (all cents per month for small amounts). Job logs are deleted after 30 days
@@ -570,8 +570,9 @@ aws s3 sync /shared/refs s3://BUCKET/snakemake/my-project/shared/refs   # absolu
 
 For large data (hundreds of GB), `aws s3 sync` is the faster tool, and it can be run on the
 cluster itself, where the data is. Data that's already in S3, e.g. from a sequencing provider,
-doesn't need copying: in the rule, refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The job role then needs read access to that bucket, which the Terraform setup
-doesn't give it (add a policy with `s3:GetObject` and `s3:ListBucket` for it to the job role).
+doesn't need copying: in the rule, refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The
+job role then needs read access to that bucket, which the Terraform setup doesn't give it (add a
+policy with `s3:GetObject` and `s3:ListBucket` for it to the job role).
 
 **Profile settings.** A SLURM profile's per-rule settings mostly have a direct counterpart; put
 them in the project's `profiles/default/config.yaml`:
@@ -604,7 +605,8 @@ and so do `temp()` files that never need to leave a job.
 Snakemake runs: your machine, or the `smkflex` head job.
 
 **Logs.** Snakemake prints the end of a failed job's log; rule `log:` files are in the bucket
-(`smkflex pull logs`), and the full job output in CloudWatch (see [Troubleshooting](#troubleshooting)).
+(`smkflex pull logs`), and the full job output in CloudWatch (see
+[Troubleshooting](#troubleshooting)).
 
 ### University and company accounts
 
@@ -770,20 +772,20 @@ first if missing).
 
 ### What's been tested
 
-Run on real AWS (eu-west-1):
-`shell:`, `run:`, Python/bash/R `script:` (Python scripts in the image's own Python),
-`wrapper:`, conda (YAML in a conda image, YAML and named envs in conda-less images), a
-different image per rule, a 6-image variant-calling pipeline, EC2 and Fargate (separately and
-mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`,
-`directory()`, resources and tags, OOM and timeout reporting, cancelling with Ctrl-C, startup
-checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
-from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating
-the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
-Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from
-a folder and with `--git`) and cancelling one, jobs on the Spot queue, the usage and cost table
-(with each rule's peak memory and the hint about many short jobs), retrying a job that ran out
-of memory with more, the whole setup with `scripts/setup.sh` (twice, as a second, separate
-setup in the same account; with conda and pandas in the image, and `smkflex init`/`push`/`pull`), and the published rna-seq-star-deseq2 pipeline on its test data (with
+Run on real AWS (eu-west-1): `shell:`, `run:`, Python/bash/R `script:` (Python scripts in the
+image's own Python), `wrapper:`, conda (YAML in a conda image, YAML and named envs in conda-less
+images), a different image per rule, a 6-image variant-calling pipeline, EC2 and Fargate
+(separately and mixed in one run), checkpoints, groups, shadow, benchmark/log, retries,
+`temp()`, `directory()`, resources and tags, OOM and timeout reporting, cancelling with Ctrl-C,
+startup checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs
+left over from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_mb`,
+updating the AMI with `update-ami.sh`, using an existing job definition, a private ECR image,
+job logs in Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex`
+head job (from a folder and with `--git`) and cancelling one, jobs on the Spot queue, the usage
+and cost table (with each rule's peak memory and the hint about many short jobs), retrying a job
+that ran out of memory with more, the whole setup with `scripts/setup.sh` (twice, as a second,
+separate setup in the same account; with conda and pandas in the image, and `smkflex
+init`/`push`/`pull`), and the published rna-seq-star-deseq2 pipeline on its test data (with
 `snakemake`, as a `smkflex` head job, and set up with `snakedeploy`).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
