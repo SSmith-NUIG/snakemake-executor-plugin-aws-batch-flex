@@ -158,15 +158,26 @@ def image_python_snippet() -> str:
 
 
 def peak_memory_snippet() -> str:
-    """When the job's shell exits, log the container's peak memory (cgroup v2 memory.peak,
-    or v1's max_usage_in_bytes); the plugin reads it from the log for the end-of-run table."""
-    return (
-        'smk_peak() { for f in "${SMK_FLEX_PEAK_FILE:-/sys/fs/cgroup/memory.peak}" '
-        "/sys/fs/cgroup/memory/memory.max_usage_in_bytes; do "
-        'if [ -r "$f" ]; then echo "[snakemake-batch] peak-memory-bytes=$(cat "$f")" >&2; return 0; fi; '
-        "done; }\n"
-        "trap smk_peak EXIT\n"
-    )
+    """Log the most memory the job's processes used, for the end-of-run table. It's sampled
+    every 2 s from the cgroup's memory.stat: anonymous plus shared memory (v2 anon/shmem, v1
+    rss/shmem), i.e. without file cache, which the kernel frees before it kills anything and
+    which fills up to the limit while e.g. conda unpacks packages. Needs awk; otherwise nothing
+    is logged."""
+    return r"""
+SMK_MEMSTAT="${SMK_FLEX_MEMSTAT_FILE:-/sys/fs/cgroup/memory.stat}"
+if [ -r "$SMK_MEMSTAT" ] && command -v awk >/dev/null 2>&1; then
+  smk_mem() { awk '$1=="anon"||$1=="rss"||$1=="shmem"{s+=$2} END{print s+0}' "$SMK_MEMSTAT" 2>/dev/null || echo 0; }
+  ( m=0; while :; do n=$(smk_mem); if [ "${n:-0}" -gt "$m" ]; then m=$n; echo "$m" > "$SMK_WORK/.smk-peak"; fi; sleep 2; done ) &
+  SMK_SAMPLER=$!
+  smk_peak() {
+    kill "$SMK_SAMPLER" 2>/dev/null || true
+    p=$(cat "$SMK_WORK/.smk-peak" 2>/dev/null || echo 0); n=$(smk_mem)
+    [ "${n:-0}" -gt "${p:-0}" ] && p=$n
+    echo "[snakemake-batch] peak-memory-bytes=$p" >&2
+  }
+  trap smk_peak EXIT
+fi
+"""
 
 
 def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:

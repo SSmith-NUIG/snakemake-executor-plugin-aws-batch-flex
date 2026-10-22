@@ -335,8 +335,10 @@ set-resources:
     mem_mb: 2300    # had 4071 MiB, peak 1840
 ```
 
-- **Memory:** each job logs its peak memory as it ends (read from Linux, so it includes file
-  cache and is on the safe side), and the plugin reads those lines from the job logs. On runs
+- **Memory:** each job samples its processes' memory every 2 seconds (from Linux's cgroup
+  statistics, without file cache, which Linux frees before it kills anything) and logs the
+  most it saw; the plugin reads those lines from the job logs. A spike shorter than 2 seconds
+  can be missed, which the retry with more memory covers. On runs
   with more than 300 jobs it reads 25 per rule. The `set-resources:` block below the table has
   every rule whose peak is known, at its peak plus 30% (at least 512 MiB per job): paste it into
   the project's settings, and the next run neither wastes room on the instances nor runs out.

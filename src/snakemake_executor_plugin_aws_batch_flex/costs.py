@@ -131,8 +131,8 @@ class Usage:
             lines.append(f"  {'total':<{width}}  {total[0]:>5}  {total[1]:>8.2f}  {total[2]:>8.2f}  {usd(total[3]):>8}")
         if self.peaks:
             note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
-            lines.append(f"mem MiB: what the job had (the most for that rule); peak MiB: the most it used{note}, "
-                         "including file cache.")
+            lines.append(f"mem MiB: what the job had (the most for that rule); peak MiB: the most its "
+                         f"processes used{note}, sampled every 2 s, without file cache.")
         tips = self.suggestions(overhead_mib)
         if tips:
             lines.append("Memory for each rule (its peak + 30%), to paste into the project's "

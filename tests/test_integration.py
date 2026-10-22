@@ -416,9 +416,9 @@ def test_module_from_github(tmp_path):
 
 
 def test_peak_memory_in_the_table(tmp_path, monkeypatch):
-    peak = tmp_path / "peak"
-    peak.write_text(str(1024 * 1024 * 1024))  # every fake job "used" 1 GiB
-    monkeypatch.setenv("SMK_FLEX_PEAK_FILE", str(peak))
+    stat = tmp_path / "memory.stat"  # every fake job "used" 1 GiB (plus cache, which doesn't count)
+    stat.write_text(f"anon {768 * 1024 * 1024}\nfile {3 * 1024 ** 3}\nshmem {256 * 1024 * 1024}\n")
+    monkeypatch.setenv("SMK_FLEX_MEMSTAT_FILE", str(stat))
     smk = SNAKEFILE.replace("resources: mem_mb=3000", "resources: mem_mb=8000")
     r, _ = run(tmp_path, smk)
     out = r.stdout + r.stderr
