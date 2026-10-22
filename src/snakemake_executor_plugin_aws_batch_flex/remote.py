@@ -63,12 +63,40 @@ class _Log:
     warning = info
 
 
+def _only_installed_profile():
+    """The name of the one profile in ~/.config/snakemake that uses this plugin, if there is
+    exactly one (setup.sh installs it there)."""
+    base = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "snakemake")
+    names = []
+    try:
+        entries = sorted(os.listdir(base))
+    except OSError:
+        return None
+    for n in entries:
+        for f in ("profile.yaml", "config.yaml"):
+            cfg = os.path.join(base, n, f)
+            if os.path.isfile(cfg):
+                try:
+                    with open(cfg) as fh:
+                        if (yaml.safe_load(fh) or {}).get("executor") == "aws-batch-flex":
+                            names.append(n)
+                except (OSError, yaml.YAMLError):
+                    pass
+                break
+    if len(names) == 1:
+        print(f"(using profile {names[0]} from {base})", file=sys.stderr)
+        return names[0]
+    return None
+
+
 def _load_profile(path):
     """(profile folder, settings) for --profile: a folder, or a name that Snakemake looks up in
     ~/.config/snakemake/ (as `snakemake --profile NAME` does). Default: ./profile, then
     $SNAKEMAKE_PROFILE."""
     if path is None:
         path = "profile" if os.path.isdir("profile") else os.environ.get("SNAKEMAKE_PROFILE")
+    if not path:
+        path = _only_installed_profile()
     if not path:
         raise Fail("no profile: pass --profile (a folder with config.yaml, or a profile name)")
     found = None

@@ -307,6 +307,9 @@ def test_profile_by_name(tmp_path):
     (wf / "profile").rmdir()
     r, _ = smkflex(wf, "check", "--profile", "lab", env_extra={"XDG_CONFIG_HOME": str(cfg_home)})
     assert f"profile {cfg_home}/snakemake/lab" in r.stdout, r.stdout + r.stderr
+    # the only installed profile for this plugin is used without --profile
+    r, _ = smkflex(wf, "check", env_extra={"XDG_CONFIG_HOME": str(cfg_home)})
+    assert "(using profile lab" in r.stderr and f"profile {cfg_home}/snakemake/lab" in r.stdout
 
 
 def test_plain_folder_follows_its_gitignore(tmp_path):
