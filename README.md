@@ -446,7 +446,7 @@ role, so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on
 Pipelines from e.g. the [Snakemake workflow catalog](https://snakemake.github.io/snakemake-workflow-catalog/)
 run unchanged. Tested with
 [rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) (53 jobs,
-13 minutes, about $0.10 of compute on its yeast test data):
+13 minutes, about $0.10 of compute on its yeast test data; 16 minutes as a `smkflex run`):
 
 ```bash
 git clone https://github.com/snakemake-workflows/rna-seq-star-deseq2 && cd rna-seq-star-deseq2
@@ -614,7 +614,7 @@ from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_
 the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
 Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from a folder and with `--git`), and cancelling one, jobs on the Spot queue, the usage and cost table (and its hint about many short jobs), retrying a job that ran out of memory with more, the whole setup with `scripts/setup.sh`
 (a second, separate setup in the same account), and the published rna-seq-star-deseq2 pipeline
-on its test data.
+on its test data (with `snakemake` and as a `smkflex` head job).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 
