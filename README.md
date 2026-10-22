@@ -15,6 +15,17 @@ AWS machines start from, and every job gets read access to it. That's why your c
 need it. On Fargate (AWS's serverless option, no machines to manage) Snakemake is installed into
 the container when the job starts instead.
 
+### How it differs from the official AWS Batch plugin
+
+Snakemake's own [aws-batch plugin](https://github.com/snakemake/snakemake-executor-plugin-aws-batch)
+runs `snakemake` inside each job's container, so every image a rule uses needs Snakemake and
+the S3 storage plugin installed; the usual biocontainers and stock images can't be used as they
+are. This plugin brings Snakemake to the job instead, so each rule can use any image, and conda
+envs work in images without conda. It also sets up the AWS side in one command (`setup.sh`:
+machine image, queue, roles, bucket and profile), mixes EC2, Spot and Fargate queues in one run,
+can run Snakemake itself on AWS (`smkflex run`), retries jobs that ran out of memory with more,
+and reports what each rule used.
+
 ## Getting started
 
 These steps take you from nothing to a finished test run, in under an hour. They assume you're
@@ -27,7 +38,8 @@ and run everything inside it. macOS should work but hasn't been tried.
 
 - An AWS account. Setting this up costs very little: building the machine image runs one small
   machine for about 10 minutes, and keeping the image costs well under $1 a month. The test run
-  in step 5 costs a few cents.
+  in step 5 costs a few cents. If you use an account from your university or company, see
+  [University and company accounts](#university-and-company-accounts) first.
 - Somewhere to run commands: your laptop is fine. When you run `snakemake` it has to stay on
   (and online) until the workflow finishes, because it's what tells AWS what to do next;
   `smkflex run` hands that to AWS instead (see [Long runs](#long-runs-smkflex)).
@@ -73,6 +85,10 @@ Paste the two keys when asked. For the region, pick the one closest to you, e.g.
 format empty.
 
 Check it worked: `aws sts get-caller-identity` should print your account number.
+
+If your organisation manages your AWS access (you log in through a university or company page,
+or can't create users), see [University and company accounts](#university-and-company-accounts)
+instead of the steps above.
 
 ### 4. Set up AWS
 
@@ -154,9 +170,22 @@ explains rules, wildcards and the rest; everything in it works here, with the di
 under [Limits](#limits).
 
 `examples/conformance/` has one small workflow per feature (scripts, conda, checkpoints,
-Fargate, ...) if you want to see more.
+Fargate, ...) if you want to see more. Moving an existing pipeline from a cluster? See
+[Coming from a cluster](#coming-from-a-cluster).
 
 ### 7. Costs and removing everything
+
+Before running real pipelines, set a budget alert, so a mistake (a huge job, or a forgotten
+setting) costs an email rather than a surprise bill. In the AWS console, **Billing and Cost
+Management** > **Budgets** > **Create budget** > **Use a template** > **Monthly cost budget**:
+enter an amount (e.g. $50) and your email address. AWS then mails you at 85% and 100% of it,
+and when the month's forecast goes over. It takes two minutes and costs nothing.
+
+As a rough guide to run costs: compute is about $0.05 per vCPU-hour on normal instances (a third
+of that on Spot), so a job using 4 vCPUs for an hour costs about $0.20. The published RNA-seq
+pipeline below ran its 53 test jobs for $0.10; a real run with 20 samples of 30 million reads
+should be a few dollars (an estimate, not measured). Storage in S3 is about $0.02 per GB per month. The table
+at the end of every run shows what it used.
 
 While idle, the only costs are the files in your bucket, the job logs and the stored machine
 image (all cents per month for small amounts). Job logs are deleted after 30 days
@@ -521,6 +550,90 @@ jobs needed big instances and ran out of memory once.
 
 `smkflex run --git URL --add config/` does the same without `snakedeploy`: the code comes from a
 clone of the repository and your `config/` is laid over it.
+
+### Coming from a cluster
+
+On a cluster, every job sees the same filesystem. On AWS, jobs run on machines that come and go,
+and files reach them through the S3 bucket: each job downloads its inputs and uploads its outputs.
+Most of a pipeline carries over unchanged; these are the parts that don't.
+
+**Paths and data.** Your files have to be in the bucket, under the storage prefix (the project's
+folder in the bucket, which `smkflex init` sets up). Relative paths map straight onto it:
+`data/S1.fq` is `s3://BUCKET/snakemake/my-project/data/S1.fq`. Absolute paths do too:
+`/shared/refs/hg38.fa` becomes `s3://BUCKET/snakemake/my-project/shared/refs/hg38.fa`, so a config
+full of cluster paths can stay as it is if the files are uploaded to the same place:
+
+```bash
+smkflex push data                                   # relative paths, from the project folder
+aws s3 sync /shared/refs s3://BUCKET/snakemake/my-project/shared/refs   # absolute ones
+```
+
+For large data (hundreds of GB), `aws s3 sync` is the faster tool, and it can be run on the
+cluster itself, where the data is. Data that's already in S3, e.g. from a sequencing provider,
+doesn't need copying: in the rule, refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The job role then needs read access to that bucket, which the Terraform setup
+doesn't give it (add a policy with `s3:GetObject` and `s3:ListBucket` for it to the job role).
+
+**Profile settings.** A SLURM profile's per-rule settings mostly have a direct counterpart; put
+them in the project's `profiles/default/config.yaml`:
+
+| On the cluster | Here |
+|---|---|
+| `threads`, `cpus_per_task` | `threads` (vCPUs) |
+| `mem_mb` | `mem_mb`; `mem_mb_per_cpu` becomes `mem_mb` = per-CPU value × threads |
+| `runtime` | `runtime` (minutes; the job is stopped after it) |
+| `slurm_partition` | `batch_queue` (e.g. a Spot or Fargate queue) |
+| `slurm_account`, `qos` | nothing to set; `batch_tags` can label jobs for cost reports |
+| `gpu`, `gres` | `gpu` (needs a GPU queue; untested) |
+| `constraint` (node types) | instance types are set in Terraform (`instance_types`) |
+| `--jobs` | `jobs` (how many Batch jobs at once) |
+| local scratch, `tmpdir` | the instance's disk, shared by its jobs (100 GiB by default); `disk_mb` on Fargate |
+
+**Software.** `envmodules:` and `module load` don't exist here; use a container image per rule
+(e.g. from biocontainers) or a `conda:` env instead. Conda envs are built inside each job, which
+takes a minute or more per job; for rules with many jobs, an image with the tools already in it
+starts faster. Tools that aren't on the image's PATH, or paths to software on the cluster
+(`/apps/...`), won't be there.
+
+**Big intermediate files.** Since there's no shared filesystem, a 30 GB BAM that ten rules read is
+downloaded ten times (within AWS, so it's fast and free, but it takes time). Grouping rules that
+use the same big files into one job (`group:`, see [Many small jobs](#many-small-jobs)) avoids it,
+and so do `temp()` files that never need to leave a job.
+
+**Where Snakemake runs.** On a cluster you'd start Snakemake on the login node and log out;
+`smkflex run` does that here (see [Long runs](#long-runs-smkflex)). `localrules` run where
+Snakemake runs: your machine, or the `smkflex` head job.
+
+**Logs.** Snakemake prints the end of a failed job's log; rule `log:` files are in the bucket
+(`smkflex pull logs`), and the full job output in CloudWatch (see [Troubleshooting](#troubleshooting)).
+
+### University and company accounts
+
+Organisations often manage AWS access centrally: you log in through a web page (single sign-on),
+can't create users, and don't have administrator rights. That works, with two adjustments.
+
+**Logging in with single sign-on.** Instead of access keys, run `aws configure sso` once (your IT
+department can tell you the start URL and region) and give the profile a name, e.g. `lab`. Then,
+in each new terminal:
+
+```bash
+aws sso login --profile lab
+export AWS_PROFILE=lab
+```
+
+Everything here, `setup.sh`, Terraform, Snakemake and `smkflex`, uses that login.
+
+**Permissions.** `setup.sh` creates IAM roles, a Batch queue and compute environment, an S3
+bucket, a log group and a machine image. If you can't, ask IT to run `setup.sh` once for the
+lab, or to give you `PowerUserAccess` plus the right to create IAM roles and instance profiles
+named `smkflex-*`. Once it's set up, people who only run pipelines need much less: the policy
+printed by `terraform -chdir=terraform output -raw launcher_policy_json` (submitting jobs to
+this queue, reading the bucket, passing the job roles), which IT can attach to your login.
+
+**No default network.** Some accounts have no default subnets, so `setup.sh` stops and says so.
+Ask IT which subnets to use and pass them with `--subnets subnet-a,subnet-b`. The machines need
+outbound internet (to pull images and install conda packages): a public subnet, or a private
+one with a NAT gateway (for Fargate jobs there, also set `aws-batch-flex-assign-public-ip: DISABLED`
+in the profile).
 
 ### Python packages your Snakefile imports
 
