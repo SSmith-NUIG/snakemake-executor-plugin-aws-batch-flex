@@ -338,7 +338,9 @@ set-resources:
 - **Memory:** each job samples its processes' memory every 2 seconds (from Linux's cgroup
   statistics, without file cache, which Linux frees before it kills anything) and logs the
   most it saw; the plugin reads those lines from the job logs. A spike shorter than 2 seconds
-  can be missed, which the retry with more memory covers. On runs
+  can be missed, which the retry with more memory covers. For a job that builds its conda
+  environment, that build counts too (often 1-1.5 GB). On rna-seq-star-deseq2's test data the
+  rules used 0.3-2.7 GB of the 4 GB they asked for. On runs
   with more than 300 jobs it reads 25 per rule. The `set-resources:` block below the table has
   every rule whose peak is known, at its peak plus 30% (at least 512 MiB per job): paste it into
   the project's settings, and the next run neither wastes room on the instances nor runs out.
