@@ -426,7 +426,7 @@ def test_peak_memory_in_the_table(tmp_path, monkeypatch):
     usage = out.split("AWS Batch usage of this run")[1]
     row = next(l for l in usage.splitlines() if l.strip().startswith("make_a "))
     assert row.split()[-2:] == ["7886", "1024"]  # 8000 MB -> 7630 MiB + 256; peak 1 GiB
-    assert "set-resources:\n  make_a:\n    mem_mb: 1200" in out
+    assert "set-resources:\n  make_a:\n    mem_mb: 1200    # had 7886 MiB, peak 1024" in out
 
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',

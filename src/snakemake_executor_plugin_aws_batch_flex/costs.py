@@ -99,17 +99,13 @@ class Usage:
                     self.peaks[rule].append(peak)
 
     def suggestions(self, overhead_mib: int) -> dict:
-        """rule -> mem_mb that gives the job its peak plus headroom, for rules whose request is
-        well above (wasted) or close to (at risk) what they used."""
+        """rule -> mem_mb that gives its jobs their peak plus headroom (at least 512 MiB in
+        all), for every rule whose peak is known."""
         out = {}
         for rule, peaks in self.peaks.items():
-            asked, peak = self.asked.get(rule), max(peaks)
-            if not asked:
-                continue
-            want = max(512, math.ceil(peak * HEADROOM / 100) * 100)  # container memory, MiB
-            if want < asked * 0.6 or peak > asked * 0.8:
-                # the plugin adds overhead_mib for Snakemake itself; mem_mb is in MB
-                out[rule] = max(100, math.ceil((want - overhead_mib) * 1.048576 / 100) * 100)
+            want = max(512, math.ceil(max(peaks) * HEADROOM / 100) * 100)  # container memory, MiB
+            # the plugin adds overhead_mib for Snakemake itself; mem_mb is in MB
+            out[rule] = max(100, math.ceil((want - overhead_mib) * 1.048576 / 100) * 100)
         return out
 
     def table(self, overhead_mib: int = 256) -> Optional[str]:
@@ -139,11 +135,13 @@ class Usage:
                          "including file cache.")
         tips = self.suggestions(overhead_mib)
         if tips:
-            lines.append("Suggested memory (peak + 30%), e.g. for the project's "
+            lines.append("Memory for each rule (its peak + 30%), to paste into the project's "
                          "workflow/profiles/default/config.yaml:")
             lines.append("set-resources:")
             for rule, mb in sorted(tips.items()):
-                lines += [f"  {rule}:", f"    mem_mb: {mb}"]
+                had = self.asked.get(rule)
+                lines += [f"  {rule}:",
+                          f"    mem_mb: {mb:<8}# had {had} MiB, peak {max(self.peaks[rule]):.0f}"]
         for rule, secs in sorted(self.seconds.items()):
             if len(secs) >= MANY_JOBS and statistics.median(secs) < SHORT_JOB_SECONDS:
                 lines.append(
