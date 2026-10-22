@@ -330,7 +330,7 @@ AWS Batch usage of this run (cost: rough estimate at list prices, without instan
   star_align      4      0.96      0.32      0.05      4071      1840
   fastp_pe        4      0.08      0.32     <0.01      4071       310
   total           8      1.04      0.64      0.05
-Memory for each rule (its peak + 30%), to paste into the project's workflow/profiles/default/config.yaml:
+Memory for each rule (its peak + 30%), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
 set-resources:
   fastp_pe:
     mem_mb: 300     # had 4071 MiB, peak 310
@@ -486,7 +486,7 @@ cd my-rnaseq
 smkflex init                       # this project's own folder in the bucket, and a .gitignore
 # edit config/config.yaml and the sample sheets (config/samples.tsv, config/units.tsv), and add
 # what this pipeline needs to the project's settings (see below):
-cat >> workflow/profiles/default/config.yaml <<'EOF'
+cat >> profiles/default/config.yaml <<'EOF'
 software-deployment-method: conda
 default-resources: [mem_mb=4000]
 max-threads: 8
@@ -501,8 +501,9 @@ its yeast test data, set up with `snakedeploy` as above (v3.1.2): 53 jobs, 13 mi
 $0.10 of compute with these settings. Without the thread cap it was $0.28, because STAR's 24-thread
 jobs needed big instances and ran out of memory once.
 
-- **The project's settings** go in `workflow/profiles/default/config.yaml`, which Snakemake
-  loads on top of `--profile` by itself (`smkflex` reads it too). `smkflex init` puts the
+- **The project's settings** go in `profiles/default/config.yaml` in the project folder, which
+  Snakemake loads on top of `--profile` by itself (`smkflex` reads it too; if the pipeline brings
+  its own, `smkflex init` adds to that one, since Snakemake reads only one). `smkflex init` puts the
   project's own bucket folder there (`s3://YOUR-BUCKET/snakemake/<folder name>`, so each
   project's `results/` stay apart), and adds `data/`, `results/` and the like to `.gitignore`,
   so `smkflex run` doesn't upload them. The rest is what this pipeline needs, the same as on

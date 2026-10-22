@@ -63,6 +63,23 @@ class _Log:
     warning = info
 
 
+def workflow_profile_file(create=False):
+    """The project's workflow profile, as Snakemake finds it when started here: the first of
+    default/, profiles/default/ and (next to workflow/Snakefile) workflow/profiles/default/ that
+    exists. With create, profiles/default/config.yaml when there's none (Snakemake reads that
+    for a Snakefile at the top or in workflow/)."""
+    candidates = ["default", os.path.join("profiles", "default")]
+    if os.path.isfile(os.path.join("workflow", "Snakefile")):
+        candidates.append(os.path.join("workflow", "profiles", "default"))
+    for d in candidates:
+        if os.path.isdir(d):
+            for name in ("profile.yaml", "config.yaml"):
+                if os.path.isfile(os.path.join(d, name)):
+                    return os.path.join(d, name)
+            return os.path.join(d, "config.yaml")
+    return os.path.join("profiles", "default", "config.yaml") if create else None
+
+
 def _only_installed_profile():
     """The name of the one profile in ~/.config/snakemake that uses this plugin, if there is
     exactly one (setup.sh installs it there)."""
@@ -114,12 +131,10 @@ def _load_profile(path):
     with open(cfg) as f:
         settings = yaml.safe_load(f) or {}
     # The project's own workflow profile, which Snakemake loads on top (e.g. its storage prefix)
-    for name in ("profile.yaml", "config.yaml"):
-        wp = os.path.join("workflow", "profiles", "default", name)
-        if os.path.isfile(wp):
-            with open(wp) as f:
-                settings.update(yaml.safe_load(f) or {})
-            break
+    wp = workflow_profile_file()
+    if wp and os.path.isfile(wp):
+        with open(wp) as f:
+            settings.update(yaml.safe_load(f) or {})
     return str(folder), settings
 
 
@@ -622,10 +637,11 @@ IGNORE_LINES = ("data/", "results/", "resources/", "logs/", ".snakemake/")
 
 def cmd_init(a):
     """Set up this folder as a project: its own folder in the bucket (in the workflow profile
-    Snakemake loads by itself) and a .gitignore that keeps data out of smkflex run."""
+    Snakemake loads by itself, the existing one if the pipeline has one) and a .gitignore that
+    keeps data out of smkflex run."""
     _dir, profile = _load_profile(a.profile)
-    wp_dir = os.path.join("workflow", "profiles", "default")
-    wp = os.path.join(wp_dir, "config.yaml")
+    wp = workflow_profile_file(create=True)
+    wp_dir = os.path.dirname(wp)
     current = {}
     if os.path.isfile(wp):
         with open(wp) as f:

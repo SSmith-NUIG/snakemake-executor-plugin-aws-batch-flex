@@ -136,7 +136,7 @@ class Usage:
         tips = self.suggestions(overhead_mib)
         if tips:
             lines.append("Memory for each rule (its peak + 30%), to paste into the project's "
-                         "workflow/profiles/default/config.yaml:")
+                         "profiles/default/config.yaml (smkflex init makes it):")
             lines.append("set-resources:")
             for rule, mb in sorted(tips.items()):
                 had = self.asked.get(rule)

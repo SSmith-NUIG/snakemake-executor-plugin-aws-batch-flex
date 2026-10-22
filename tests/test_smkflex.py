@@ -324,6 +324,7 @@ def test_plain_folder_follows_its_gitignore(tmp_path):
 def test_workflow_profile_sets_the_project_prefix(tmp_path):
     wf = setup(tmp_path)
     (wf / "workflow" / "profiles" / "default").mkdir(parents=True)
+    (wf / "workflow" / "Snakefile").write_text("")  # snakedeploy's layout
     (wf / "workflow" / "profiles" / "default" / "config.yaml").write_text(
         f"default-storage-prefix: {tmp_path / 'store' / 'proj'}\n")
     (wf / "data").mkdir()
@@ -335,12 +336,11 @@ def test_workflow_profile_sets_the_project_prefix(tmp_path):
 
 def test_init(tmp_path):
     wf = setup(tmp_path)
-    (wf / "workflow").mkdir()
     (wf / ".gitignore").write_text("*.bam")
     r, _ = smkflex(wf, "init")
     assert r.returncode == 0, r.stderr
     store = tmp_path / "store"
-    wp = (wf / "workflow" / "profiles" / "default" / "config.yaml").read_text()
+    wp = (wf / "profiles" / "default" / "config.yaml").read_text()
     assert wp == f"default-storage-prefix: {store}/wf\n"
     gi = (wf / ".gitignore").read_text()
     assert gi.startswith("*.bam\n") and "data/" in gi and ".snakemake/" in gi
@@ -353,3 +353,28 @@ def test_init(tmp_path):
     (wf / "data" / "x").write_text("x")
     r, _ = smkflex(wf, "push", "data")
     assert (store / "wf" / "data" / "x").exists(), r.stdout + r.stderr
+
+
+def test_init_uses_the_pipelines_own_workflow_profile(tmp_path):
+    # Snakemake reads only one workflow profile: add to the pipeline's instead of shadowing it
+    wf = setup(tmp_path)
+    own = wf / "workflow" / "profiles" / "default"
+    own.mkdir(parents=True)
+    (wf / "workflow" / "Snakefile").write_text("")
+    (own / "config.yaml").write_text("set-threads: {align: 4}\n")
+    r, _ = smkflex(wf, "init")
+    assert r.returncode == 0, r.stderr
+    assert (own / "config.yaml").read_text().startswith("set-threads: {align: 4}\ndefault-storage-prefix: ")
+    assert not (wf / "profiles").exists()
+
+
+def test_snakemake_reads_the_profile_init_writes(tmp_path):
+    # the same file must be found by Snakemake itself, for both layouts
+    for layout in ("Snakefile", "workflow/Snakefile"):
+        wf = tmp_path / layout.replace("/", "_")
+        (wf / layout).parent.mkdir(parents=True, exist_ok=True)
+        (wf / layout).write_text('rule all:\n    run:\n        print("PREFIX", workflow.storage_settings.default_storage_prefix)\n')
+        (wf / "profiles" / "default").mkdir(parents=True)
+        (wf / "profiles" / "default" / "config.yaml").write_text("default-storage-prefix: s3://b/proj\ncores: 1\n")
+        r = subprocess.run([sys.executable, "-m", "snakemake", "-n"], cwd=wf, capture_output=True, text=True)
+        assert "workflow specific profile profiles/default" in r.stdout + r.stderr, (layout, r.stdout + r.stderr)
