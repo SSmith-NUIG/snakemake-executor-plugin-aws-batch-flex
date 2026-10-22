@@ -414,6 +414,20 @@ def test_module_from_github(tmp_path):
     assert "GithubFile" not in r.stdout + r.stderr, r.stdout + r.stderr
     assert any(c["call"] == "submit_job" for c in calls), r.stdout + r.stderr
 
+
+def test_peak_memory_in_the_table(tmp_path, monkeypatch):
+    peak = tmp_path / "peak"
+    peak.write_text(str(1024 * 1024 * 1024))  # every fake job "used" 1 GiB
+    monkeypatch.setenv("SMK_FLEX_PEAK_FILE", str(peak))
+    smk = SNAKEFILE.replace("resources: mem_mb=3000", "resources: mem_mb=8000")
+    r, _ = run(tmp_path, smk)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    usage = out.split("AWS Batch usage of this run")[1]
+    row = next(l for l in usage.splitlines() if l.strip().startswith("make_a "))
+    assert row.split()[-2:] == ["7886", "1024"]  # 8000 MB -> 7630 MiB + 256; peak 1 GiB
+    assert "set-resources:\n  make_a:\n    mem_mb: 1200" in out
+
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
                           'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')

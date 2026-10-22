@@ -24,7 +24,7 @@ from snakemake_interface_executor_plugins.settings import (
     ExecutorSettingsBase,
 )
 
-from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet
+from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet, peak_memory_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, describe_existing, is_ecr
 from .naming import batch_job_name
@@ -849,6 +849,7 @@ class Executor(RemoteExecutor):
             if self.settings.conda_path and platform == "ec2" and conda_mount:
                 base += "\n" + conda_snippet(self.settings.conda_path)
             base += "\n" + image_python_snippet()  # SMK_FLEX_SCRIPT_PYTHON decides per job
+            base += peak_memory_snippet()
             self._preludes[key] = base
         return self._preludes[key]
 
@@ -1064,10 +1065,17 @@ class Executor(RemoteExecutor):
             self._spot[queue] = not self.settings.skip_preflight and queue_uses_spot(self.batch, queue)
         self.usage.add(info.job.name, d, info.aux.get("vcpu", 1.0), info.aux.get("mem", 0),
                        info.aux.get("platform", "ec2"), self._spot[queue])
+        c = d.get("container") or {}
+        if c.get("logStreamName") and d.get("status") == "SUCCEEDED":
+            group = (c.get("logConfiguration") or {}).get("options", {}).get("awslogs-group", self.settings.log_group)
+            self.usage.add_log(info.job.name, group, c["logStreamName"])
 
     def shutdown(self):
         super().shutdown()
-        table = None if self.settings.no_cost_summary else self.usage.table()
+        if not self.settings.no_cost_summary:
+            self.usage.fetch_peaks(self.cwlogs)
+        overhead = DEFAULT_MEM_OVERHEAD_MIB if self.settings.mem_overhead_mib is None else self.settings.mem_overhead_mib
+        table = None if self.settings.no_cost_summary else self.usage.table(overhead)
         if table:
             self.logger.info(table)
 

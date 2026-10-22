@@ -4,8 +4,11 @@
 The cost is a rough estimate at list prices. On EC2 you pay for whole instances, so their idle
 time and how well jobs fill them aren't in it; neither are storage, data transfer or logs."""
 
+import math
+import re
 import statistics
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 # USD, on-demand list prices in eu-west-1 / us-east-1 (they're within ~10% of each other).
@@ -19,6 +22,13 @@ FARGATE_SPOT_FACTOR = 0.3
 # copying files from and to storage), so many short jobs of one rule are better grouped.
 SHORT_JOB_SECONDS = 60
 MANY_JOBS = 20
+
+# Peak memory: each job logs it when it ends (bootstrap.peak_memory_snippet). Reading the logs
+# costs an API call per job, so big runs read a sample of each rule's jobs.
+PEAK_RE = re.compile(r"\[snakemake-batch\] peak-memory-bytes=(\d+)")
+PEAK_SAMPLE = 25  # jobs per rule, for runs with more than ALL_PEAKS jobs
+ALL_PEAKS = 300
+HEADROOM = 1.3  # suggested memory = peak * HEADROOM
 
 
 def _seconds(d: dict) -> float:
@@ -38,36 +48,102 @@ class Usage:
     def __init__(self):
         self.rows = defaultdict(lambda: [0, 0.0, 0.0, 0.0])  # rule -> jobs, vCPU-h, GiB-h, USD
         self.seconds = defaultdict(list)  # rule -> run time of each job that ran
+        self.asked = defaultdict(int)  # rule -> most memory a job asked for (MiB)
+        self.logs = defaultdict(list)  # rule -> [(log group, stream)] of jobs that succeeded
+        self.peaks = defaultdict(list)  # rule -> peak memory of jobs (MiB) read from their logs
+        self.sampled = False
 
     def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str, spot: bool):
         secs = _seconds(d)
         if secs:
             self.seconds[rule].append(secs)
         hours = secs / 3600
+        self.asked[rule] = max(self.asked[rule], mem_mib)
         row = self.rows[rule]
         row[0] += 1
         row[1] += vcpu * hours
         row[2] += mem_mib / 1024 * hours
         row[3] += estimate(platform, spot, vcpu * hours, mem_mib / 1024 * hours)
 
-    def table(self) -> Optional[str]:
+    def add_log(self, rule: str, group: str, stream: str):
+        self.logs[rule].append((group, stream))
+
+    def fetch_peaks(self, logs_client):
+        """Read the peak-memory line from the end of each job's log (a sample per rule on big
+        runs). Best effort: jobs whose line can't be read are left out."""
+        total = sum(len(v) for v in self.logs.values())
+        todo = []
+        for rule, streams in self.logs.items():
+            if total > ALL_PEAKS and len(streams) > PEAK_SAMPLE:
+                self.sampled = True
+                streams = streams[-PEAK_SAMPLE:]
+            todo += [(rule, g, st) for g, st in streams]
+
+        def one(item):
+            rule, group, stream = item
+            try:
+                events = logs_client.get_log_events(
+                    logGroupName=group, logStreamName=stream, limit=20, startFromHead=False
+                )["events"]
+            except Exception:
+                return rule, None
+            for e in reversed(events):
+                m = PEAK_RE.search(e.get("message", ""))
+                if m:
+                    return rule, int(m.group(1)) / 1024 / 1024
+            return rule, None
+
+        with ThreadPoolExecutor(8) as pool:
+            for rule, peak in pool.map(one, todo):
+                if peak:
+                    self.peaks[rule].append(peak)
+
+    def suggestions(self, overhead_mib: int) -> dict:
+        """rule -> mem_mb that gives the job its peak plus headroom, for rules whose request is
+        well above (wasted) or close to (at risk) what they used."""
+        out = {}
+        for rule, peaks in self.peaks.items():
+            asked, peak = self.asked.get(rule), max(peaks)
+            if not asked:
+                continue
+            want = max(512, math.ceil(peak * HEADROOM / 100) * 100)  # container memory, MiB
+            if want < asked * 0.6 or peak > asked * 0.8:
+                # the plugin adds overhead_mib for Snakemake itself; mem_mb is in MB
+                out[rule] = max(100, math.ceil((want - overhead_mib) * 1.048576 / 100) * 100)
+        return out
+
+    def table(self, overhead_mib: int = 256) -> Optional[str]:
         if not self.rows:
             return None
         width = max(10, *(len(r) for r in self.rows))
         lines = [
             "AWS Batch usage of this run (cost: rough estimate at list prices, without instance "
             "idle time, storage or data transfer):",
-            f"  {'rule':<{width}}  {'jobs':>5}  {'vCPU-h':>8}  {'GiB-h':>8}  {'~USD':>8}",
+            f"  {'rule':<{width}}  {'jobs':>5}  {'vCPU-h':>8}  {'GiB-h':>8}  {'~USD':>8}"
+            f"  {'mem MiB':>8}  {'peak MiB':>8}",
         ]
         def usd(c):
             return "<0.01" if 0 < c < 0.005 else f"{c:.2f}"
 
         total = [0, 0.0, 0.0, 0.0]
         for rule, (n, v, g, c) in sorted(self.rows.items(), key=lambda kv: -kv[1][3]):
-            lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}  {usd(c):>8}")
+            peak = f"{max(self.peaks[rule]):.0f}" if self.peaks.get(rule) else "-"
+            lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}  {usd(c):>8}"
+                         f"  {self.asked.get(rule, 0):>8}  {peak:>8}")
             total = [total[0] + n, total[1] + v, total[2] + g, total[3] + c]
         if len(self.rows) > 1:
             lines.append(f"  {'total':<{width}}  {total[0]:>5}  {total[1]:>8.2f}  {total[2]:>8.2f}  {usd(total[3]):>8}")
+        if self.peaks:
+            note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
+            lines.append(f"mem MiB: what the job had (the most for that rule); peak MiB: the most it used{note}, "
+                         "including file cache.")
+        tips = self.suggestions(overhead_mib)
+        if tips:
+            lines.append("Suggested memory (peak + 30%), e.g. for the project's "
+                         "workflow/profiles/default/config.yaml:")
+            lines.append("set-resources:")
+            for rule, mb in sorted(tips.items()):
+                lines += [f"  {rule}:", f"    mem_mb: {mb}"]
         for rule, secs in sorted(self.seconds.items()):
             if len(secs) >= MANY_JOBS and statistics.median(secs) < SHORT_JOB_SECONDS:
                 lines.append(

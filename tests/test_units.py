@@ -158,3 +158,19 @@ def test_s3_directory_is_looked_up_again():
     assert o.is_dir() is False  # before the job: no files under the prefix
     o.keys = ["star_genome/SA"]  # the job uploaded the directory
     assert o.is_dir() is True
+
+
+def test_memory_suggestions():
+    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    u = Usage()
+    d = {"startedAt": 0, "stoppedAt": 1000}
+    u.add("big", d, 1, 8448, "ec2", False)     # asked 8 GiB + overhead, used 1 GiB: wasted
+    u.add("tight", d, 1, 4352, "ec2", False)   # asked 4 GiB + overhead, used 3.9 GiB: at risk
+    u.add("fine", d, 1, 4352, "ec2", False)    # used 2.5 GiB: leave it
+    u.peaks.update({"big": [1024.0, 900.0], "tight": [3900.0], "fine": [2500.0]})
+    tips = u.suggestions(256)
+    # big: 1024 * 1.3 -> 1400 MiB container, minus 256 for Snakemake = 1144 MiB = 1200 MB
+    assert tips == {"big": 1200, "tight": 5100}
+    t = u.table(256)
+    assert "set-resources:\n  big:\n    mem_mb: 1200\n  tight:\n    mem_mb: 5100" in t
+    assert "peak MiB" in t

@@ -157,6 +157,18 @@ def image_python_snippet() -> str:
     )
 
 
+def peak_memory_snippet() -> str:
+    """When the job's shell exits, log the container's peak memory (cgroup v2 memory.peak,
+    or v1's max_usage_in_bytes); the plugin reads it from the log for the end-of-run table."""
+    return (
+        'smk_peak() { for f in "${SMK_FLEX_PEAK_FILE:-/sys/fs/cgroup/memory.peak}" '
+        "/sys/fs/cgroup/memory/memory.max_usage_in_bytes; do "
+        'if [ -r "$f" ]; then echo "[snakemake-batch] peak-memory-bytes=$(cat "$f")" >&2; return 0; fi; '
+        "done; }\n"
+        "trap smk_peak EXIT\n"
+    )
+
+
 def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:
     code = (
         "import importlib.metadata as m\n"

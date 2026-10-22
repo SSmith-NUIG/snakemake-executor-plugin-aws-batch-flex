@@ -319,22 +319,32 @@ and `snakemake-job-id`, and tags propagate to the ECS tasks.
 ### What a run used
 
 At the end of a run the plugin prints what each rule used, from Batch's own start and stop
-times (Spot retries included):
+times (Spot retries included), and how much memory its jobs really needed:
 
 ```
 AWS Batch usage of this run (cost: rough estimate at list prices, without instance idle time, storage or data transfer):
-  rule         jobs    vCPU-h     GiB-h      ~USD
-  align          24     96.40    385.60      4.82
-  sort           24     12.10     48.40      0.61
-  total          48    108.50    434.00      5.43
+  rule         jobs    vCPU-h     GiB-h      ~USD   mem MiB  peak MiB
+  star_align      4      0.96      0.32      0.05      4071      1840
+  fastp_pe        4      0.08      0.32     <0.01      4071       310
+  total           8      1.04      0.64      0.05
+Suggested memory (peak + 30%), e.g. for the project's workflow/profiles/default/config.yaml:
+set-resources:
+  fastp_pe:
+    mem_mb: 200
 ```
 
-The cost uses typical on-demand prices (about $0.05 per vCPU-hour on EC2, less on Spot; Fargate's
-per-vCPU and per-GB prices). On EC2 you pay for whole instances, so the bill is higher when
-jobs leave instances half empty or they wait idle before shutting down. AWS Cost Explorer has
-the real figures: the instances are tagged `ManagedBy=snakemake-batch-flex`, which you can filter
-by once it's switched on under **Billing** > **Cost allocation tags**. Turn the table off with
-`no-cost-summary`.
+- **Memory:** each job logs its peak memory as it ends (read from Linux, so it includes file
+  cache and is on the safe side), and the plugin reads those lines from the job logs. On runs
+  with more than 300 jobs it reads 25 per rule. The suggestions cover rules that asked for far
+  more than they used (wasted space on the instances) or came close to their limit; paste them
+  into the project's settings, and the next run fits the jobs better.
+- **Cost:** uses typical on-demand prices (about $0.05 per vCPU-hour on EC2, less on Spot;
+  Fargate's per-vCPU and per-GB prices). On EC2 you pay for whole instances, so the bill is
+  higher when jobs leave instances half empty or they wait idle before shutting down. AWS Cost
+  Explorer has the real figures: the instances are tagged `ManagedBy=snakemake-batch-flex`, which
+  you can filter by once it's switched on under **Billing** > **Cost allocation tags**.
+
+Turn the table off with `no-cost-summary`.
 
 ### Many small jobs
 
