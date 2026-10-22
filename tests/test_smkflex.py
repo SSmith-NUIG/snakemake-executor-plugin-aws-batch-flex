@@ -229,3 +229,54 @@ def test_local_runs_record_the_commit(tmp_path):
     assert local_commit(str(tmp_path)) == sha
     (tmp_path / "Snakefile").write_text("y")
     assert local_commit(str(tmp_path)) == sha + "-modified"
+
+
+def test_git_with_local_config_added(tmp_path):
+    wf = setup(tmp_path)
+    repo = tmp_path / "pipe"
+    (repo / "config").mkdir(parents=True)
+    (repo / "Snakefile").write_text(textwrap.dedent('''
+        configfile: "config/config.yaml"
+        rule all:
+            input: "msg.txt"
+        rule msg:
+            output: "msg.txt"
+            shell: "echo {config[msg]} > {output}"
+    '''))
+    (repo / "config" / "config.yaml").write_text("msg: from-repo\n")
+    (repo / "config" / "other.yaml").write_text("x: 1\n")
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "c")
+    sha = _git(repo, "rev-parse", "HEAD")[:12]
+    (wf / "config").mkdir()
+    (wf / "config" / "config.yaml").write_text("msg: from-here\n")
+
+    r, calls = smkflex(wf, "run", "--wait", "--git", f"file://{repo}", "--add", "config")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "msg.txt").read_text() == "from-here\n"
+    head = next(c for c in calls if c["call"] == "submit_job" and c["jobName"] == "smkflex-pipe")
+    assert head["tags"]["smkflex-commit"] == sha + "+added"
+    assert "Adding 1 local file(s): config/config.yaml" in r.stderr
+
+    r, _ = smkflex(wf, "run", "--git", f"file://{repo}", "--add", "../outside")
+    assert r.returncode == 2 and "inside this folder" in r.stderr
+    r, _ = smkflex(wf, "run", "--git", f"file://{repo}", "--add", "nope.yaml")
+    assert r.returncode == 2 and "no such file" in r.stderr
+
+
+def test_add_sends_ignored_files_and_replaces(tmp_path):
+    import io
+    from snakemake_executor_plugin_aws_batch_flex.remote import added_files, make_bundle
+    (tmp_path / "Snakefile").write_text("x")
+    (tmp_path / ".gitignore").write_text("samples.tsv\n")
+    (tmp_path / "samples.tsv").write_text("s1\n")
+    (tmp_path / "profile").mkdir()
+    (tmp_path / "profile" / "config.yaml").write_text("")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    t = tarfile.open(fileobj=io.BytesIO(make_bundle(str(tmp_path), str(tmp_path / "profile"), 100)))
+    assert "samples.tsv" not in t.getnames()
+    extra = added_files(["samples.tsv"], base=str(tmp_path))
+    t = tarfile.open(fileobj=io.BytesIO(make_bundle(str(tmp_path), str(tmp_path / "profile"), 100, extra)))
+    assert "samples.tsv" in t.getnames()
+    assert "samples.tsv" in t.extractfile(".smkflex/files.txt").read().decode().split()

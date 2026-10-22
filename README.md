@@ -394,6 +394,10 @@ ends.
   touched), so private repositories work with your usual git
   login; the profile still comes from here (`--profile`). The run's name defaults to the
   repository's name.
+- `--add PATH` sends a local file or folder as well, at the same path, e.g. `--add config/`
+  for your own config and sample sheets on top of a `--git` repository (files with the same name
+  replace the repository's; with `--path`, paths are relative to that folder in the bundle). It
+  also sends files a local folder's `.gitignore` would leave out. Repeatable.
 - Each run records the commit it ran (for a local folder in git, with `-modified` if it had
   uncommitted changes); `smkflex status` shows it.
 - The head job uses 1 vCPU and 2 GiB (`--vcpus`, `--mem-mb`) for as long as the workflow
@@ -455,6 +459,14 @@ aws s3 cp --recursive .test/ngs-test-data/reads s3://BUCKET/snakemake/rnaseq/ngs
 snakemake --profile PROFILE --default-storage-prefix s3://BUCKET/snakemake/rnaseq \
   --config samples=.test/config_basic/samples.tsv units=.test/config_basic/units.tsv \
   --default-resources mem_mb=4000 --sdm conda --max-threads 4 --retries 2 -j 20
+```
+
+Or without a local copy of the pipeline, with only your config folder here (`config/config.yaml`
+and the sample sheets it names):
+
+```bash
+smkflex run --git https://github.com/snakemake-workflows/rna-seq-star-deseq2 --rev v2.2.0 \
+  --add config/ -- --default-resources mem_mb=4000 --sdm conda --max-threads 4 --retries 2 -j 20
 ```
 
 What to watch for with any published pipeline:

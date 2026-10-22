@@ -101,17 +101,43 @@ def workflow_files(root):
                   if not SKIP_DIRS.intersection(f.split("/")) and os.path.isfile(os.path.join(root, f)))
 
 
-def make_bundle(root, profile_dir, max_mb):
+def added_files(paths, base="."):
+    """{path in the bundle: local file} for --add: files, or every file in a folder, given
+    relative to `base` (the current folder) and sent to the same place."""
+    out = {}
+    for p in paths:
+        norm = os.path.normpath(p)
+        if os.path.isabs(p) or norm == ".." or norm.startswith(".." + os.sep):
+            raise Fail(f"--add {p}: give a path inside this folder (it's sent to the same place)")
+        full = os.path.join(base, norm)
+        if os.path.isfile(full):
+            out[norm] = full
+        elif os.path.isdir(full):
+            for d, dirs, names in os.walk(full):
+                dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+                for n in names:
+                    f = os.path.join(d, n)
+                    out[os.path.relpath(f, base)] = f
+        else:
+            raise Fail(f"--add {p}: no such file or folder here")
+    return out
+
+
+def make_bundle(root, profile_dir, max_mb, extra=None):
+    """The workflow folder `root` as a tar.gz, with `extra` ({path in the bundle: local file})
+    laid over it, plus the profile, this plugin and the head job's script."""
     buf = io.BytesIO()
     total = 0
-    files = workflow_files(root)
+    sources = {f: os.path.join(root, f) for f in workflow_files(root)}
+    sources.update(extra or {})
+    files = sorted(sources)
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
         for f in files:
-            total += os.path.getsize(os.path.join(root, f))
+            total += os.path.getsize(sources[f])
             if total > max_mb * 1024 * 1024:
                 raise Fail(f"the workflow folder has more than {max_mb} MB of files (at {f}); data "
                            "belongs in storage. Add big files to .gitignore, or raise --max-bundle-mb.")
-            t.add(os.path.join(root, f), arcname=f)
+            t.add(sources[f], arcname=f)
         # what `git ls-files` would say, for the head job's stand-in git
         listing = "".join(f + "\n" for f in files).encode()
         info = tarfile.TarInfo(".smkflex/files.txt")
@@ -236,22 +262,28 @@ def cmd_run(a, snakemake_args):
             if not os.path.isdir(root):
                 raise Fail(f"{a.path} isn't a folder in {a.git}")
             print(f"Cloned {a.git} at {commit[:12]}" + (f" ({a.rev})" if a.rev else ""), file=sys.stderr)
-            source = {"smkflex-source": _tag(a.git + (f" {a.rev}" if a.rev else "")), "smkflex-commit": commit[:12]}
+            extra = added_files(a.add or [])
+            source = {"smkflex-source": _tag(a.git + (f" {a.rev}" if a.rev else "")),
+                      "smkflex-commit": commit[:12] + ("+added" if extra else "")}
             default_name = re.sub(r"\.git$", "", a.git.rstrip("/").rsplit("/", 1)[-1])
         else:
             if a.rev or a.path:
                 raise Fail("--rev and --path go with --git")
             root = "."
+            extra = added_files(a.add or [])
             commit = local_commit(root)
             source = {"smkflex-commit": commit} if commit else {}
             default_name = os.path.basename(os.path.abspath("."))
-        return _run(a, snakemake_args, root, source, default_name)
+        if extra:
+            print(f"Adding {len(extra)} local file(s): " + ", ".join(sorted(extra)[:5])
+                  + (" ..." if len(extra) > 5 else ""), file=sys.stderr)
+        return _run(a, snakemake_args, root, source, default_name, extra)
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _run(a, snakemake_args, root, source, default_name):
+def _run(a, snakemake_args, root, source, default_name, extra=None):
     profile_dir, profile = _load_profile(a.profile)
     queue = a.queue or profile.get("aws-batch-flex-queue")
     prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
@@ -284,7 +316,7 @@ def _run(a, snakemake_args, root, source, default_name):
             raise Fail(f"workflow '{name}' is already running as head job {running[0]}; wait for it, "
                        f"`smkflex cancel {running[0]}`, or pass --force")
 
-    bundle = make_bundle(root, profile_dir, a.max_bundle_mb)
+    bundle = make_bundle(root, profile_dir, a.max_bundle_mb, extra)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     bundle_url = f"{prefix}/.smkflex/{name}/runs/{stamp}/workflow.tar.gz"
     headjob.put(bundle_url, bundle)
@@ -637,6 +669,9 @@ def main(argv=None):
                    "(cloned here with your git login, so private repositories work)")
     r.add_argument("--rev", help="with --git: branch, tag or commit (default: the default branch)")
     r.add_argument("--path", help="with --git: folder in the repository that has the workflow")
+    r.add_argument("--add", action="append", metavar="PATH",
+                   help="send this local file or folder too, at the same path (with --git: over the "
+                   "repository's, e.g. --add config/ for your own config); repeatable")
     r.add_argument("--name", help="workflow name; runs with the same name share state "
                    "(default: the folder's or repository's name)")
     r.add_argument("--queue", help="queue for the head job (default: the profile's)")
