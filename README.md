@@ -202,6 +202,11 @@ check, since after `terraform destroy` nothing uses it any more.
   the folder you start it from, so start it from the top of the pipeline (not with
   `--directory` pointing at a subfolder). Published pipelines' tests often use
   `--directory .test`; run from the top with `--configfile .test/...` instead.
+- **A dry run (`-n`) lists jobs for a finished workflow** with "software environment definition
+  has changed". That's a Snakemake quirk with `conda:` rules: a dry run treats the jobs as local
+  and works out their environments, which a real run (where the jobs build them on AWS) doesn't
+  record. The real run says "Nothing to be done". `-n --rerun-triggers mtime params input code`
+  shows what the real run will do.
 - **Not sure what's wrong?** Run `smkflex check` in your workflow folder (or `smkflex check
   --profile DIR`). It checks your AWS login, the queue, the roles, that it can write to the
   bucket, and the Snakemake versions, and says what to fix.
