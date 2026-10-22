@@ -465,7 +465,7 @@ Or without a local copy of the pipeline, with only your config folder here (`con
 and the sample sheets it names):
 
 ```bash
-smkflex run --git https://github.com/snakemake-workflows/rna-seq-star-deseq2 --rev v2.2.0 \
+smkflex run --git https://github.com/snakemake-workflows/rna-seq-star-deseq2 --rev v3.1.2 \
   --add config/ -- --default-resources mem_mb=4000 --sdm conda --max-threads 4 --retries 2 -j 20
 ```
 
