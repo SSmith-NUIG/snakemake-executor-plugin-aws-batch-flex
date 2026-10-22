@@ -175,15 +175,16 @@ mkdir -p "$PROFILE_DIR"
 P="$PROFILE_DIR/config.yaml"
 [ -f "$P" ] && cp "$P" "$P.bak" && echo "(the old profile is in $P.bak)"
 {
+  # what this setup created; run settings are the user's (or a project's) choice
   $TERRAFORM -chdir="$TF_DIR" output -raw snakemake_profile
-  echo "default-resources: [mem_mb=4000]   # many pipelines set no memory; 4 GB suits most tools"
-  echo "retries: 2                         # also retries jobs that ran out of memory, with more"
   echo "jobs: 100                          # jobs on Batch at once"
-  echo "max-threads: 8                     # caps rules written for big cluster nodes (raise it if needed)"
-  if [ "$CONDA" = 1 ]; then
-    echo "aws-batch-flex-conda-path: /opt/miniforge3"
-    echo "software-deployment-method: conda  # for conda: rules and wrappers"
-  fi
+  if [ "$CONDA" = 1 ]; then echo "aws-batch-flex-conda-path: /opt/miniforge3   # conda in the image"; fi
+  echo "# Common choices, per pipeline: uncomment here, or put them in a project's"
+  echo "# workflow/profiles/default/config.yaml (Snakemake loads it on top of this profile)."
+  echo "# software-deployment-method: conda"
+  echo "# default-resources: [mem_mb=4000]"
+  echo "# retries: 2"
+  echo "# max-threads: 8"
 } > "$P"
 mkdir -p "$WF_DIR"
 [ -f "$WF_DIR/Snakefile" ] || cp "$HERE/examples/smoke-test/Snakefile" "$WF_DIR/Snakefile"

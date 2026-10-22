@@ -234,7 +234,7 @@ rule align:
 |---|---|
 | `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
 | `threads: 8` | Number of vCPUs requested. |
-| `mem_mb=16000` (or `mem_mib`) | Memory requested. Many published pipelines don't set it, so the profile's `default-resources: [mem_mb=4000]` (what `setup.sh` writes) is what most rules get. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). |
+| `mem_mb=16000` (or `mem_mib`) | Memory requested. Many published pipelines don't set it; then `default-resources` in the profile applies, or the plugin's 2048 MiB. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). |
 | `runtime=120` | Minutes before Batch stops the job (timeout). To give every rule a timeout, put `runtime` in the profile's `default-resources`. |
 | `batch_shm_mb=4096` | Size of `/dev/shm` (Docker's default is 64 MB), for tools that use shared memory, e.g. bwa-mem2 or PyTorch data loaders. What's stored there counts towards `mem_mb`. EC2 only. `shared_memory_size_mb` also works. |
 | `disk_mb=100000` | Fargate: scratch disk for the job (default 20 GiB, up to 200), rounded up to 25 GiB steps. Snakemake sets it to twice the input size by default, which is used too. EC2: ignored; see [Limits](#limits). |
@@ -459,8 +459,14 @@ that fetches the pipeline's code from GitHub at the release you name.
 snakedeploy deploy-workflow https://github.com/snakemake-workflows/rna-seq-star-deseq2 my-rnaseq --tag v3.1.2
 cd my-rnaseq
 # edit config/config.yaml and the sample sheets (config/samples.tsv, config/units.tsv)
-mkdir -p workflow/profiles/default # this project's own folder in the bucket:
-echo "default-storage-prefix: s3://YOUR-BUCKET/snakemake/my-rnaseq" > workflow/profiles/default/config.yaml
+mkdir -p workflow/profiles/default # this project's settings (see below)
+cat > workflow/profiles/default/config.yaml <<'EOF'
+default-storage-prefix: s3://YOUR-BUCKET/snakemake/my-rnaseq
+software-deployment-method: conda
+default-resources: [mem_mb=4000]
+max-threads: 8
+retries: 2
+EOF
 smkflex push data                  # the input files, at the paths the sample sheets use
 snakemake --profile smkflex        # or: smkflex run --profile smkflex
 ```
@@ -468,18 +474,16 @@ snakemake --profile smkflex        # or: smkflex run --profile smkflex
 Tested with [rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) on
 its yeast test data: 53 jobs, 13 minutes, about $0.10 of compute (16 minutes as a `smkflex run`).
 
-- **One bucket folder per project:** Snakemake loads `workflow/profiles/default/config.yaml` on
-  top of `--profile` by itself, so the `default-storage-prefix` there keeps each project's
-  `results/` apart (`smkflex push`, `pull` and `run` read it too).
+- **The project's settings** go in `workflow/profiles/default/config.yaml`, which Snakemake
+  loads on top of `--profile` by itself (`smkflex` reads it too). Its own bucket folder
+  (`default-storage-prefix`) keeps each project's `results/` apart. The rest is what this
+  pipeline needs, the same as on any cluster: its rules use conda; most don't set memory, so
+  `default-resources` applies (otherwise the plugin's 2 GB); STAR asks for 24 threads, which
+  `max-threads` caps; and `retries` covers jobs that run out of memory (retried with twice
+  the memory) and flaky downloads. Other pipelines need other values: their docs say which.
 - **Data stays out of the project folder's upload:** `smkflex run` sends the folder to AWS, so
   list data folders in a `.gitignore` there (e.g. `data/`); they reach the jobs through the
   bucket (`smkflex push`).
-- **Memory:** most pipelines don't set it per rule, so the profile's
-  `default-resources: [mem_mb=4000]` is what their rules get. Raise single rules with
-  `--set-resources RULE:mem_mb=16000` (or `set-resources:` in the profile).
-- **Threads:** pipelines often ask for many (rna-seq-star-deseq2's STAR rule wants 24), which on
-  Batch means big instances and, for tools like STAR, more memory. The profile from `setup.sh`
-  caps rules at `max-threads: 8`; raise it for big data.
 - **Packages a pipeline's Snakefile imports** besides pandas go into the machine image (next
   section).
 - **A pipeline's own tests** (`.test/` in its repository) are run with `--directory .test`.
@@ -607,12 +611,11 @@ your bucket. Terraform prints one for you. For the test workflow:
 ```bash
 mkdir -p ~/.config/snakemake/smkflex
 terraform -chdir=terraform output -raw snakemake_profile > ~/.config/snakemake/smkflex/config.yaml
-printf 'default-resources: [mem_mb=4000]\nretries: 2\njobs: 100\nmax-threads: 8\n' >> ~/.config/snakemake/smkflex/config.yaml
+echo "jobs: 100" >> ~/.config/snakemake/smkflex/config.yaml
 cat ~/.config/snakemake/smkflex/config.yaml
 ```
 
-(With conda in the image, also add `aws-batch-flex-conda-path: /opt/miniforge3` and
-`software-deployment-method: conda`.)
+(With conda in the image, also add `aws-batch-flex-conda-path: /opt/miniforge3`.)
 
 You should see lines like `executor: aws-batch-flex` and `aws-batch-flex-queue: smkflex-queue`.
 
