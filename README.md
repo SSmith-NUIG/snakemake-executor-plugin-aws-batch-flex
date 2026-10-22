@@ -669,8 +669,8 @@ the AMI with `update-ami.sh`, using an existing job definition, a private ECR im
 Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from
 a folder and with `--git`) and cancelling one, jobs on the Spot queue, the usage and cost table
 (with each rule's peak memory and the hint about many short jobs), retrying a job that ran out
-of memory with more, the whole setup with `scripts/setup.sh` (a second, separate setup in the
-same account), and the published rna-seq-star-deseq2 pipeline on its test data (with
+of memory with more, the whole setup with `scripts/setup.sh` (twice, as a second, separate
+setup in the same account; with conda and pandas in the image, and `smkflex init`/`push`/`pull`), and the published rna-seq-star-deseq2 pipeline on its test data (with
 `snakemake`, as a `smkflex` head job, and set up with `snakedeploy`).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
