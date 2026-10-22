@@ -430,6 +430,52 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
     return hints
 
 
+def _skip_remote_module_scripts():
+    """Two fixes to what Snakemake packs for the jobs. (1) Work around Snakemake (9.27): packing the workflow's sources for the jobs crashes with
+    "TypeError: ... not GithubFile" when a rule comes from a module fetched from GitHub (as
+    snakedeploy sets up), because it treats the rule's script as a local file. Those scripts
+    don't need packing: each job fetches them from GitHub itself. So they're hidden while the
+    sources are collected. (2) Everything in config/ is packed, see below."""
+    try:
+        from snakemake.dag import DAG
+        from snakemake.sourcecache import LocalSourceFile, SourceFile
+    except Exception:
+        return
+    orig = getattr(DAG, "get_sources", None)
+    if orig is None or getattr(orig, "_skips_remote", False):
+        return
+
+    def get_sources(self):
+        hidden = []
+        for rule in getattr(self.workflow, "rules", []):
+            base = getattr(rule, "basedir", None)
+            if isinstance(base, SourceFile) and not isinstance(base, LocalSourceFile):
+                for attr in ("script", "notebook"):
+                    value = getattr(rule, attr, None)
+                    if value:
+                        hidden.append((rule, attr, value))
+                        setattr(rule, attr, None)
+        try:
+            files = orig(self)
+        finally:
+            for rule, attr, value in hidden:
+                setattr(rule, attr, value)
+        # Sample sheets etc. in config/ (the standard place) only reach the jobs through
+        # `git ls-files`, i.e. not at all in a folder that isn't a git checkout, such as one
+        # made by snakedeploy. Send them anyway.
+        if isinstance(files, set) and os.path.isdir("config"):
+            for d, _dirs, names in os.walk("config"):
+                files.update(os.path.join(d, n) for n in names)
+        return files
+
+    get_sources._skips_remote = True
+    DAG.get_sources = get_sources
+
+
+# Snakemake packs the sources before it creates the executor, so this can't wait for it.
+_skip_remote_module_scripts()
+
+
 def _recheck_s3_directories():
     """Work around snakemake-storage-plugin-s3 (0.3.6): a storage object remembers is_dir() =
     False from before the job ran, so a directory() output the job then uploads is reported

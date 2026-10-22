@@ -356,6 +356,64 @@ def test_temp_output_nobody_uses(tmp_path):
     assert not (tmp_path / "store" / "x.db").exists()
     assert not any("--unneeded-temp-files" in c["cmdtail"] for c in calls if c["call"] == "submit_job")
 
+
+SHEET = textwrap.dedent('''
+    samples = open("config/samples.txt").read().split()
+    rule all:
+        input: expand("{s}.txt", s=samples)
+    rule one:
+        output: "{s}.txt"
+        shell: "echo {wildcards.s} > {output}"
+''')
+
+
+def test_sample_sheet_in_config_reaches_jobs_without_git(tmp_path):
+    # Snakemake only packs files like config/samples.txt via `git ls-files`; this folder is no
+    # git checkout (like one made by snakedeploy), and every job reads the sheet again.
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "samples.txt").write_text("s1 s2\n")
+    r, calls = run(tmp_path, SHEET)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "s2.txt").read_text() == "s2\n"
+
+
+def test_module_from_github(tmp_path):
+    # snakedeploy's layout: the pipeline's rules come from GitHub; packing the sources used to
+    # crash on their scripts ("not GithubFile")
+    import pytest
+    if not os.environ.get("RUN_NETWORK_TESTS"):
+        pytest.skip("needs GitHub (RUN_NETWORK_TESTS=1)")
+    pytest.importorskip("pandas")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "config.yaml").write_text(textwrap.dedent('''
+        samples: config/samples.tsv
+        units: config/units.tsv
+        ref: {species: saccharomyces_cerevisiae, release: 114, build: R64-1-1}
+        trimming: {activate: false}
+        mergeReads: {activate: false}
+        pca: {activate: false, labels: [condition]}
+        diffexp:
+          variables_of_interest: {condition: {base_level: untreated}}
+          batch_effects: ""
+          contrasts: {t: {variable_of_interest: condition, level_of_interest: treated}}
+          model: ~condition
+        params: {star: {index: "", align: ""}}
+    '''))
+    (tmp_path / "config" / "samples.tsv").write_text("sample_name\tcondition\nA\ttreated\nB\tuntreated\n")
+    (tmp_path / "config" / "units.tsv").write_text(
+        "sample_name\tunit_name\tfq1\tfq2\tsra\tadapters\tstrandedness\n"
+        "A\t1\ta.fq\t\t\t\tnone\nB\t1\tb.fq\t\t\t\tnone\n")
+    smk = textwrap.dedent('''
+        configfile: "config/config.yaml"
+        module rnaseq:
+            snakefile: github("snakemake-workflows/rna-seq-star-deseq2", path="workflow/Snakefile", tag="v3.1.2")
+            config: config
+        use rule * from rnaseq
+    ''')
+    r, calls = run(tmp_path, smk, "resources/genome.gtf", "--keep-going")
+    assert "GithubFile" not in r.stdout + r.stderr, r.stdout + r.stderr
+    assert any(c["call"] == "submit_job" for c in calls), r.stdout + r.stderr
+
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',
                           'echo snakemake: error: unrecognized arguments: --storage-gcs-project x >&2; exit 2')
