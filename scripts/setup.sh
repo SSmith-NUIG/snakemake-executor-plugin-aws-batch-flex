@@ -179,6 +179,7 @@ P="$PROFILE_DIR/config.yaml"
   echo "default-resources: [mem_mb=4000]   # many pipelines set no memory; 4 GB suits most tools"
   echo "retries: 2                         # also retries jobs that ran out of memory, with more"
   echo "jobs: 100                          # jobs on Batch at once"
+  echo "max-threads: 8                     # caps rules written for big cluster nodes (raise it if needed)"
   if [ "$CONDA" = 1 ]; then
     echo "aws-batch-flex-conda-path: /opt/miniforge3"
     echo "software-deployment-method: conda  # for conda: rules and wrappers"

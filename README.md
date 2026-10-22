@@ -476,8 +476,10 @@ its yeast test data: 53 jobs, 13 minutes, about $0.10 of compute (16 minutes as 
   bucket (`smkflex push`).
 - **Memory:** most pipelines don't set it per rule, so the profile's
   `default-resources: [mem_mb=4000]` is what their rules get. Raise single rules with
-  `--set-resources RULE:mem_mb=16000` (or `set-resources:` in the profile) and cap rules that ask
-  for many threads with `--max-threads 8`.
+  `--set-resources RULE:mem_mb=16000` (or `set-resources:` in the profile).
+- **Threads:** pipelines often ask for many (rna-seq-star-deseq2's STAR rule wants 24), which on
+  Batch means big instances and, for tools like STAR, more memory. The profile from `setup.sh`
+  caps rules at `max-threads: 8`; raise it for big data.
 - **Packages a pipeline's Snakefile imports** besides pandas go into the machine image (next
   section).
 - **A pipeline's own tests** (`.test/` in its repository) are run with `--directory .test`.
@@ -605,7 +607,7 @@ your bucket. Terraform prints one for you. For the test workflow:
 ```bash
 mkdir -p ~/.config/snakemake/smkflex
 terraform -chdir=terraform output -raw snakemake_profile > ~/.config/snakemake/smkflex/config.yaml
-printf 'default-resources: [mem_mb=4000]\nretries: 2\njobs: 100\n' >> ~/.config/snakemake/smkflex/config.yaml
+printf 'default-resources: [mem_mb=4000]\nretries: 2\njobs: 100\nmax-threads: 8\n' >> ~/.config/snakemake/smkflex/config.yaml
 cat ~/.config/snakemake/smkflex/config.yaml
 ```
 
