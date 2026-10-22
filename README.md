@@ -330,7 +330,9 @@ AWS Batch usage of this run (cost: rough estimate at list prices, without instan
 Suggested memory (peak + 30%), e.g. for the project's workflow/profiles/default/config.yaml:
 set-resources:
   fastp_pe:
-    mem_mb: 200
+    mem_mb: 300
+  star_align:
+    mem_mb: 2300
 ```
 
 - **Memory:** each job logs its peak memory as it ends (read from Linux, so it includes file
