@@ -77,9 +77,10 @@ Check it worked: `aws sts get-caller-identity` should print your account number.
 ### 4. Set up AWS
 
 One script does the rest of the setup: it finds your account's network, builds a machine
-image with Snakemake (plus conda and pandas, which most published pipelines need) on it, creates
-the queue, roles and bucket with Terraform, and installs a Snakemake profile called `smkflex`
-(in `~/.config/snakemake/smkflex/`), so `snakemake --profile smkflex` works in any folder. Use the region you picked in step 3:
+image with Snakemake (plus conda and pandas, which most published pipelines need) on it,
+creates the queue, roles and bucket with Terraform, and installs a Snakemake profile called
+`smkflex` (in `~/.config/snakemake/smkflex/`), so `snakemake --profile smkflex` works in any
+folder. Use the region you picked in step 3:
 
 ```bash
 bash scripts/setup.sh --region eu-west-1
@@ -93,9 +94,8 @@ on where it stopped.
 
 Options: `--fargate` also creates a Fargate queue, `--spot` a cheaper Spot queue (see
 [Spot instances](#spot-instances)), `--extra-package NAME` adds a Python package to the image,
-and `--no-conda` leaves conda out.
-`bash scripts/setup.sh --help` lists the rest. To do each step by hand instead, see
-[Setting up by hand](#setting-up-by-hand).
+and `--no-conda` leaves conda out. `bash scripts/setup.sh --help` lists the rest. To do each
+step by hand instead, see [Setting up by hand](#setting-up-by-hand).
 
 Nothing is running (or costing money) yet: machines start when jobs arrive and stop when the
 queue is empty.
@@ -112,11 +112,11 @@ has to start a machine, so the jobs show as waiting for a few minutes. Then each
 its own container (`debian:12`, which has no Python) and writes its result to S3. When it's
 finished you'll see `3 of 3 steps (100%) done`.
 
-Look at the results (the bucket name is printed by `terraform -chdir=../../terraform output -raw s3_bucket`):
+Download the results from the bucket and look at them:
 
 ```bash
-aws s3 cp s3://YOUR-BUCKET/snakemake/results/hello.txt -
-aws s3 cp s3://YOUR-BUCKET/snakemake/results/sum.txt -
+smkflex pull results --profile smkflex
+cat results/hello.txt results/sum.txt
 ```
 
 The first says hello from Debian and `image has NO python3`; the second is `45`. A few minutes
@@ -137,17 +137,18 @@ rule count_lines:
 ```
 
 Snakemake works out the order from the file names, and with this plugin each rule runs as a
-Batch job. File paths are inside your bucket's `snakemake/` folder, so upload input files
-there first:
+Batch job. The files live in your S3 bucket, so put the `Snakefile` in a new folder and, in
+that folder:
 
 ```bash
-smkflex push data          # uploads data/reads.txt to s3://YOUR-BUCKET/snakemake/data/reads.txt
+smkflex init                     # gives this project its own folder in the bucket
+smkflex push data                # uploads data/reads.txt to it
+snakemake --profile smkflex      # runs the workflow
+smkflex pull results             # downloads results/ from it
 ```
 
-Put the `Snakefile` in a new folder and run `snakemake --profile smkflex` there. Results appear
-under `s3://YOUR-BUCKET/snakemake/results/`; `smkflex pull results` downloads them into the
-folder (`push` and `pull` skip files that are already there with the same size; `--dry-run`
-only lists them). `export SNAKEMAKE_PROFILE=smkflex` saves typing `--profile` every time.
+`push` and `pull` skip files that are already there with the same size (`--dry-run` only lists
+them). `export SNAKEMAKE_PROFILE=smkflex` saves typing `--profile` every time.
 The [Snakemake tutorial](https://snakemake.readthedocs.io/en/stable/tutorial/tutorial.html)
 explains rules, wildcards and the rest; everything in it works here, with the differences listed
 under [Limits](#limits).
@@ -162,17 +163,18 @@ image (all cents per month for small amounts). Job logs are deleted after 30 day
 (`log_retention_days` in `terraform.tfvars`). Files in the bucket stay until you delete them;
 set `s3_expire_days` to have files under the prefix deleted automatically that many days after
 they were written (only do this if you copy results you want to keep elsewhere). Uploads that
-were interrupted, e.g. by a killed job, are cleared after 7 days. Machines only run while jobs do. To check nothing is
-running, the AWS console's **EC2** > **Instances** page should show no running
-`snakemake`-related instances a few minutes after a workflow ends.
+were interrupted, e.g. by a killed job, are cleared after 7 days. Machines only run while jobs
+do: the AWS console's **EC2** > **Instances** page should show no running `snakemake`-related
+instances a few minutes after a workflow ends.
 
 To remove everything:
 
 ```bash
 aws s3 rm s3://YOUR-BUCKET --recursive          # empty the bucket (deletes your results!)
 cd terraform && terraform destroy && cd ..       # remove queue, roles, bucket, ...
-bash scripts/cleanup-ami.sh --region eu-west-1 --no-tfvars ami-XXXXXXXX   # remove the machine image (its ID is in terraform/terraform.tfvars)
-bash scripts/cleanup-jobdefs.sh --region eu-west-1                       # remove the plugin's job definitions
+bash scripts/cleanup-ami.sh --region eu-west-1 --no-tfvars ami-XXXXXXXX   # the machine image (ID in terraform/terraform.tfvars)
+bash scripts/cleanup-jobdefs.sh --region eu-west-1                       # the plugin's job definitions
+rm -r ~/.config/snakemake/smkflex                                        # the profile
 ```
 
 `cleanup-jobdefs.sh` is also handy on its own now and then: job definitions for images you no longer
@@ -188,6 +190,9 @@ check, since after `terraform destroy` nothing uses it any more.
 
 ## Troubleshooting
 
+- **Not sure what's wrong?** Run `smkflex check --profile smkflex` in your workflow folder. It
+  checks your AWS login, the queue, the roles, that it can write to the bucket, and the
+  Snakemake versions, and says what to fix.
 - **Jobs stay "RUNNABLE" for more than ~10 minutes.** No machine could start. Check the
   compute environment in the AWS console (**Batch** > **Compute environments**) for an error,
   and that your subnets have internet access. New accounts sometimes have a low limit on
@@ -201,15 +206,12 @@ check, since after `terraform destroy` nothing uses it any more.
 - **"Ignoring source file ../workflow/...".** Snakemake only sends the jobs code that's inside
   the folder you start it from, so start it from the top of the pipeline (not with
   `--directory` pointing at a subfolder). Published pipelines' tests often use
-  `--directory .test`; run from the top with `--configfile .test/...` instead.
+  `--directory .test`; copy the test config into `config/` and run from the top instead.
 - **A dry run (`-n`) lists jobs for a finished workflow** with "software environment definition
   has changed". That's a Snakemake quirk with `conda:` rules: a dry run treats the jobs as local
   and works out their environments, which a real run (where the jobs build them on AWS) doesn't
   record. The real run says "Nothing to be done". `-n --rerun-triggers mtime params input code`
   shows what the real run will do.
-- **Not sure what's wrong?** Run `smkflex check` in your workflow folder (or `smkflex check
-  --profile DIR`). It checks your AWS login, the queue, the roles, that it can write to the
-  bucket, and the Snakemake versions, and says what to fix.
 - **"Startup check failed".** The plugin checks the queue before submitting anything; the
   message says what's wrong (usually a typo in the queue name, or the wrong region).
 - **"IncompleteFilesException" after Snakemake was stopped.** Run again with
@@ -239,7 +241,7 @@ rule align:
 |---|---|
 | `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
 | `threads: 8` | Number of vCPUs requested. |
-| `mem_mb=16000` (or `mem_mib`) | Memory requested. Many published pipelines don't set it; then `default-resources` in the profile applies, or the plugin's 2048 MiB. It's a hard limit, and Snakemake itself runs inside the job too, so 256 MiB is added (see `mem-overhead-mib`). No request: 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). |
+| `mem_mb=16000` (or `mem_mib`) | Memory requested, a hard limit. Snakemake itself runs inside the job too, so 256 MiB is added (`mem-overhead-mib`). Without it (many published pipelines don't set it), `default-resources` applies, or else 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). The end-of-run table shows what each rule really used. |
 | `runtime=120` | Minutes before Batch stops the job (timeout). To give every rule a timeout, put `runtime` in the profile's `default-resources`. |
 | `batch_shm_mb=4096` | Size of `/dev/shm` (Docker's default is 64 MB), for tools that use shared memory, e.g. bwa-mem2 or PyTorch data loaders. What's stored there counts towards `mem_mb`. EC2 only. `shared_memory_size_mb` also works. |
 | `disk_mb=100000` | Fargate: scratch disk for the job (default 20 GiB, up to 200), rounded up to 25 GiB steps. Snakemake sets it to twice the input size by default, which is used too. EC2: ignored; see [Limits](#limits). |
@@ -276,8 +278,8 @@ Snakemake features that work as usual (each has a small example in `examples/con
 ### Profile settings
 
 Settings go in the profile, `~/.config/snakemake/smkflex/config.yaml` (as
-`aws-batch-flex-queue: my-queue`), or on the command line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terraform's
-`snakemake_profile` output fills in the usual ones.
+`aws-batch-flex-queue: my-queue`), or on the command line (as `--aws-batch-flex-queue
+my-queue`). Only the queue is required; `setup.sh` writes the usual ones.
 
 | Setting (`aws-batch-flex-...`) | Default | What it's for |
 |---|---|---|
@@ -285,6 +287,7 @@ Settings go in the profile, `~/.config/snakemake/smkflex/config.yaml` (as
 | `region` | your AWS config | AWS region. |
 | `job-role-arn` | instance role | Role the jobs run as; needs read/write on the S3 bucket. |
 | `execution-role-arn` | none | Needed for Fargate queues and for private registries. |
+| `head-role-arn` | none | Role of the head job that `smkflex run` submits (Snakemake itself ignores it). |
 | `platform` | detected | `ec2` or `fargate` for the main queue. Normally read from the queue. |
 | `default-image` | none | Image for rules without `container:`. |
 | `bootstrap` | `auto` | How jobs get Snakemake: `host` (from the AMI, recommended on EC2), `auto`/`always` (install when the job starts), `never` (the image has it). |
@@ -337,13 +340,13 @@ set-resources:
 
 - **Memory:** each job samples its processes' memory every 2 seconds (from Linux's cgroup
   statistics, without file cache, which Linux frees before it kills anything) and logs the
-  most it saw; the plugin reads those lines from the job logs. A spike shorter than 2 seconds
-  can be missed, which the retry with more memory covers. For a job that builds its conda
-  environment, that build counts too (often 1-1.5 GB). On rna-seq-star-deseq2's test data the
-  rules used 0.3-2.7 GB of the 4 GB they asked for. On runs
-  with more than 300 jobs it reads 25 per rule. The `set-resources:` block below the table has
-  every rule whose peak is known, at its peak plus 30% (at least 512 MiB per job): paste it into
-  the project's settings, and the next run neither wastes room on the instances nor runs out.
+  most it saw; the plugin reads those lines from the job logs (on runs with more than 300 jobs,
+  from 25 per rule). A spike shorter than 2 seconds can be missed, which the retry with more
+  memory covers. For a job that builds its conda environment, that build counts too (often
+  1-1.5 GB). The `set-resources:` block below the table has every rule whose peak is known, at
+  its peak plus 30% (at least 512 MiB per job): paste it into the project's settings, and the
+  next run neither wastes room on the instances nor runs out. On rna-seq-star-deseq2's test
+  data the rules used 0.3-2.7 GB of the 4 GB they asked for, and ran fine with the suggestions.
 - **Cost:** uses typical on-demand prices (about $0.05 per vCPU-hour on EC2, less on Spot;
   Fargate's per-vCPU and per-GB prices). On EC2 you pay for whole instances, so the bill is
   higher when jobs leave instances half empty or they wait idle before shutting down. AWS Cost
@@ -397,14 +400,14 @@ smkflex run --profile smkflex    # returns once the run is submitted
 smkflex logs JOB_ID --follow     # Snakemake's output, live
 smkflex status                   # recent runs
 smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
-smkflex check                    # checks the setup (also useful without smkflex run)
-smkflex pull results             # downloads results/ from the bucket into this folder
-smkflex init                     # sets up a project folder (its own folder in the bucket)
-smkflex push data                # uploads input files to where the rules look for them
 ```
 
-`smkflex run` packs the workflow folder (the files git would track, or everything except
-`.snakemake/` outside a git checkout) together with the profile, uploads it next to your
+(`smkflex` also has `init`, `push`, `pull` and `check`, described above; `smkflex --help`
+lists everything. Without `--profile`, it uses the only profile for this plugin in
+`~/.config/snakemake/`.)
+
+`smkflex run` packs the workflow folder (what git would track, or else everything a
+`.gitignore` there doesn't exclude) together with the profile, uploads it next to your
 workflow's files in the bucket (the head job removes the upload again when it's done), and
 submits one "head job" that runs `snakemake` there. Your machine can be switched off once it
 returns. Anything after the options goes to Snakemake,
@@ -413,12 +416,11 @@ ends.
 
 - `smkflex run --git https://github.com/lab/rnaseq --rev v2.1` runs a workflow straight from a
   git repository instead of the current folder: `--rev` is a branch, tag or commit (default:
-  the default branch), `--path` a folder to run from instead of the top (only what's inside it is sent;
-  repositories in Snakemake's standard layout, with `workflow/Snakefile`, need no `--path`). The
-  repository is cloned into a temporary folder on your machine (your current folder isn't
-  touched), so private repositories work with your usual git
-  login; the profile still comes from here (`--profile`). The run's name defaults to the
-  repository's name.
+  the default branch), `--path` a folder to run from instead of the top (only what's inside it
+  is sent; repositories in Snakemake's standard layout, with `workflow/Snakefile`, need no
+  `--path`). The repository is cloned into a temporary folder on your machine (your current
+  folder isn't touched), so private repositories work with your usual git login; the profile
+  still comes from here (`--profile`). The run's name defaults to the repository's name.
 - `--add PATH` sends a local file or folder as well, at the same path, e.g. `--add config/`
   for your own config and sample sheets on top of a `--git` repository (files with the same name
   replace the repository's; with `--path`, paths are relative to that folder in the bundle). It
@@ -428,7 +430,7 @@ ends.
 - The head job uses 1 vCPU and 2 GiB (`--vcpus`, `--mem-mb`) for as long as the workflow
   runs, on the profile's queue (`--queue` for another one). Don't use a Spot queue for it.
 - It needs remote storage (`default-storage-prefix`) and the profile setting
-  `aws-batch-flex-head-role-arn`; the profile Terraform prints has both.
+  `aws-batch-flex-head-role-arn`; the profile from `setup.sh` has both.
 - Snakemake's `.snakemake` records (what was made with which code, unfinished jobs, logs) are
   saved to the bucket at the end of every run and restored at the start of the next, so reruns
   behave as they do on one machine. Runs with the same name (`--name`, default: the folder's
@@ -502,14 +504,12 @@ jobs needed big instances and ran out of memory once.
 - **The project's settings** go in `workflow/profiles/default/config.yaml`, which Snakemake
   loads on top of `--profile` by itself (`smkflex` reads it too). `smkflex init` puts the
   project's own bucket folder there (`s3://YOUR-BUCKET/snakemake/<folder name>`, so each
-  project's `results/` stay apart), and adds `data/`, `results/` and the like to `.gitignore`. The rest is what this
-  pipeline needs, the same as on any cluster: its rules use conda; most don't set memory, so
+  project's `results/` stay apart), and adds `data/`, `results/` and the like to `.gitignore`,
+  so `smkflex run` doesn't upload them. The rest is what this pipeline needs, the same as on
+  any cluster: its rules use conda; most don't set memory, so
   `default-resources` applies (otherwise the plugin's 2 GB); STAR asks for 24 threads, which
   `max-threads` caps; and `retries` covers jobs that run out of memory (retried with twice
   the memory) and flaky downloads. Other pipelines need other values: their docs say which.
-- **Data stays out of the project folder's upload:** `smkflex run` sends the folder to AWS, so
-  list data folders in a `.gitignore` there (e.g. `data/`); they reach the jobs through the
-  bucket (`smkflex push`).
 - **Packages a pipeline's Snakefile imports** besides pandas go into the machine image (next
   section).
 - **A pipeline's own tests** (`.test/` in its repository) are run with `--directory .test`.
@@ -540,8 +540,9 @@ only a `script:` uses belong in that rule's image or conda env instead.
 
 ### Conda and wrappers
 
-Run with `--sdm conda`. Jobs need `conda`: either the image has it, or bake Miniforge into
-the AMI (`bake-ami.sh --conda-env env.yaml`) and set `aws-batch-flex-conda-path: /opt/miniforge3`.
+Set `software-deployment-method: conda` (or run with `--sdm conda`). Jobs need `conda`: either
+the image has it, or it's in the AMI (`setup.sh` puts Miniforge there by default, as does
+`bake-ami.sh --conda`) and the profile has `aws-batch-flex-conda-path: /opt/miniforge3`.
 Only `condabin` is added to PATH, so an image's own conda still wins. Envs baked with
 `--conda-env` can be used by name (`conda: "rnaseq"`); YAML files are built inside the job.
 The machine you run `snakemake` on needs `conda` on its PATH as well.
@@ -632,7 +633,7 @@ stops them when the queue is empty, so nothing is running (or costing money) at 
 #### Make a profile
 
 A Snakemake "profile" is a settings file that tells Snakemake to use this plugin, your queue and
-your bucket. Terraform prints one for you. For the test workflow:
+your bucket. Terraform prints one for you; install it under the name `smkflex`:
 
 ```bash
 mkdir -p ~/.config/snakemake/smkflex
@@ -664,11 +665,16 @@ mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`
 checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
 from an interrupted run, `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating
 the AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
-Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from a folder and with `--git`), and cancelling one, jobs on the Spot queue, the usage and cost table (its peak memory per rule and its hint about many short jobs), retrying a job that ran out of memory with more, the whole setup with `scripts/setup.sh`
-(a second, separate setup in the same account), and the published rna-seq-star-deseq2 pipeline
-on its test data (with `snakemake`, as a `smkflex` head job, and set up with `snakedeploy`).
+Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from
+a folder and with `--git`) and cancelling one, jobs on the Spot queue, the usage and cost table
+(with each rule's peak memory and the hint about many short jobs), retrying a job that ran out
+of memory with more, the whole setup with `scripts/setup.sh` (a second, separate setup in the
+same account), and the published rna-seq-star-deseq2 pipeline on its test data (with
+`snakemake`, as a `smkflex` head job, and set up with `snakedeploy`).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
+`--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being taken back mid-job.
+Not tested yet: `notebook:`, Julia, GPU.
 
 ### Limits
 
@@ -701,9 +707,10 @@ The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `Termi
 `DescribeComputeEnvironments` and `TagResource`, plus `logs:GetLogEvents`, `iam:PassRole` on
 the job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` and
 `ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
-far from yours. `terraform output launcher_policy_json` prints a policy with all of this. The job role needs read/write on the prefix.
-For `smkflex`, the head job's role needs the same as the identity running `snakemake`, and
-that identity also needs `iam:PassRole` on the head role (both are in the Terraform setup).
+far from yours. `terraform output launcher_policy_json` prints a policy with all of this. The
+job role needs read/write on the prefix. For `smkflex`, the head job's role needs the same as
+the identity running `snakemake`, and that identity also needs `iam:PassRole` on the head role
+(both are in the Terraform setup).
 
 ## License
 
