@@ -64,15 +64,27 @@ class _Log:
 
 
 def _load_profile(path):
+    """(profile folder, settings) for --profile: a folder, or a name that Snakemake looks up in
+    ~/.config/snakemake/ (as `snakemake --profile NAME` does). Default: ./profile, then
+    $SNAKEMAKE_PROFILE."""
     if path is None:
-        path = "profile" if os.path.isfile(os.path.join("profile", "config.yaml")) else os.environ.get("SNAKEMAKE_PROFILE")
+        path = "profile" if os.path.isdir("profile") else os.environ.get("SNAKEMAKE_PROFILE")
     if not path:
-        raise Fail("no profile: pass --profile DIR (the folder with config.yaml)")
-    cfg = os.path.join(path, "config.yaml")
-    if not os.path.isfile(cfg):
-        raise Fail(f"{cfg} not found")
+        raise Fail("no profile: pass --profile (a folder with config.yaml, or a profile name)")
+    found = None
+    try:
+        from snakemake.cli import get_profile_dir
+
+        found = get_profile_dir(path)
+    except ImportError:
+        cfg = os.path.join(path, "config.yaml")
+        found = (path, cfg) if os.path.isfile(cfg) else None
+    if not found:
+        raise Fail(f"profile {path} not found (looked for a folder with config.yaml or profile.yaml "
+                   "here and in ~/.config/snakemake/)")
+    folder, cfg = found
     with open(cfg) as f:
-        return path, yaml.safe_load(f) or {}
+        return str(folder), yaml.safe_load(f) or {}
 
 
 def _flag(value):
@@ -85,18 +97,46 @@ def _clients(profile):
     return boto3.client("batch", config=cfg), boto3.client("logs", config=cfg), cfg.region_name
 
 
+def _ignore_patterns(root):
+    """Patterns from a .gitignore at the top of a folder that isn't a git checkout (simple
+    globs: `*.bam`, `data/`, `results`; no negation)."""
+    try:
+        with open(os.path.join(root, ".gitignore")) as f:
+            lines = [l.strip() for l in f]
+    except OSError:
+        return []
+    return [l for l in lines if l and not l.startswith(("#", "!"))]
+
+
+def _ignored(rel, patterns):
+    import fnmatch
+
+    parts = rel.split("/")
+    for p in patterns:
+        anchored, p = p.startswith("/"), p.strip("/")
+        if "/" in p or anchored:
+            if fnmatch.fnmatch(rel, p) or any(fnmatch.fnmatch("/".join(parts[:i]), p) for i in range(1, len(parts))):
+                return True
+        elif any(fnmatch.fnmatch(part, p) for part in parts):
+            return True
+    return False
+
+
 def workflow_files(root):
     """Files to send: what git would track (tracked plus untracked, not ignored), or
-    everything outside .snakemake/.git when the folder isn't a git checkout."""
+    everything outside .snakemake/.git when the folder isn't a git checkout, minus what a
+    .gitignore there lists."""
     try:
         out = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=root,
                              capture_output=True, check=True).stdout.decode()
         files = [f for f in out.split("\0") if f]
     except (OSError, subprocess.CalledProcessError):
+        patterns = _ignore_patterns(root)
         files = []
         for d, dirs, names in os.walk(root):
             dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
             files += [os.path.relpath(os.path.join(d, n), root) for n in names]
+        files = [f for f in files if not _ignored(f, patterns)]
     return sorted(f for f in files
                   if not SKIP_DIRS.intersection(f.split("/")) and os.path.isfile(os.path.join(root, f)))
 
@@ -541,6 +581,43 @@ def cmd_pull(a):
     return 0
 
 
+def cmd_push(a):
+    """Upload local input files to the same paths under the storage prefix, where the
+    workflow's rules look for them."""
+    _dir, profile = _load_profile(a.profile)
+    prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
+    if a.prefix:
+        prefix = a.prefix.rstrip("/")
+    if not prefix:
+        raise Fail("no default-storage-prefix in the profile")
+    files = added_files(a.paths)
+    s3 = boto3.client("s3", config=BotoConfig(region_name=profile.get("aws-batch-flex-region"))) \
+        if prefix.startswith("s3://") else None
+    there = {}
+    for top in {f.split("/")[0] for f in files}:
+        there.update(dict(_remote_files(prefix, top, s3)))
+    sent = skipped = 0
+    for rel, local in sorted(files.items()):
+        if not a.force and there.get(rel) == os.path.getsize(local):
+            skipped += 1
+            continue
+        if a.dry_run:
+            print(f"would upload {rel} ({os.path.getsize(local)} bytes)")
+            continue
+        if s3:
+            bucket, _, base = prefix[len("s3://"):].partition("/")
+            s3.upload_file(local, bucket, f"{base}/{rel}" if base else rel)
+        else:
+            os.makedirs(os.path.dirname(os.path.join(prefix, rel)), exist_ok=True)
+            shutil.copyfile(local, os.path.join(prefix, rel))
+        print(f"uploaded {rel}")
+        sent += 1
+    if not a.dry_run:
+        print(f"{sent} uploaded to {prefix}" + (f", {skipped} already there (same size; --force sends "
+                                                 "them again)" if skipped else ""))
+    return 0
+
+
 def cmd_check(a):
     """Check the setup from this machine, one line per check, with what to do about failures."""
     results = []
@@ -555,7 +632,7 @@ def cmd_check(a):
     except Fail as e:
         report("fail", f"profile: {e}", "run this in your workflow folder, or pass --profile DIR")
         return 1
-    report("ok", f"profile {profile_dir}/config.yaml")
+    report("ok", f"profile {profile_dir}")
     if profile.get("executor") != "aws-batch-flex":
         report("warn", f"the profile's executor is {profile.get('executor')!r}, not aws-batch-flex",
                "add `executor: aws-batch-flex`, or pass --executor aws-batch-flex to snakemake")
@@ -695,6 +772,12 @@ def main(argv=None):
     s.add_argument("--to", default=".", help="folder to download into (default: here)")
     s.add_argument("--dry-run", action="store_true", help="only list what would be downloaded")
     s.add_argument("--force", action="store_true", help="download files that are already here too")
+    s = sub.add_parser("push", help="upload input files or folders to the workflow's storage, at the same paths")
+    s.add_argument("paths", nargs="+", help="local paths as the workflow names them, e.g. data or data/reads.fq")
+    s.add_argument("--profile")
+    s.add_argument("--prefix", help="storage prefix to upload to (default: the profile's default-storage-prefix)")
+    s.add_argument("--dry-run", action="store_true", help="only list what would be uploaded")
+    s.add_argument("--force", action="store_true", help="upload files that are already there too")
     s = sub.add_parser("check", help="check the setup (AWS login, queue, roles, storage, versions)")
     s.add_argument("--profile")
     s = sub.add_parser("status", help="list recent runs")
@@ -711,7 +794,7 @@ def main(argv=None):
         if a.cmd == "run":
             return cmd_run(a, extra)
         return {"logs": cmd_logs, "cancel": cmd_cancel, "status": cmd_status, "check": cmd_check,
-                "pull": cmd_pull}[a.cmd](a)
+                "pull": cmd_pull, "push": cmd_push}[a.cmd](a)
     except Fail as e:
         print(f"smkflex: {e}", file=sys.stderr)
         return 2

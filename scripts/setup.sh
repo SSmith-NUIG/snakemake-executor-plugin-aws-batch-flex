@@ -11,18 +11,20 @@
 #   bash scripts/setup.sh --region eu-west-1 --fargate --spot
 #
 # Options: --region R, --name N (prefix of everything created, default smkflex), --fargate,
-#   --spot, --conda (conda in the image, for --sdm conda), --extra-package REQ (a Python package
+#   --spot, --no-conda (leave conda out of the image; it's in by default, for conda: rules and
+#   wrappers), --extra-package REQ (a Python package besides pandas
 #   your Snakefile imports, e.g. pandas; repeatable), --ami ID (skip building one),
 #   --subnets a,b (default: the default subnets), --tf-dir DIR (default terraform/; another
-#   folder keeps a separate setup with its own state), --workflow-dir DIR (where the profile
-#   and the test Snakefile go; default examples/smoke-test), --dry-run (only check and print).
+#   folder keeps a separate setup with its own state), --workflow-dir DIR (where the test
+#   Snakefile goes; default examples/smoke-test), --dry-run (only check and print).
+# The profile is installed as ~/.config/snakemake/NAME, so `snakemake --profile NAME` works anywhere.
 set -euo pipefail
 
 AWS=${AWS:-aws}
 TERRAFORM=${TERRAFORM:-terraform}
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-REGION="" NAME="" AMI="" SUBNETS="" FARGATE=false SPOT=false CONDA=0 DRY=0
-EXTRA_PKGS=()
+REGION="" NAME="" AMI="" SUBNETS="" FARGATE=false SPOT=false CONDA=1 DRY=0
+EXTRA_PKGS=(--extra-package pandas)   # many published pipelines import it in their Snakefile
 TF_DIR="$HERE/terraform" WF_DIR="$HERE/examples/smoke-test"
 
 usage() { sed -n '2,19p' "$0"; exit 2; }
@@ -35,6 +37,7 @@ while [ $# -gt 0 ]; do
     --fargate) FARGATE=true; shift;;
     --spot) SPOT=true; shift;;
     --conda) CONDA=1; shift;;
+    --no-conda) CONDA=0; shift;;
     --extra-package) EXTRA_PKGS+=(--extra-package "$2"); shift 2;;
     --tf-dir) TF_DIR=$2; shift 2;;
     --workflow-dir) WF_DIR=$2; shift 2;;
@@ -69,6 +72,7 @@ if [ -f "$TFV" ]; then
   [ -z "$NAME" ] || [ "$NAME" = "$OLD_NAME" ] || die "$TFV is for name '$OLD_NAME'; use --tf-dir with another folder for a second setup"
   [ "$REGION" = "$OLD_REGION" ] || die "$TFV is for region $OLD_REGION, not $REGION"
   NAME=$OLD_NAME; AMI=${AMI:-$(tfvar ami_id)}
+  if grep -q '^# image without conda' "$TFV"; then CONDA=0; fi
   echo "continuing the setup in $TF_DIR (name $NAME)"
 fi
 NAME=${NAME:-smkflex}
@@ -99,7 +103,7 @@ echo "  subnets:   ${SUBNET_LIST[*]}"
 if [ -n "$AMI" ]; then echo "  image:     $AMI"; else echo "  image:     built now from the current Amazon ECS image (10-20 min, a few cents)"; fi
 echo "  extras:    Fargate queue: $FARGATE, Spot queue: $SPOT, conda in the image: $([ $CONDA = 1 ] && echo yes || echo no)"
 echo "  terraform: $TF_DIR"
-echo "  profile:   $WF_DIR/profile/config.yaml"
+echo "  profile:   ${XDG_CONFIG_HOME:-$HOME/.config}/snakemake/$NAME (use it with --profile $NAME)"
 if [ "$DRY" = 1 ]; then echo; echo "--dry-run: nothing was created"; exit 0; fi
 [ -n "$AMI" ] || ask "This starts a temporary machine to build the image."
 
@@ -134,6 +138,7 @@ if [ -f "$TFV" ]; then
 else
   {
     echo "# written by scripts/setup.sh"
+    if [ "$CONDA" = 0 ]; then echo "# image without conda"; fi
     echo "region = \"$REGION\""
     echo "name   = \"$NAME\""
     printf 'subnet_ids = ['; printf '"%s", ' "${SUBNET_LIST[@]}" | sed 's/, $//'; echo ']'
@@ -163,23 +168,33 @@ else
 fi
 
 step "Writing the profile"
-mkdir -p "$WF_DIR/profile"
-P="$WF_DIR/profile/config.yaml"
+# Installed by name where Snakemake looks for profiles, so `snakemake --profile NAME` (and
+# smkflex) work from any folder.
+PROFILE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/snakemake/$NAME"
+mkdir -p "$PROFILE_DIR"
+P="$PROFILE_DIR/config.yaml"
 [ -f "$P" ] && cp "$P" "$P.bak" && echo "(the old profile is in $P.bak)"
 {
   $TERRAFORM -chdir="$TF_DIR" output -raw snakemake_profile
   echo "default-resources: [mem_mb=4000]   # many pipelines set no memory; 4 GB suits most tools"
-  echo "jobs: 5"
-  if [ "$CONDA" = 1 ]; then echo "aws-batch-flex-conda-path: /opt/miniforge3"; fi
+  echo "retries: 2                         # also retries jobs that ran out of memory, with more"
+  echo "jobs: 100                          # jobs on Batch at once"
+  if [ "$CONDA" = 1 ]; then
+    echo "aws-batch-flex-conda-path: /opt/miniforge3"
+    echo "software-deployment-method: conda  # for conda: rules and wrappers"
+  fi
 } > "$P"
+mkdir -p "$WF_DIR"
 [ -f "$WF_DIR/Snakefile" ] || cp "$HERE/examples/smoke-test/Snakefile" "$WF_DIR/Snakefile"
+echo "$P:"
 cat "$P"
 
 step "Checking the setup"
-(cd "$WF_DIR" && smkflex check) || die "the check found problems (above)"
+(cd "$WF_DIR" && smkflex check --profile "$NAME") || die "the check found problems (above)"
 
 step "Done"
-echo "Run the test workflow:"
-echo "  cd $WF_DIR && snakemake --profile profile"
+echo "The profile is called $NAME. Run the test workflow:"
+echo "  cd $WF_DIR && snakemake --profile $NAME"
 echo "or let AWS run it, so your machine can be switched off:"
-echo "  cd $WF_DIR && smkflex run --wait"
+echo "  cd $WF_DIR && smkflex run --profile $NAME --wait"
+echo "(export SNAKEMAKE_PROFILE=$NAME saves typing --profile.)"

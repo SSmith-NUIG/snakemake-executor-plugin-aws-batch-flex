@@ -280,3 +280,39 @@ def test_add_sends_ignored_files_and_replaces(tmp_path):
     t = tarfile.open(fileobj=io.BytesIO(make_bundle(str(tmp_path), str(tmp_path / "profile"), 100, extra)))
     assert "samples.tsv" in t.getnames()
     assert "samples.tsv" in t.extractfile(".smkflex/files.txt").read().decode().split()
+
+
+def test_push(tmp_path):
+    wf = setup(tmp_path)
+    (wf / "data" / "sub").mkdir(parents=True)
+    (wf / "data" / "a.fq").write_text("AAA")
+    (wf / "data" / "sub" / "b.fq").write_text("BB")
+    r, _ = smkflex(wf, "push", "data", "--dry-run")
+    assert r.returncode == 0 and "would upload data/a.fq" in r.stdout and not (tmp_path / "store" / "data").exists()
+    r, _ = smkflex(wf, "push", "data")
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "store" / "data" / "sub" / "b.fq").read_text() == "BB"
+    r, _ = smkflex(wf, "push", "data")
+    assert "0 uploaded" in r.stdout and "2 already there" in r.stdout
+    r, _ = smkflex(wf, "push", "../x")
+    assert r.returncode == 2 and "inside this folder" in r.stderr
+
+
+def test_profile_by_name(tmp_path):
+    wf = setup(tmp_path)
+    cfg_home = tmp_path / "cfg"
+    (cfg_home / "snakemake" / "lab").mkdir(parents=True)
+    (cfg_home / "snakemake" / "lab" / "config.yaml").write_text((wf / "profile" / "config.yaml").read_text())
+    (wf / "profile" / "config.yaml").unlink()
+    (wf / "profile").rmdir()
+    r, _ = smkflex(wf, "check", "--profile", "lab", env_extra={"XDG_CONFIG_HOME": str(cfg_home)})
+    assert f"profile {cfg_home}/snakemake/lab" in r.stdout, r.stdout + r.stderr
+
+
+def test_plain_folder_follows_its_gitignore(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.remote import workflow_files
+    for f in ("workflow/Snakefile", "config/config.yaml", "data/a.fq", "x.bam", "sub/y.bam", "results/r.txt"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("")
+    (tmp_path / ".gitignore").write_text("# data stays here\ndata/\n*.bam\n/results\n")
+    assert workflow_files(str(tmp_path)) == [".gitignore", "config/config.yaml", "workflow/Snakefile"]

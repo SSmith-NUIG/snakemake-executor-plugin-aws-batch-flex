@@ -77,8 +77,9 @@ Check it worked: `aws sts get-caller-identity` should print your account number.
 ### 4. Set up AWS
 
 One script does the rest of the setup: it finds your account's network, builds a machine
-image with Snakemake on it, creates the queue, roles and bucket with Terraform, and writes a
-Snakemake profile for the test workflow. Use the region you picked in step 3:
+image with Snakemake (plus conda and pandas, which most published pipelines need) on it, creates
+the queue, roles and bucket with Terraform, and installs a Snakemake profile called `smkflex`
+(in `~/.config/snakemake/smkflex/`), so `snakemake --profile smkflex` works in any folder. Use the region you picked in step 3:
 
 ```bash
 bash scripts/setup.sh --region eu-west-1
@@ -91,7 +92,8 @@ new resources, nothing changed or removed). At the end it checks the whole setup
 on where it stopped.
 
 Options: `--fargate` also creates a Fargate queue, `--spot` a cheaper Spot queue (see
-[Spot instances](#spot-instances)), and `--conda` puts conda into the image for `conda:` rules.
+[Spot instances](#spot-instances)), `--extra-package NAME` adds a Python package to the image,
+and `--no-conda` leaves conda out.
 `bash scripts/setup.sh --help` lists the rest. To do each step by hand instead, see
 [Setting up by hand](#setting-up-by-hand).
 
@@ -102,7 +104,7 @@ queue is empty.
 
 ```bash
 cd examples/smoke-test
-snakemake --profile profile
+snakemake --profile smkflex
 ```
 
 What happens: Snakemake uploads the workflow to S3 and submits two jobs. The first time, AWS
@@ -139,13 +141,13 @@ Batch job. File paths are inside your bucket's `snakemake/` folder, so upload in
 there first:
 
 ```bash
-aws s3 cp data/reads.txt s3://YOUR-BUCKET/snakemake/data/reads.txt
+smkflex push data          # uploads data/reads.txt to s3://YOUR-BUCKET/snakemake/data/reads.txt
 ```
 
-Put the `Snakefile` in a new folder, copy `examples/smoke-test/profile/` there, and run
-`snakemake --profile profile`. Results appear under `s3://YOUR-BUCKET/snakemake/results/`;
-`smkflex pull results` downloads them into the folder (files already there with the same size
-are skipped; `--dry-run` only lists them).
+Put the `Snakefile` in a new folder and run `snakemake --profile smkflex` there. Results appear
+under `s3://YOUR-BUCKET/snakemake/results/`; `smkflex pull results` downloads them into the
+folder (`push` and `pull` skip files that are already there with the same size; `--dry-run`
+only lists them). `export SNAKEMAKE_PROFILE=smkflex` saves typing `--profile` every time.
 The [Snakemake tutorial](https://snakemake.readthedocs.io/en/stable/tutorial/tutorial.html)
 explains rules, wildcards and the rest; everything in it works here, with the differences listed
 under [Limits](#limits).
@@ -268,8 +270,8 @@ Snakemake features that work as usual (each has a small example in `examples/con
 
 ### Profile settings
 
-Settings go in `profile/config.yaml` (as `aws-batch-flex-queue: my-queue`) or on the command
-line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terraform's
+Settings go in the profile, `~/.config/snakemake/smkflex/config.yaml` (as
+`aws-batch-flex-queue: my-queue`), or on the command line (as `--aws-batch-flex-queue my-queue`). Only the queue is required; Terraform's
 `snakemake_profile` output fills in the usual ones.
 
 | Setting (`aws-batch-flex-...`) | Default | What it's for |
@@ -370,7 +372,7 @@ the same workflow.
 
 ```bash
 cd my-workflow
-smkflex run                      # uses ./profile; returns once the run is submitted
+smkflex run --profile smkflex    # returns once the run is submitted
 smkflex logs JOB_ID --follow     # Snakemake's output, live
 smkflex status                   # recent runs
 smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
@@ -447,41 +449,40 @@ role, so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on
 
 ### Running a published pipeline
 
-Pipelines from e.g. the [Snakemake workflow catalog](https://snakemake.github.io/snakemake-workflow-catalog/)
-run unchanged. Tested with
-[rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) (53 jobs,
-13 minutes, about $0.10 of compute on its yeast test data; 16 minutes as a `smkflex run`):
+Pipelines from the [Snakemake workflow catalog](https://snakemake.github.io/snakemake-workflow-catalog/)
+run unchanged. Set one up the way the catalog suggests, with
+[snakedeploy](https://snakedeploy.readthedocs.io) (it's in the `smk-aws` environment): it makes
+a project folder with your own copy of the pipeline's config, and a short `workflow/Snakefile`
+that fetches the pipeline's code from GitHub at the release you name.
 
 ```bash
-git clone https://github.com/snakemake-workflows/rna-seq-star-deseq2 && cd rna-seq-star-deseq2
-cp .test/config_basic/config.yaml config/config.yaml          # its test config (or your own)
-aws s3 cp --recursive .test/ngs-test-data/reads s3://BUCKET/snakemake/rnaseq/ngs-test-data/reads
-snakemake --profile PROFILE --default-storage-prefix s3://BUCKET/snakemake/rnaseq \
-  --config samples=.test/config_basic/samples.tsv units=.test/config_basic/units.tsv \
-  --default-resources mem_mb=4000 --sdm conda --max-threads 4 --retries 2 -j 20
+snakedeploy deploy-workflow https://github.com/snakemake-workflows/rna-seq-star-deseq2 my-rnaseq --tag v3.1.2
+cd my-rnaseq
+# edit config/config.yaml and the sample sheets (config/samples.tsv, config/units.tsv)
+smkflex push data                  # the input files, at the paths the sample sheets use
+snakemake --profile smkflex        # or: smkflex run --profile smkflex
 ```
 
-Or without a local copy of the pipeline, with only your config folder here (`config/config.yaml`
-and the sample sheets it names):
+Tested with [rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) on
+its yeast test data: 53 jobs, 13 minutes, about $0.10 of compute (16 minutes as a `smkflex run`).
 
-```bash
-smkflex run --git https://github.com/snakemake-workflows/rna-seq-star-deseq2 --rev v3.1.2 \
-  --add config/ -- --default-resources mem_mb=4000 --sdm conda --max-threads 4 --retries 2 -j 20
-```
+- **Data stays out of the project folder's upload:** `smkflex run` sends the folder to AWS, so
+  list data folders in a `.gitignore` there (e.g. `data/`); they reach the jobs through the
+  bucket (`smkflex push`).
+- **Memory:** most pipelines don't set it per rule, so the profile's
+  `default-resources: [mem_mb=4000]` is what their rules get. Raise single rules with
+  `--set-resources RULE:mem_mb=16000` (or `set-resources:` in the profile) and cap rules that ask
+  for many threads with `--max-threads 8`.
+- **Packages a pipeline's Snakefile imports** besides pandas go into the machine image (next
+  section).
+- **A pipeline's own tests** (`.test/` in its repository) are run with `--directory .test`.
+  That doesn't work with remote storage, because Snakemake only sends the jobs the code inside
+  the folder it starts in. Copy the test config into `config/` instead.
+- **Private pipeline repositories** need `GITHUB_TOKEN` set where Snakemake runs and in the jobs
+  (`--envvars GITHUB_TOKEN`).
 
-What to watch for with any published pipeline:
-
-- **Start from its top folder.** Snakemake only sends the jobs code from inside the folder it
-  starts in, so don't use `--directory .test` the way the pipelines' own tests do. Put the config
-  you want at `config/config.yaml` instead of passing `--configfile`: the pipeline loads its
-  example config anyway, and Snakemake merges the two, so leftover example settings can break a
-  run.
-- **Input files go into the bucket**, under the storage prefix, at the paths the config names.
-- **Memory:** most pipelines don't set it per rule, so `default-resources: [mem_mb=4000]` (or
-  more) is what their rules get; `--set-resources RULE:mem_mb=N` for the ones that need more.
-  Rules asking for many threads are capped with `--max-threads`.
-- **Packages its Snakefile imports** (often pandas) must be in the machine image (next section).
-- **`--retries 2`** covers jobs that run out of memory and flaky downloads (e.g. Ensembl).
+`smkflex run --git URL --add config/` does the same without `snakedeploy`: the code comes from a
+clone of the repository and your `config/` is laid over it.
 
 ### Python packages your Snakefile imports
 
@@ -493,7 +494,8 @@ needed in the jobs as well. Many published pipelines do this. Put it into the ma
 bash scripts/update-ami.sh --subnet subnet-XXXX --region eu-west-1 --extra-package pandas
 ```
 
-(or `setup.sh --extra-package pandas` for a new setup; repeat it for more packages). Jobs that
+(or `setup.sh --extra-package NAME` for a new setup, which puts pandas in by default; repeat it
+for more packages). Jobs that
 install Snakemake at start (Fargate, `bootstrap: auto`) take
 `aws-batch-flex-extra-packages: [pandas]` in the profile instead. It has to be installed where
 you run `snakemake`, too. A job that fails this way says which package it was. Packages that
@@ -596,12 +598,14 @@ A Snakemake "profile" is a settings file that tells Snakemake to use this plugin
 your bucket. Terraform prints one for you. For the test workflow:
 
 ```bash
-cd examples/smoke-test
-mkdir -p profile
-terraform -chdir=../../terraform output -raw snakemake_profile > profile/config.yaml
-printf 'default-resources: [mem_mb=512]\njobs: 5\n' >> profile/config.yaml
-cat profile/config.yaml
+mkdir -p ~/.config/snakemake/smkflex
+terraform -chdir=terraform output -raw snakemake_profile > ~/.config/snakemake/smkflex/config.yaml
+printf 'default-resources: [mem_mb=4000]\nretries: 2\njobs: 100\n' >> ~/.config/snakemake/smkflex/config.yaml
+cat ~/.config/snakemake/smkflex/config.yaml
 ```
+
+(With conda in the image, also add `aws-batch-flex-conda-path: /opt/miniforge3` and
+`software-deployment-method: conda`.)
 
 You should see lines like `executor: aws-batch-flex` and `aws-batch-flex-queue: smkflex-queue`.
 

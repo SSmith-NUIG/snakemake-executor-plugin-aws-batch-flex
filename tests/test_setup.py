@@ -35,6 +35,7 @@ def test_dry_run_shows_the_plan_and_creates_nothing(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "queue labtest-queue, bucket labtest-123456789012-eu-west-1" in r.stdout
     assert "subnet-a subnet-b" in r.stdout and "Spot queue: true" in r.stdout
+    assert "conda in the image: yes" in r.stdout and "--profile labtest" in r.stdout
     assert "nothing was created" in r.stdout and not (tmp_path / "tf").exists()
     assert "run-instances" not in calls
 
