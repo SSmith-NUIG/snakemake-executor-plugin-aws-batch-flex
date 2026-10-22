@@ -331,3 +331,25 @@ def test_workflow_profile_sets_the_project_prefix(tmp_path):
     r, _ = smkflex(wf, "push", "data")
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "store" / "proj" / "data" / "a.fq").read_text() == "A"
+
+
+def test_init(tmp_path):
+    wf = setup(tmp_path)
+    (wf / "workflow").mkdir()
+    (wf / ".gitignore").write_text("*.bam")
+    r, _ = smkflex(wf, "init")
+    assert r.returncode == 0, r.stderr
+    store = tmp_path / "store"
+    wp = (wf / "workflow" / "profiles" / "default" / "config.yaml").read_text()
+    assert wp == f"default-storage-prefix: {store}/wf\n"
+    gi = (wf / ".gitignore").read_text()
+    assert gi.startswith("*.bam\n") and "data/" in gi and ".snakemake/" in gi
+    # again: nothing changes
+    r, _ = smkflex(wf, "init")
+    assert "already has its folder in storage" in r.stdout
+    assert (wf / ".gitignore").read_text() == gi
+    # push now goes to the project's folder
+    (wf / "data").mkdir()
+    (wf / "data" / "x").write_text("x")
+    r, _ = smkflex(wf, "push", "data")
+    assert (store / "wf" / "data" / "x").exists(), r.stdout + r.stderr

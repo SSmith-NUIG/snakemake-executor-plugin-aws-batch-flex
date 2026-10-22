@@ -617,6 +617,53 @@ def cmd_pull(a):
     return 0
 
 
+IGNORE_LINES = ("data/", "results/", "resources/", "logs/", ".snakemake/")
+
+
+def cmd_init(a):
+    """Set up this folder as a project: its own folder in the bucket (in the workflow profile
+    Snakemake loads by itself) and a .gitignore that keeps data out of smkflex run."""
+    _dir, profile = _load_profile(a.profile)
+    wp_dir = os.path.join("workflow", "profiles", "default")
+    wp = os.path.join(wp_dir, "config.yaml")
+    current = {}
+    if os.path.isfile(wp):
+        with open(wp) as f:
+            current = yaml.safe_load(f) or {}
+    base = str(profile.get("default-storage-prefix") or "").rstrip("/")
+    name = re.sub(r"[^A-Za-z0-9_.-]", "-", a.name or os.path.basename(os.path.abspath(".")))
+    if current.get("default-storage-prefix"):
+        prefix = current["default-storage-prefix"]
+        print(f"This project already has its folder in storage: {prefix} (in {wp}); left as it is.")
+    else:
+        if not base:
+            raise Fail("the profile has no default-storage-prefix to put the project's folder under")
+        if not os.path.isdir("workflow") and not os.path.isfile("Snakefile"):
+            print("(no workflow/ or Snakefile here; is this the project's top folder?)", file=sys.stderr)
+        prefix = f"{base}/{name}"
+        os.makedirs(wp_dir, exist_ok=True)
+        with open(wp, "a") as f:
+            f.write(f"default-storage-prefix: {prefix}\n")
+        print(f"This project's files go to {prefix} (written to {wp}).")
+    lines = []
+    if os.path.isfile(".gitignore"):
+        with open(".gitignore") as f:
+            lines = [l.rstrip("\n") for l in f]
+    new = [l for l in IGNORE_LINES if l not in lines and l.rstrip("/") not in lines]
+    if new:
+        with open(".gitignore", "a") as f:
+            if lines and lines[-1].strip():
+                f.write("\n")
+            f.write("# kept out of smkflex run (data reaches the jobs through storage)\n")
+            f.write("".join(l + "\n" for l in new))
+        print(f"Added {', '.join(new)} to .gitignore.")
+    print("\nNext:\n"
+          "  edit config/ (the pipeline's docs say what goes there)\n"
+          "  smkflex push data          upload input files (data/ here, as the sample sheets name them)\n"
+          "  snakemake --profile " + os.path.basename(_dir.rstrip("/")) + "     or: smkflex run")
+    return 0
+
+
 def cmd_push(a):
     """Upload local input files to the same paths under the storage prefix, where the
     workflow's rules look for them."""
@@ -808,6 +855,10 @@ def main(argv=None):
     s.add_argument("--to", default=".", help="folder to download into (default: here)")
     s.add_argument("--dry-run", action="store_true", help="only list what would be downloaded")
     s.add_argument("--force", action="store_true", help="download files that are already here too")
+    s = sub.add_parser("init", help="set up this folder as a project: its own folder in the bucket, and a "
+                       ".gitignore for data")
+    s.add_argument("--profile")
+    s.add_argument("--name", help="the project's folder name in the bucket (default: this folder's name)")
     s = sub.add_parser("push", help="upload input files or folders to the workflow's storage, at the same paths")
     s.add_argument("paths", nargs="+", help="local paths as the workflow names them, e.g. data or data/reads.fq")
     s.add_argument("--profile")
@@ -830,7 +881,7 @@ def main(argv=None):
         if a.cmd == "run":
             return cmd_run(a, extra)
         return {"logs": cmd_logs, "cancel": cmd_cancel, "status": cmd_status, "check": cmd_check,
-                "pull": cmd_pull, "push": cmd_push}[a.cmd](a)
+                "pull": cmd_pull, "push": cmd_push, "init": cmd_init}[a.cmd](a)
     except Fail as e:
         print(f"smkflex: {e}", file=sys.stderr)
         return 2

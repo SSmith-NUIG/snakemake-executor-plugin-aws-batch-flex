@@ -383,6 +383,8 @@ smkflex status                   # recent runs
 smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
 smkflex check                    # checks the setup (also useful without smkflex run)
 smkflex pull results             # downloads results/ from the bucket into this folder
+smkflex init                     # sets up a project folder (its own folder in the bucket)
+smkflex push data                # uploads input files to where the rules look for them
 ```
 
 `smkflex run` packs the workflow folder (the files git would track, or everything except
@@ -463,10 +465,10 @@ that fetches the pipeline's code from GitHub at the release you name.
 ```bash
 snakedeploy deploy-workflow https://github.com/snakemake-workflows/rna-seq-star-deseq2 my-rnaseq --tag v3.1.2
 cd my-rnaseq
-# edit config/config.yaml and the sample sheets (config/samples.tsv, config/units.tsv)
-mkdir -p workflow/profiles/default # this project's settings (see below)
-cat > workflow/profiles/default/config.yaml <<'EOF'
-default-storage-prefix: s3://YOUR-BUCKET/snakemake/my-rnaseq
+smkflex init                       # this project's own folder in the bucket, and a .gitignore
+# edit config/config.yaml and the sample sheets (config/samples.tsv, config/units.tsv), and add
+# what this pipeline needs to the project's settings (see below):
+cat >> workflow/profiles/default/config.yaml <<'EOF'
 software-deployment-method: conda
 default-resources: [mem_mb=4000]
 max-threads: 8
@@ -482,8 +484,9 @@ $0.10 of compute with these settings. Without the thread cap it was $0.28, becau
 jobs needed big instances and ran out of memory once.
 
 - **The project's settings** go in `workflow/profiles/default/config.yaml`, which Snakemake
-  loads on top of `--profile` by itself (`smkflex` reads it too). Its own bucket folder
-  (`default-storage-prefix`) keeps each project's `results/` apart. The rest is what this
+  loads on top of `--profile` by itself (`smkflex` reads it too). `smkflex init` puts the
+  project's own bucket folder there (`s3://YOUR-BUCKET/snakemake/<folder name>`, so each
+  project's `results/` stay apart), and adds `data/`, `results/` and the like to `.gitignore`. The rest is what this
   pipeline needs, the same as on any cluster: its rules use conda; most don't set memory, so
   `default-resources` applies (otherwise the plugin's 2 GB); STAR asks for 24 threads, which
   `max-threads` caps; and `retries` covers jobs that run out of memory (retried with twice
