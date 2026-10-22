@@ -334,6 +334,7 @@ my-queue`). Only the queue is required; `setup.sh` writes the usual ones.
 | `registry-credentials` | none | `REGISTRY=SECRET_ARN` for private registries outside AWS (see below). |
 | `orphan-jobs` | `cancel` | Jobs left running by an interrupted run: `cancel`, `warn` or `ignore` (see below). |
 | `tags` | none | `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`. |
+| `conda-cache` | `instance` | Reuse built conda envs instead of building them in every job: `instance` (jobs on the same EC2 machine share them), an S3 URL such as `s3://BUCKET/snakemake/.smkflex/conda-cache` (also kept there for later jobs and runs), or `none`. See [Conda and wrappers](#conda-and-wrappers). |
 | `oom-memory-factor` | 2 | When a job runs out of memory and Snakemake retries it (`--retries N`, or `retries:` on the rule), the retry asks for this many times more memory, again for each further retry (Fargate: at most 120 GiB). 1 = retry with the same memory. |
 | `no-cost-summary` | off | Don't print the table of vCPU-hours, memory-hours and estimated cost per rule at the end of a run (see below). |
 | `no-auto-tags` | off | Turn off the automatic tags (and the leftover-job check, which uses them). |
@@ -590,9 +591,10 @@ them in the project's `profiles/default/config.yaml`:
 | local scratch, `tmpdir` | the instance's disk, shared by its jobs (100 GiB by default); `disk_mb` on Fargate |
 
 **Software.** `envmodules:` and `module load` don't exist here; use a container image per rule
-(e.g. from biocontainers) or a `conda:` env instead. Conda envs are built inside each job, which
-takes a minute or more per job; for rules with many jobs, an image with the tools already in it
-starts faster. Tools that aren't on the image's PATH, or paths to software on the cluster
+(e.g. from biocontainers) or a `conda:` env instead. Conda envs are built by the jobs: the first
+job on each machine builds an env, the others reuse it, and with the bucket cache on
+(`aws-batch-flex-conda-cache`, see [Conda and wrappers](#conda-and-wrappers)) later runs reuse
+it too, much like a cluster's shared `.snakemake/conda`. Tools that aren't on the image's PATH, or paths to software on the cluster
 (`/apps/...`), won't be there.
 
 **Big intermediate files.** Since there's no shared filesystem, a 30 GB BAM that ten rules read is
@@ -659,6 +661,25 @@ only a `script:` uses belong in that rule's image or conda env instead.
 Set `software-deployment-method: conda` (or run with `--sdm conda`). Jobs need `conda`: either
 the image has it, or it's in the AMI (`setup.sh` puts Miniforge there by default, as does
 `bake-ami.sh --conda`) and the profile has `aws-batch-flex-conda-path: /opt/miniforge3`.
+
+Each job builds the envs its rule needs, which takes a minute or more per env. So that this
+happens once rather than in every job, built envs are reused (`aws-batch-flex-conda-cache`):
+
+- **On the machine** (the default, `instance`): jobs on the same EC2 instance share a folder
+  for them, so the first job of a rule builds the env and the others on that machine use it (a
+  job that needs an env another job is building waits for it). It's gone when the instance
+  shuts down.
+- **In the bucket** (`aws-batch-flex-conda-cache: s3://BUCKET/snakemake/.smkflex/conda-cache`):
+  a job that builds an env also uploads it there, packed, and later jobs on any machine, later
+  runs, other projects and Fargate jobs unpack it in seconds instead. `setup.sh` puts this line,
+  commented out, in the profile. An env is typically 0.1-2 GB, a few cents a month each.
+
+An env is only reused for the same definition (the YAML file, its pinned versions, the wrapper
+version) and for images with the same C library version (glibc), which is what conda chooses
+its packages for, so a cached env never differs from one the job would have built. Changing an
+env's file gives it a new name, and old ones are simply not used any more; delete
+`.smkflex/conda-cache/` in the bucket to clear the cache. Anyone who can write to the bucket
+could put a different env there, the same as for the workflow's files. `none` turns it off.
 Only `condabin` is added to PATH, so an image's own conda still wins. Envs baked with
 `--conda-env` can be used by name (`conda: "rnaseq"`); YAML files are built inside the job.
 The machine you run `snakemake` on needs `conda` on its PATH as well.
@@ -790,6 +811,8 @@ init`/`push`/`pull`), and the published rna-seq-star-deseq2 pipeline on its test
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 `--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being taken back mid-job.
+Tested locally with real conda, not yet on AWS: the conda env cache (reuse on one machine, and
+restoring from the cache on an empty one).
 Not tested yet: `notebook:`, Julia, GPU.
 
 ### Limits

@@ -35,7 +35,8 @@ FAILING = textwrap.dedent('''
 def run(tmp_path, snakefile, *extra):
     (tmp_path / "Snakefile").write_text(snakefile)
     log = tmp_path / "calls.jsonl"
-    env = dict(os.environ, PYTHONPATH=FAKE, FAKEAWS_LOG=str(log))
+    env = dict(os.environ, PYTHONPATH=FAKE, FAKEAWS_LOG=str(log),
+               SMK_FLEX_CONDA_ROOT=str(tmp_path / "conda-cache"))  # the fake jobs' "instance" folder
     cmd = [sys.executable, "-m", "snakemake", "--executor", "aws-batch-flex",
            "--aws-batch-flex-queue", "default-queue", "--aws-batch-flex-default-image", "debian:12",
            "--default-storage-provider", "fs", "--default-storage-prefix", str(tmp_path / "store"),
@@ -124,8 +125,13 @@ def test_jobs_fetch_wrappers_over_http_not_git(tmp_path, monkeypatch):
     r, _ = run(tmp_path, MIXED.replace(', batch_queue="my-fargate-queue"', ""))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "--wrapper-prefix https://github.com/snakemake/snakemake-wrappers/raw/" in cmd.read_text()
-    # ECS allows 8192 characters for all overrides of a job; leave room for env vars and JSON.
-    assert len(cmd.read_text()) < 6500, len(cmd.read_text())
+    # ECS allows 8192 characters for a job's overrides (command and environment, as JSON);
+    # this is install-at-start, the longest start-up script, so keep a margin for long targets
+    sub = [c for c in _ if c["call"] == "submit_job"][-1]
+    overrides = json.dumps({"command": ["/bin/sh", "-c", cmd.read_text()],
+                            "environment": [{"name": k, "value": v} for k, v in sub["env"].items()
+                                            if k.startswith(("SMK_", "SNAKEMAKE"))]})
+    assert len(overrides) < 7400, len(overrides)
 
 
 PER_RULE = textwrap.dedent('''
@@ -427,6 +433,28 @@ def test_peak_memory_in_the_table(tmp_path, monkeypatch):
     row = next(l for l in usage.splitlines() if l.strip().startswith("make_a "))
     assert row.split()[-2:] == ["7886", "1024"]  # 8000 MB -> 7630 MiB + 256; peak 1 GiB
     assert "set-resources:\n  make_a:\n    mem_mb: 1200    # had 7886 MiB, peak 1024" in out
+
+
+def test_conda_cache_is_set_up_for_jobs(tmp_path):
+    r, calls = run(tmp_path, SNAKEFILE)
+    assert r.returncode == 0, r.stdout + r.stderr
+    sub = next(c for c in calls if c["call"] == "submit_job")
+    assert sub["env"]["SMK_FLEX_CONDA_CACHE"] == "instance"
+    code = sub["env"]["SMK_FLEX_CONDA_CACHE_CODE"]
+    assert code.startswith(str(tmp_path / "store" / ".smkflex" / "code" / "condacache-"))
+    # (the launcher that turns it on in the job is tested in test_condacache.py: these fake jobs
+    # find Snakemake on PATH, so they don't use it)
+    jd = next(c for c in calls if c["call"] == "register_job_definition")
+    assert any(m["containerPath"] == "/tmp/smkflex-conda" and not m["readOnly"] for m in jd["mounts"])
+
+    (tmp_path / "off").mkdir()
+    (tmp_path / "bad").mkdir()
+    r, calls = run(tmp_path / "off", SNAKEFILE, "--aws-batch-flex-conda-cache", "none")
+    assert r.returncode == 0, r.stdout + r.stderr
+    sub = next(c for c in calls if c["call"] == "submit_job")
+    assert "SMK_FLEX_CONDA_CACHE" not in sub["env"]
+    r, _ = run(tmp_path / "bad", SNAKEFILE, "--aws-batch-flex-conda-cache", "somewhere")
+    assert r.returncode != 0 and "must be none, instance or an s3:// URL" in r.stdout + r.stderr
 
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',

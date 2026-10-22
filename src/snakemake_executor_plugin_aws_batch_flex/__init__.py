@@ -311,6 +311,17 @@ class ExecutorSettings(ExecutorSettingsBase):
             "nargs": "+",
         },
     )
+    conda_cache: Optional[str] = field(
+        default="instance",
+        metadata={
+            "help": "Reuse conda environments instead of building them in every job: "
+            "'instance' (jobs on the same EC2 machine share them), an S3 URL such as "
+            "s3://BUCKET/snakemake/.smkflex/conda-cache (also kept there for later jobs and "
+            "runs), or 'none'.",
+            "env_var": False,
+            "required": False,
+        },
+    )
     oom_memory_factor: Optional[float] = field(
         default=2.0,
         metadata={
@@ -365,6 +376,8 @@ common_settings = CommonSettings(
 )
 
 FARGATE_MAX_DISK_GIB = 200
+CONDA_CACHE_HOST_DIR = "/var/cache/smkflex-conda"
+CONDA_CACHE_JOB_DIR = "/tmp/smkflex-conda"  # condacache.ROOT
 FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
@@ -554,6 +567,15 @@ class Executor(RemoteExecutor):
             mounts.append((s.host_env_path, s.host_env_path, True))
         if s.conda_path:
             mounts.append((s.conda_path, s.conda_path, True))
+        cache = (s.conda_cache or "none").strip()
+        if cache not in ("none", "instance") and not cache.startswith("s3://"):
+            raise WorkflowError(
+                f"--aws-batch-flex-conda-cache must be none, instance or an s3:// URL, got '{cache}'."
+            )
+        self.conda_cache = cache
+        if cache != "none":
+            # the instance's folder, shared by its jobs (EC2; Fargate jobs keep their own)
+            mounts.append((CONDA_CACHE_HOST_DIR, CONDA_CACHE_JOB_DIR, False))
         self.mounts = mounts
         registry_credentials = {}
         for item in s.registry_credentials or []:
@@ -608,6 +630,7 @@ class Executor(RemoteExecutor):
             mounts=mounts,
             registry_credentials=registry_credentials,
         )
+        self.conda_cache_code = self._upload_conda_cache_code()
         self.default_image = s.default_image or getattr(
             self.workflow.remote_execution_settings, "container_image", None
         )
@@ -654,6 +677,30 @@ class Executor(RemoteExecutor):
         )
         if not s.no_auto_tags:
             self.logger.info(f"Jobs are tagged snakemake-run-id={self.run_id}")
+
+    def _upload_conda_cache_code(self) -> Optional[str]:
+        """Put condacache.py next to the workflow's files (it's too long to send with every
+        job); the jobs' launcher loads it from there. None turns the cache off."""
+        if self.conda_cache == "none":
+            return None
+        import hashlib
+
+        from . import headjob
+
+        prefix = str(getattr(self.workflow.storage_settings, "default_storage_prefix", "") or "").rstrip("/")
+        if not prefix:
+            return None
+        code = (os.path.join(os.path.dirname(__file__), "condacache.py"))
+        with open(code, "rb") as f:
+            data = f.read()
+        url = f"{prefix}/.smkflex/code/condacache-{hashlib.sha256(data).hexdigest()[:12]}.py"
+        try:
+            if headjob.get(url) != data:
+                headjob.put(url, data)
+        except Exception as e:
+            self.logger.warning(f"conda env cache off: could not upload its code to {url} ({e})")
+            return None
+        return url
 
     def _queue_platform(self, queue: str) -> str:
         """Platform of a queue: detected once from its compute environment (startup check),
@@ -966,7 +1013,10 @@ class Executor(RemoteExecutor):
                 "environment": [
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()
                 ]
-                + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}],
+                + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}]
+                + ([{"name": "SMK_FLEX_CONDA_CACHE", "value": self.conda_cache},
+                    {"name": "SMK_FLEX_CONDA_CACHE_CODE", "value": self.conda_cache_code}]
+                   if self.conda_cache_code else []),
             },
         )
         spot_retries = self._spot_retries_for(job)

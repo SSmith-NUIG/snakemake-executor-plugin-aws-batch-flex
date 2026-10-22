@@ -42,7 +42,8 @@ def setup(tmp_path, **extra):
 
 def smkflex(wf, *args, env_extra=None):
     log = wf.parent / "calls.jsonl"
-    env = dict(os.environ, PYTHONPATH=FAKE, FAKEAWS_LOG=str(log), **(env_extra or {}))
+    env = dict(os.environ, PYTHONPATH=FAKE, FAKEAWS_LOG=str(log),
+               SMK_FLEX_CONDA_ROOT=str(wf.parent / "conda-cache"), **(env_extra or {}))
     r = subprocess.run([sys.executable, "-m", "snakemake_executor_plugin_aws_batch_flex.remote", *args],
                        cwd=wf, env=env, capture_output=True, text=True, timeout=300)
     calls = [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []

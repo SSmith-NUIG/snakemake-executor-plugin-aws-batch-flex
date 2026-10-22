@@ -101,6 +101,21 @@ a = sys.argv[1:]
 if a[:2] != ["-m", "snakemake"]:
     os.execv(sys.executable, [sys.executable] + a)
 sys.argv = ["snakemake"] + a[2:]
+_cc, _code = os.environ.get("SMK_FLEX_CONDA_CACHE", "none"), os.environ.get("SMK_FLEX_CONDA_CACHE_CODE")
+if _cc != "none" and _code:
+    # condacache.py, uploaded by the plugin (too long to send with every job)
+    try:
+        if _code.startswith("s3://"):
+            import boto3
+            _b, _, _k = _code[5:].partition("/")
+            _src = boto3.client("s3").get_object(Bucket=_b, Key=_k)["Body"].read().decode()
+        else:
+            _src = open(_code).read()
+        _ns = {"__name__": "smkflex_condacache"}
+        exec(_src, _ns)
+        sys.argv = ["snakemake"] + _ns["install"](sys.argv[1:], _cc)
+    except Exception as e:
+        print(f"[snakemake-batch] conda env cache off for this job: {e!r}", file=sys.stderr)
 if os.environ.get("SMK_FLEX_SCRIPT_PYTHON") == "host":
     runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
     sys.exit()
@@ -163,7 +178,7 @@ def peak_memory_snippet() -> str:
     rss/shmem), i.e. without file cache, which the kernel frees before it kills anything and
     which fills up to the limit while e.g. conda unpacks packages. Needs awk; otherwise nothing
     is logged."""
-    return r"""
+    return _compact(r"""
 SMK_MEMSTAT="${SMK_FLEX_MEMSTAT_FILE:-/sys/fs/cgroup/memory.stat}"
 if [ -r "$SMK_MEMSTAT" ] && command -v awk >/dev/null 2>&1; then
   smk_mem() { awk '$1=="anon"||$1=="rss"||$1=="shmem"{s+=$2} END{print s+0}' "$SMK_MEMSTAT" 2>/dev/null || echo 0; }
@@ -177,7 +192,7 @@ if [ -r "$SMK_MEMSTAT" ] && command -v awk >/dev/null 2>&1; then
   }
   trap smk_peak EXIT
 fi
-"""
+""")
 
 
 def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:
@@ -187,6 +202,12 @@ def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:
         + "".join(f"m.version({n!r})\n" for n in package_names)
     )
     return shlex.quote(code)
+
+
+def _compact(script: str) -> str:
+    """The script without indentation and blank lines: the job's command has to fit in
+    ECS's 8192 characters, and sh doesn't need them."""
+    return "\n".join(line.strip() for line in script.splitlines() if line.strip()) + "\n"
 
 
 def build_prelude(
@@ -213,7 +234,7 @@ def build_prelude(
             "then SMK_NEED=0; fi"
         )
     reqs = " ".join(shlex.quote(r) for r in requirements)
-    return (
+    return _compact(
         _TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
         .replace("@@NEED@@", need)
         .replace("@@CHECK@@", check)
@@ -226,7 +247,7 @@ def build_prelude(
 def build_host_prelude(env_path: str, wait_seconds: int = 120) -> str:
     """Prelude for the host-mounted env. Waits for `.ready` because an instance that is
     still installing the env (user-data) may already have been given a job."""
-    return (
+    return _compact(
         _HOST_TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
         .replace("@@ENV@@", shlex.quote(env_path))
         .replace("@@WAIT@@", str(int(wait_seconds)))
