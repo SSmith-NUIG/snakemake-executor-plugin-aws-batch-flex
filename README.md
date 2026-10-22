@@ -459,6 +459,8 @@ that fetches the pipeline's code from GitHub at the release you name.
 snakedeploy deploy-workflow https://github.com/snakemake-workflows/rna-seq-star-deseq2 my-rnaseq --tag v3.1.2
 cd my-rnaseq
 # edit config/config.yaml and the sample sheets (config/samples.tsv, config/units.tsv)
+mkdir -p workflow/profiles/default # this project's own folder in the bucket:
+echo "default-storage-prefix: s3://YOUR-BUCKET/snakemake/my-rnaseq" > workflow/profiles/default/config.yaml
 smkflex push data                  # the input files, at the paths the sample sheets use
 snakemake --profile smkflex        # or: smkflex run --profile smkflex
 ```
@@ -466,6 +468,9 @@ snakemake --profile smkflex        # or: smkflex run --profile smkflex
 Tested with [rna-seq-star-deseq2](https://github.com/snakemake-workflows/rna-seq-star-deseq2) on
 its yeast test data: 53 jobs, 13 minutes, about $0.10 of compute (16 minutes as a `smkflex run`).
 
+- **One bucket folder per project:** Snakemake loads `workflow/profiles/default/config.yaml` on
+  top of `--profile` by itself, so the `default-storage-prefix` there keeps each project's
+  `results/` apart (`smkflex push`, `pull` and `run` read it too).
 - **Data stays out of the project folder's upload:** `smkflex run` sends the folder to AWS, so
   list data folders in a `.gitignore` there (e.g. `data/`); they reach the jobs through the
   bucket (`smkflex push`).

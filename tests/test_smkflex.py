@@ -316,3 +316,15 @@ def test_plain_folder_follows_its_gitignore(tmp_path):
         (tmp_path / f).write_text("")
     (tmp_path / ".gitignore").write_text("# data stays here\ndata/\n*.bam\n/results\n")
     assert workflow_files(str(tmp_path)) == [".gitignore", "config/config.yaml", "workflow/Snakefile"]
+
+
+def test_workflow_profile_sets_the_project_prefix(tmp_path):
+    wf = setup(tmp_path)
+    (wf / "workflow" / "profiles" / "default").mkdir(parents=True)
+    (wf / "workflow" / "profiles" / "default" / "config.yaml").write_text(
+        f"default-storage-prefix: {tmp_path / 'store' / 'proj'}\n")
+    (wf / "data").mkdir()
+    (wf / "data" / "a.fq").write_text("A")
+    r, _ = smkflex(wf, "push", "data")
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "store" / "proj" / "data" / "a.fq").read_text() == "A"

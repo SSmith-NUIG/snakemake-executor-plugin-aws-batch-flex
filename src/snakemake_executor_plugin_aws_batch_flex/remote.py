@@ -84,7 +84,15 @@ def _load_profile(path):
                    "here and in ~/.config/snakemake/)")
     folder, cfg = found
     with open(cfg) as f:
-        return str(folder), yaml.safe_load(f) or {}
+        settings = yaml.safe_load(f) or {}
+    # The project's own workflow profile, which Snakemake loads on top (e.g. its storage prefix)
+    for name in ("profile.yaml", "config.yaml"):
+        wp = os.path.join("workflow", "profiles", "default", name)
+        if os.path.isfile(wp):
+            with open(wp) as f:
+                settings.update(yaml.safe_load(f) or {})
+            break
+    return str(folder), settings
 
 
 def _flag(value):
