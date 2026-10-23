@@ -667,48 +667,79 @@ aws-batch-flex-spot-retries: 0
 aws-batch-flex-skip-preflight: true          # on the command line: just --aws-batch-flex-skip-preflight
 ```
 
-Only the queue is required; `setup.sh` writes the usual ones. In the table, a value in `code` is
-the default you'd get (and the kind of value to give); one in *italics* says what happens when the
-setting isn't given.
+Only the queue is required, and `setup.sh` writes the usual ones for you. The settings are
+grouped below; most people never need more than the first group. In the tables, a value in
+`code` is the default, and one in *italics* says what happens when the setting isn't given.
+
+**Basics**
 
 | Setting (`aws-batch-flex-...`) | Default | What it's for |
 |---|---|---|
-| `queue` | *required* | The Batch queue jobs go to, unless a rule sets `batch_queue`. |
-| `region` | *not set: your AWS config's region* | AWS region. |
-| `job-role-arn` | *not set: the instances' role (EC2)* | Role the jobs run as; needs read/write on the S3 bucket. |
-| `execution-role-arn` | *not set* | Needed for Fargate queues and for private registries. |
-| `head-role-arn` | *not set* | Role of the head job that `smkflex run` submits (Snakemake itself ignores it). |
-| `platform` | *not set: read from the queue* | `ec2` or `fargate` for the main queue. Normally read from the queue. |
-| `default-image` | *not set* | Image for rules without `container:`. |
-| `bootstrap` | `auto` | How jobs get Snakemake: `host` (from the AMI, recommended on EC2), `auto`/`always` (install when the job starts), `never` (the image has it). |
-| `host-env-path` | `/opt/snakemake-env` | Where the AMI has Snakemake (`host` mode). |
-| `host-env-wait-seconds` | `120` | How long a job waits for that env if the instance is still installing it. 0 on a baked AMI. |
-| `install-prereqs` | `false` | Install-at-start only: install `curl` first in images that have no way to download. |
-| `script-python` | `image` | `image`: Python `script:` rules use the image's Python if it's 3.10+. `host`: always Snakemake's. |
-| `mem-overhead-mib` | `256` | Memory added to each rule's request for the Snakemake process in the job. |
-| `oom-memory-factor` | `2` | When a job runs out of memory and Snakemake retries it (`--retries N`, or `retries:` on the rule), the retry asks for this many times more memory, again for each further retry (Fargate: at most 120 GiB). 1 = retry with the same memory. |
-| `conda-path` | *not set* | Where the AMI has Miniforge, for `conda:` rules in images without conda (EC2). |
-| `conda-cache` | `instance` | Reuse built conda envs instead of building them in every job: `instance` (jobs on the same EC2 machine share them), an S3 URL such as `s3://BUCKET/snakemake/.smkflex/conda-cache` (also kept there for later jobs and runs), or `none`. See [Conda and wrappers](#conda-and-wrappers). |
-| `volumes` | *not set* | Extra folders from the instance to mount into jobs, `HOST:CONTAINER[:ro]` (EC2). |
-| `extra-packages` | *not set* | Extra pip packages for install-at-start (e.g. other Snakemake plugins). |
-| `python-version` | *not set: the one you run Snakemake with* | Python version for install-at-start. |
-| `spot-retries` | `2` | How often Batch retries a job whose Spot instance was taken away (0 = never). |
-| `scheduling-priority` | *not set* | Priority for every job (0-9999), on queues with a fair-share policy; others ignore it with a warning. |
-| `registry-credentials` | *not set* | `REGISTRY=SECRET_ARN` for private registries outside AWS (see [Private images](#private-images)). |
-| `orphan-jobs` | `cancel` | Jobs left running by an interrupted run: `cancel`, `warn` or `ignore` (see [Interrupted runs](#interrupted-runs)). |
-| `tags` | *not set* | `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`. |
-| `no-cost-summary` | `false` | Don't print the table of what the run used at the end (see [What a run used](#what-a-run-used)). |
-| `no-auto-tags` | `false` | Turn off the automatic tags (and the leftover-job check, which uses them). |
-| `runnable-warn-minutes` | `15` | Warn when a job has waited this long for a machine. |
-| `skip-preflight` | `false` | Skip the startup checks of the queue and roles. |
-| `log-group` | `/aws/batch/job` | CloudWatch log group for job logs. Terraform creates one that deletes logs after 30 days and puts it in the profile; Batch's default group keeps them forever. The group must already exist. |
-| `job-definition` | *not set* | Use an existing job definition (name, `name:revision` or ARN) instead of letting the plugin register its own, e.g. where you aren't allowed to register them. It decides the image, job role, mounts and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the AMI's Snakemake, jobs install Snakemake at start. |
-| `job-definition-prefix` | `snakemake` | Name prefix for the job definitions the plugin registers. |
-| `assign-public-ip` | `ENABLED` | Fargate: give jobs a public IP (needed for internet without a NAT gateway). |
-| `ephemeral-storage-gib` | *not set: 20 GiB, Fargate's own* | Fargate: minimum scratch disk size for every job, 21-200 GiB (a rule's `disk_mb` can raise it). |
+| `queue` | *required* | The Batch queue jobs go to. A rule can send its jobs elsewhere with `batch_queue`. |
+| `region` | *your AWS config's region* | The AWS region of the queue. |
+| `job-role-arn` | *the instances' own role (EC2)* | The IAM role jobs run as. It needs to read and write the S3 bucket. |
+| `execution-role-arn` | *none* | The IAM role Batch uses to start a job: to pull its image and send its logs. Needed for Fargate queues and private registries. |
+| `head-role-arn` | *none* | The IAM role of the head job, the Batch job in which `smkflex run` runs Snakemake (see [Long runs](#long-runs-smkflex)). Only `smkflex` uses it. |
+| `default-image` | *none* | The image for rules that have no `container:`. |
+| `tags` | *none* | Extra `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`, for example to see costs by project. |
 
-Jobs are tagged automatically with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule` and
-`snakemake-job-id`, and tags propagate to the ECS tasks.
+**How jobs get Snakemake**
+
+Jobs run in each rule's own image, which normally has no Snakemake in it. On EC2, Snakemake comes
+from the machine image (`host`); otherwise it's installed when each job starts, which takes
+10-15 s per job.
+
+| Setting (`aws-batch-flex-...`) | Default | What it's for |
+|---|---|---|
+| `bootstrap` | `auto` | `host`: use Snakemake from the machine image (what `setup.sh` sets; EC2 only). `auto`: use the image's own Snakemake if it has the same version as yours, otherwise install it when the job starts. `always`: always install it. `never`: the image has it. |
+| `host-env-path` | `/opt/snakemake-env` | Where the machine image has Snakemake. |
+| `host-env-wait-seconds` | `120` | How long a job waits for that Snakemake if its machine is still setting it up when the job starts. A machine image made by `setup.sh` has it from the start, so 0 is fine there. |
+| `extra-packages` | *none* | Extra pip packages to install along with Snakemake when a job starts (e.g. `[pandas]`, or other Snakemake plugins). |
+| `python-version` | *the one you run Snakemake with* | The Python version to install Snakemake with when a job starts. |
+| `install-prereqs` | `false` | When installing at start: first install `curl` into images that have none of `curl`, `wget` or `pip`. |
+| `script-python` | `image` | Which Python runs Python `script:` rules. `image`: the image's own, if it's 3.10 or newer, so the script can use the image's packages. `host`: always Snakemake's own. |
+
+**Memory, disk and Spot**
+
+| Setting (`aws-batch-flex-...`) | Default | What it's for |
+|---|---|---|
+| `mem-overhead-mib` | `256` | Memory added to each job on top of the rule's `mem_mb`, for the Snakemake process that runs in the job. |
+| `oom-memory-factor` | `2` | When a job runs out of memory and Snakemake retries it (`retries:`), the retry gets this many times the memory, and again on each further retry (on Fargate, up to 120 GiB). `1` retries with the same memory. |
+| `spot-retries` | `2` | How many times Batch restarts a job when AWS takes its Spot machine back. `0`: never. |
+| `ephemeral-storage-gib` | *20 GiB, Fargate's own* | Fargate only: disk space for every job, 21-200 GiB. A rule's `disk_mb` can ask for more. (On EC2, jobs share their machine's disk; its size is set in Terraform.) |
+| `assign-public-ip` | `ENABLED` | Fargate only: `ENABLED` gives jobs a public IP address, which they need to reach the internet (images, S3) unless the subnet has a NAT gateway. `DISABLED` for subnets that do. |
+
+**Conda**
+
+| Setting (`aws-batch-flex-...`) | Default | What it's for |
+|---|---|---|
+| `conda-path` | *none* | Where the machine image has conda (`setup.sh` sets it), so `conda:` rules also work in images without conda. EC2 only. |
+| `conda-cache` | `instance` | Reuse conda environments instead of building them in every job. `instance`: jobs on the same machine share them. An S3 URL, e.g. `s3://BUCKET/snakemake/.smkflex/conda-cache`: they're also kept there for later jobs and runs. `none`: build in every job. See [Conda and wrappers](#conda-and-wrappers). |
+
+**Logs, checks and leftovers**
+
+| Setting (`aws-batch-flex-...`) | Default | What it's for |
+|---|---|---|
+| `log-group` | `/aws/batch/job` | The CloudWatch log group for job logs. It must already exist. Terraform creates one that deletes logs after 30 days and puts it in the profile; Batch's default group keeps them forever. |
+| `no-cost-summary` | `false` | Don't print the table of what the run used and cost at the end (see [What a run used](#what-a-run-used)). |
+| `runnable-warn-minutes` | `15` | Warn when a job has waited this long for a machine to run on. |
+| `skip-preflight` | `false` | Skip the checks of the queue and roles at the start of a run. |
+| `orphan-jobs` | `cancel` | What to do with jobs still running from an earlier run that was killed: `cancel`, `warn` or `ignore` (see [Interrupted runs](#interrupted-runs)). |
+| `no-auto-tags` | `false` | Don't tag jobs with their run, rule and so on. Without those tags, jobs left over from a killed run can't be found. |
+
+**Less common**
+
+| Setting (`aws-batch-flex-...`) | Default | What it's for |
+|---|---|---|
+| `platform` | *read from the queue* | `ec2` or `fargate`. Only needed if it can't be read from the queue. |
+| `volumes` | *none* | Folders on the EC2 machine to make available in every job, as `MACHINE_PATH:JOB_PATH`, with `:ro` for read-only, e.g. `[/data/refs:/refs:ro]`. |
+| `scheduling-priority` | *none* | Priority for every job (0-9999), for queues with a fair-share scheduling policy. Other queues ignore it, with a warning. |
+| `registry-credentials` | *none* | `REGISTRY=SECRET_ARN` for private registries outside AWS (see [Private images](#private-images)). |
+| `job-definition` | *none* | Use an existing Batch job definition (name, `name:revision` or ARN) instead of the ones the plugin makes, e.g. where you aren't allowed to make them. It decides the image, job role, mounted folders and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the machine image's Snakemake, jobs install it when they start. |
+| `job-definition-prefix` | `snakemake` | How the job definitions the plugin makes are named. |
+
+Every job is also tagged with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule` and
+`snakemake-job-id`, so you can find a run's jobs, or a rule's, in the Batch console and in billing.
 
 ### The smkflex command
 
@@ -717,14 +748,14 @@ Jobs are tagged automatically with `snakemake-run-id`, `snakemake-workflow`, `sn
 
 | Command | What it does |
 |---|---|
+| `smkflex check` | Checks the setup: AWS login, queue, roles, bucket, and that the versions fit together. |
 | `smkflex init` | Sets up the current folder as a project: its own folder in the bucket, and a `.gitignore` (see [Your own workflow](#your-own-workflow)). |
-| `smkflex push PATH...` | Uploads input files or folders to where the rules look for them, relative or absolute paths. |
-| `smkflex pull PATH...` | Downloads outputs (e.g. `results`, `logs`) from the bucket into the current folder (`--to` for another). |
-| `smkflex run [-- ARGS]` | Runs the workflow as a head job on AWS (see [Long runs](#long-runs-smkflex)); `--git URL` for a repository. |
-| `smkflex logs JOB_ID` | Prints a run's Snakemake output (`--follow` to keep watching). |
-| `smkflex status` | Lists the recent runs started with `smkflex run`, and the commit each one ran. |
-| `smkflex cancel JOB_ID` | Stops a run; Snakemake cancels its jobs first. |
-| `smkflex check` | Checks the setup: AWS login, queue, roles, bucket, versions. |
+| `smkflex push PATH...` | Uploads input files or folders to where the rules look for them, e.g. `smkflex push data /shared/refs`. |
+| `smkflex pull PATH...` | Downloads outputs from the bucket into the current folder, e.g. `smkflex pull results logs` (`--to` puts them elsewhere). |
+| `smkflex run [-- OPTIONS]` | Runs the workflow on AWS in a head job, so your machine can be switched off (see [Long runs](#long-runs-smkflex)). Snakemake options go after `--`, e.g. `smkflex run -- --forceall`. `--git URL` runs a workflow from a git repository; `--wait` waits for the run to finish. It prints the run's JOB_ID. |
+| `smkflex status` | Lists recent runs started with `smkflex run`: their JOB_ID, state and the commit each one ran. |
+| `smkflex logs JOB_ID` | Prints a run's Snakemake output; `--follow` keeps watching. |
+| `smkflex cancel JOB_ID` | Stops a run. Snakemake cancels its jobs first. |
 
 ### University and company accounts
 
