@@ -401,6 +401,7 @@ rule align:
     output: "results/{sample}.sam"
     container: "docker://quay.io/biocontainers/bwa:0.7.17--h7132678_9"
     threads: 8
+    retries: 4
     resources:
         mem_mb=16000,
         runtime=120,
