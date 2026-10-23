@@ -393,7 +393,8 @@ to skip the check. If Snakemake then says "IncompleteFilesException", run again 
 
 ### Resources per rule
 
-Everything about a job is set on its rule. An example with most of the options:
+Everything about a job is set on its rule. An example with every option in the table below (a real
+rule only needs the few it uses):
 
 ```python
 rule align:
@@ -404,9 +405,17 @@ rule align:
     retries: 4
     resources:
         mem_mb=16000,
-        runtime=120,
+        runtime=120,                          # minutes
+        batch_shm_mb=4096,                    # EC2 only
+        disk_mb=100000,                       # Fargate only
+        gpu=1,                                # needs a queue with GPU machines
         batch_queue="smkflex-big-queue",
+        batch_platform="ec2",                 # only if the queue can't be looked up
         batch_tags="stage=align,project=rnaseq",
+        batch_spot_retries=3,                 # Spot queues
+        batch_priority=500,                   # fair-share queues
+        batch_script_python="host",           # script: rules only
+        # batch_job_definition="my-jobdef",   # instead of the plugin's own; it then sets the image
     shell: "bwa mem -t {threads} ref.fa {input} > {output}"
 ```
 
