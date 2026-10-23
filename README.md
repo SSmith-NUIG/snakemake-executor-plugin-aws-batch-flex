@@ -412,11 +412,11 @@ rule align:
 | On the rule | What it does on AWS |
 |---|---|
 | `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
-| `threads: 8` | Number of vCPUs requested. |
+| `threads: 8` | Number of vCPUs requested. On EC2, a job bigger than the largest machine the queue may start waits forever (the plugin warns after `runnable-warn-minutes`). On Fargate, vCPUs and memory are rounded up to the nearest size Fargate offers (at most 16 vCPUs and 120 GiB). |
 | `mem_mb=16000` (or `mem_mib`) | Memory requested, a hard limit. Snakemake itself runs inside the job too, so 256 MiB is added (`mem-overhead-mib`). Without it (many published pipelines don't set it), `default-resources` applies, or else 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). The end-of-run table shows what each rule really used. |
-| `runtime=120` | Minutes before Batch stops the job (timeout). To give every rule a timeout, put `runtime` in `default-resources`. |
+| `runtime=120` | Minutes before Batch stops the job (timeout); `"2h"` also works. To give every rule a timeout, put `runtime` in `default-resources`. |
 | `batch_shm_mb=4096` | Size of `/dev/shm` (Docker's default is 64 MB), for tools that use shared memory, e.g. bwa-mem2 or PyTorch data loaders. What's stored there counts towards `mem_mb`. EC2 only. `shared_memory_size_mb` also works. |
-| `disk_mb=100000` | Fargate: scratch disk for the job (default 20 GiB, up to 200), rounded up to 25 GiB steps. Snakemake sets it to twice the input size by default, which is used too. EC2: ignored; see [Limits](#limits). |
+| `disk_mb=100000` (or `disk_mib`) | Fargate only: disk space for the job, up to 200 GiB, rounded up to 25 GiB steps. Without it, Snakemake asks for twice the size of the job's input files, and jobs get at least 20 GiB (or `ephemeral-storage-gib`). On EC2 it's ignored: jobs share their machine's disk (see [Limits](#limits)). |
 | `gpu=1` | Number of GPUs (needs a queue with GPU instances; untested). |
 | `batch_queue="other-queue"` | Send this rule to a different queue than the profile's. EC2, Spot and Fargate queues can be mixed in one workflow; the plugin works out which is which. |
 | `batch_platform="fargate"` | Force the platform instead of detecting it from the queue (only needed if the plugin isn't allowed to look the queue up). |
