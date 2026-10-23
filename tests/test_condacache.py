@@ -70,6 +70,8 @@ def test_install_sets_the_prefix_and_respects_one_given(tmp_path, monkeypatch):
         assert argv == ["--cores", "1", "--conda-prefix", str(tmp_path / "root" / condacache.glibc())]
         assert getattr(smk_conda.Env.create, "_smkflex", False)
         assert condacache.install(["--conda-prefix", "/x"], "instance") == ["--conda-prefix", "/x"]
+        assert condacache.install(["--deploy-sources", "s3://b/src.tar.xz", "abc"], "instance") == \
+            ["--deploy-sources", "s3://b/src.tar.xz", "abc"]
     finally:
         smk_conda.Env.create = orig
 
@@ -116,3 +118,20 @@ def test_launcher_runs_the_job_without_the_cache_code(tmp_path):
     r = _job(tmp_path, tmp_path / "missing.py")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "conda env cache off for this job" in r.stderr and "PREFIX None" in r.stdout + r.stderr
+
+
+def test_install_in_many_jobs_at_once(tmp_path, monkeypatch):
+    # jobs starting together on one machine: none may turn the cache off
+    monkeypatch.setattr(condacache, "ROOT", str(tmp_path / "root"))
+    from snakemake.deployment import conda as smk_conda
+    orig, results = smk_conda.Env.create, []
+    try:
+        threads = [threading.Thread(target=lambda: results.append(condacache.install([], "instance")))
+                   for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert all(r and r[0] == "--conda-prefix" for r in results) and len(results) == 20
+    finally:
+        smk_conda.Env.create = orig

@@ -151,13 +151,16 @@ def install(argv, setting):
     """Turn the cache on for this job: set Snakemake's conda prefix (unless the job has one)
     and wrap Env.create. setting is 'instance' or an S3 URL; anything going wrong leaves
     the job as it was."""
-    if "--conda-prefix" in argv:
+    # --deploy-sources only unpacks the workflow before the job's real run: no envs there
+    if "--conda-prefix" in argv or "--deploy-sources" in argv:
         return argv
     try:
         prefix = env_prefix()
         os.makedirs(prefix, exist_ok=True)
-        probe = os.path.join(prefix, f".write-test-{os.getpid()}")
-        open(probe, "w").close()
+        # can this job write there? (a unique name: jobs in other containers on the same
+        # machine can have the same process ID)
+        fd, probe = tempfile.mkstemp(dir=prefix, prefix=".write-test-")
+        os.close(fd)
         os.remove(probe)
         from snakemake.deployment import conda as smk_conda
 
