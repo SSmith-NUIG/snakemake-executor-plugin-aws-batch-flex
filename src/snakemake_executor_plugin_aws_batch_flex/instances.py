@@ -158,7 +158,9 @@ class Instances:
             used += total
             available += vcpus * hours * 3600
         parts = [f"{n} × {t} ({kind}, {mins:.0f} min in all)" for (t, kind), (n, mins, _c) in sorted(groups.items())]
-        line = (f"EC2: {', '.join(parts)}: ~${sum(g[2] for g in groups.values()):.2f} at AWS's prices"
+        total_usd = sum(g[2] for g in groups.values())
+        usd = "<$0.01" if 0 < total_usd < 0.005 else f"~${total_usd:.2f}"
+        line = (f"EC2: {', '.join(parts)}: {usd} at AWS's prices"
                 + (f"; the jobs used {used / available:.0%} of these instances' vCPU-time" if available else "")
                 + (f" ({running} still running, counted until now)" if running else "") + ".")
         return dict(per_rule), line
