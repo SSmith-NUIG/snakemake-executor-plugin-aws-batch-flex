@@ -903,10 +903,10 @@ job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` an
 `ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
 far from yours, and `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
 `ec2:DescribeVolumes`, `ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price
-the instances (and their disks) a run used. `terraform output launcher_policy_json` prints a policy with all of this. The job role needs
-read/write on the prefix. For `smkflex`, the head job's role needs the same as the identity running
-`snakemake`, and that identity also needs `iam:PassRole` on the head role (both are in the
-Terraform setup).
+the instances (and their disks) a run used. `terraform output launcher_policy_json` prints a
+policy with all of this. The job role needs read/write on the prefix. For `smkflex`, the head
+job's role needs the same as the identity running `snakemake`, and that identity also needs
+`iam:PassRole` on the head role (both are in the Terraform setup).
 
 ### What's been tested
 
