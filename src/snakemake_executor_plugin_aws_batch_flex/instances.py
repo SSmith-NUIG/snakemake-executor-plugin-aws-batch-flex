@@ -19,6 +19,14 @@ def _utc(dt):
     return dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
 
 
+def _why(e, action):
+    """A short reason: the missing permission for an access error, else the error's type."""
+    text = str(e)
+    if "AccessDenied" in text or "UnauthorizedOperation" in text or "not authorized" in text:
+        return f"no permission for {action}"
+    return type(e).__name__
+
+
 def _ms(ts):
     return datetime.datetime.fromtimestamp(ts / 1000, datetime.timezone.utc)
 
@@ -45,7 +53,7 @@ class Instances:
             if found:
                 self.ids[arn] = found[0].get("ec2InstanceId")
         except Exception as e:
-            self.problem = self.problem or f"can't look up the instances ({type(e).__name__})"
+            self.problem = self.problem or _why(e, "ecs:DescribeContainerInstances")
 
     def add_job(self, rule, d, vcpu):
         """Count a finished job's vCPU-time on the instances it ran on (every attempt). False
@@ -109,7 +117,7 @@ class Instances:
                     for inst in r["Instances"]:
                         found[inst["InstanceId"]] = inst
         except Exception as e:
-            return None, f"can't look up the instances ({type(e).__name__})"
+            return None, _why(e, "ec2:DescribeInstances")
         per_rule = defaultdict(float)
         groups = defaultdict(lambda: [0, 0.0, 0.0])  # (type, lifecycle) -> count, minutes, USD
         prices, used, available, running = {}, 0.0, 0.0, 0
@@ -132,10 +140,13 @@ class Instances:
                 if itype not in prices:
                     prices[itype] = self._on_demand(pricing, itype)
                 hourly, vcpus = prices[itype]
-                if spot:
-                    hourly = self._spot(itype, az, start, end)
             except Exception as e:
-                return None, f"can't get prices ({type(e).__name__}: {e})"[:160]
+                return None, _why(e, "pricing:GetProducts")
+            if spot:
+                try:
+                    hourly = self._spot(itype, az, start, end)
+                except Exception as e:
+                    return None, _why(e, "ec2:DescribeSpotPriceHistory")
             cost = hourly * hours
             total = sum(rules.values())
             for rule, secs in rules.items():

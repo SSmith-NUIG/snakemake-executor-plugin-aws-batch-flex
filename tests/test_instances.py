@@ -78,7 +78,7 @@ def test_unknown_instance_and_failing_lookups():
     inst = Instances(NoECS(), EC2(), "eu-west-1", started=T0)
     assert not inst.add_job("x", job("arn:aws:ecs:eu-west-1:1:container-instance/c1/a", 0, 10), 1)
     per_rule, why = inst.costs(Pricing())
-    assert per_rule is None and "PermissionError" in why
+    assert per_rule is None and why == "no permission for ecs:DescribeContainerInstances"
 
     class NoPricing:
         def get_products(self, **kw):
@@ -86,7 +86,7 @@ def test_unknown_instance_and_failing_lookups():
     inst = Instances(ECS(), EC2(), "eu-west-1", started=T0)
     inst.add_job("x", job("arn:aws:ecs:eu-west-1:1:container-instance/c1/a", 0, 10), 1)
     per_rule, why = inst.costs(NoPricing(), now=T0 + datetime.timedelta(minutes=60))
-    assert per_rule is None and "can't get prices" in why
+    assert per_rule is None and why == "no permission for pricing:GetProducts"
 
 
 def test_table_uses_instance_costs_or_falls_back():

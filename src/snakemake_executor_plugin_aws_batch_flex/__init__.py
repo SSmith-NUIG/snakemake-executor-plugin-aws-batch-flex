@@ -1143,9 +1143,8 @@ class Executor(RemoteExecutor):
                 except Exception as e:
                     per_rule, line = None, f"{type(e).__name__}"
                 if per_rule is None:
-                    line = (f"EC2 cost estimated from the jobs' vCPUs ({line}; the plugin needs "
-                            "ec2:DescribeInstances, ecs:DescribeContainerInstances, "
-                            "ec2:DescribeSpotPriceHistory and pricing:GetProducts to price the instances).")
+                    line = (f"EC2 cost estimated from the jobs' vCPUs, not priced by instance: {line}"
+                            " (see IAM in the plugin's README).")
         overhead = DEFAULT_MEM_OVERHEAD_MIB if self.settings.mem_overhead_mib is None else self.settings.mem_overhead_mib
         table = None if self.settings.no_cost_summary else self.usage.table(overhead, per_rule, line)
         if table:
