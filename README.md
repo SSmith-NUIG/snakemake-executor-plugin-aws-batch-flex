@@ -355,11 +355,12 @@ At the end of a run the plugin prints what each rule used, from Batch's own star
 times (Spot retries included), and how much memory its jobs really needed:
 
 ```
-AWS Batch usage of this run (cost: rough estimate at list prices, without instance idle time, storage or data transfer):
+AWS Batch usage of this run (cost: the EC2 instances at AWS's prices, shared out by vCPU-time; without storage or data transfer):
   rule         jobs    vCPU-h     GiB-h      ~USD   mem MiB  peak MiB
-  star_align      4      0.96      0.32      0.05      4071      1840
-  fastp_pe        4      0.08      0.32     <0.01      4071       310
-  total           8      1.04      0.64      0.05
+  star_align      4      0.96      0.32      0.21      4071      1840
+  fastp_pe        4      0.08      0.32      0.02      4071       310
+  total           8      1.04      0.64      0.23
+EC2: 1 × m6i.2xlarge (on-demand, 32 min in all): ~$0.23 at AWS's prices; the jobs used 24% of these instances' vCPU-time.
 Memory for each rule (its peak + 30%), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
 set-resources:
   fastp_pe:
@@ -377,11 +378,18 @@ set-resources:
   its peak plus 30% (at least 512 MiB per job): paste it into the project's settings, and the
   next run neither wastes room on the instances nor runs out. On rna-seq-star-deseq2's test
   data the rules used 0.3-2.7 GB of the 4 GB they asked for, and ran fine with the suggestions.
-- **Cost:** uses typical on-demand prices (about $0.05 per vCPU-hour on EC2, less on Spot;
-  Fargate's per-vCPU and per-GB prices). On EC2 you pay for whole instances, so the bill is
-  higher when jobs leave instances half empty or they wait idle before shutting down. AWS Cost
-  Explorer has the real figures: the instances are tagged `ManagedBy=snakemake-batch-flex`, which
-  you can filter by once it's switched on under **Billing** > **Cost allocation tags**.
+- **Cost:** on EC2 you pay for whole instances, so that's what's counted: the plugin notes which
+  instances the jobs ran on, how long each ran during the run (idle time included) and its
+  type, and prices it at AWS's on-demand list price or the Spot price of its zone at the time.
+  Each instance's cost is shared out to the rules by their jobs' vCPU-time on it. The `EC2:` line
+  says which instances they were and how much of them the jobs used: a low share means jobs left
+  instances half empty, often because one rule's memory needs a big instance. Fargate is priced
+  per job, which is how Fargate bills. Instances still running at the end (Batch keeps them a few
+  minutes) are counted until then, and an instance that other runs used at the same time is all
+  counted here. If the instances can't be looked up (permissions, below), the table falls back to
+  a rough estimate from the jobs' vCPUs and says so. AWS Cost Explorer has the exact figures, a
+  day later: the instances are tagged `ManagedBy=snakemake-batch-flex`, which you can filter by
+  once it's switched on under **Billing** > **Cost allocation tags**.
 
 Turn the table off with `no-cost-summary`.
 
@@ -852,7 +860,9 @@ The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `Termi
 `DescribeComputeEnvironments` and `TagResource`, plus `logs:GetLogEvents`, `iam:PassRole` on
 the job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` and
 `ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
-far from yours. `terraform output launcher_policy_json` prints a policy with all of this. The
+far from yours, and `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
+`ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price the instances a run
+used. `terraform output launcher_policy_json` prints a policy with all of this. The
 job role needs read/write on the prefix. For `smkflex`, the head job's role needs the same as
 the identity running `snakemake`, and that identity also needs `iam:PassRole` on the head role
 (both are in the Terraform setup).

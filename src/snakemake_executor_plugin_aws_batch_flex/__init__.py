@@ -30,6 +30,7 @@ from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, describe_existing, is_ec
 from .naming import batch_job_name
 from .orphans import find_orphans, workflow_id
 from .costs import Usage
+from .instances import Instances
 from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
 from .sizing import DEFAULT_MEM_OVERHEAD_MIB, fargate_size, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
@@ -615,6 +616,10 @@ class Executor(RemoteExecutor):
         )
         self.batch = boto3.client("batch", config=cfg)
         self.cwlogs = boto3.client("logs", config=cfg)
+        self._cfg = cfg
+        # which EC2 instances the jobs run on, for the cost at the end
+        self.instances = Instances(boto3.client("ecs", config=cfg), boto3.client("ec2", config=cfg),
+                                   getattr(getattr(self.batch, "meta", None), "region_name", None) or s.region)
         self.tags = tags
         self.jobdefs = JobDefinitions(
             self.batch,
@@ -1104,6 +1109,9 @@ class Executor(RemoteExecutor):
                 msg = await asyncio.to_thread(self._failure_message, d, info)
                 self.report_job_error(info, msg=msg)
             elif status in _STATUS_RUNNING:
+                arn = (d.get("container") or {}).get("containerInstanceArn")
+                if arn and arn not in self.instances.ids:
+                    await asyncio.to_thread(self.instances.note, arn)
                 self._warn_if_stuck(d, info)
                 yield info
             else:
@@ -1113,8 +1121,10 @@ class Executor(RemoteExecutor):
         queue = info.aux.get("queue")
         if queue not in self._spot:
             self._spot[queue] = not self.settings.skip_preflight and queue_uses_spot(self.batch, queue)
+        platform = info.aux.get("platform", "ec2")
+        known = platform == "ec2" and self.instances.add_job(info.job.name, d, info.aux.get("vcpu", 1.0))
         self.usage.add(info.job.name, d, info.aux.get("vcpu", 1.0), info.aux.get("mem", 0),
-                       info.aux.get("platform", "ec2"), self._spot[queue])
+                       platform, self._spot[queue], on_known_instance=known)
         c = d.get("container") or {}
         if c.get("logStreamName") and d.get("status") == "SUCCEEDED":
             group = (c.get("logConfiguration") or {}).get("options", {}).get("awslogs-group", self.settings.log_group)
@@ -1122,10 +1132,22 @@ class Executor(RemoteExecutor):
 
     def shutdown(self):
         super().shutdown()
+        per_rule, line = None, None
         if not self.settings.no_cost_summary:
             self.usage.fetch_peaks(self.cwlogs)
+            if self.instances.vcpu_seconds:
+                try:
+                    # the price list is served from us-east-1, for every region
+                    pricing = boto3.client("pricing", region_name="us-east-1")
+                    per_rule, line = self.instances.costs(pricing)
+                except Exception as e:
+                    per_rule, line = None, f"{type(e).__name__}"
+                if per_rule is None:
+                    line = (f"EC2 cost estimated from the jobs' vCPUs ({line}; the plugin needs "
+                            "ec2:DescribeInstances, ecs:DescribeContainerInstances, "
+                            "ec2:DescribeSpotPriceHistory and pricing:GetProducts to price the instances).")
         overhead = DEFAULT_MEM_OVERHEAD_MIB if self.settings.mem_overhead_mib is None else self.settings.mem_overhead_mib
-        table = None if self.settings.no_cost_summary else self.usage.table(overhead)
+        table = None if self.settings.no_cost_summary else self.usage.table(overhead, per_rule, line)
         if table:
             self.logger.info(table)
 

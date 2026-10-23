@@ -1,8 +1,9 @@
 """What a run used on Batch, per rule, from Batch's own start and stop times of every attempt
 (Spot retries included). Printed when the run ends.
 
-The cost is a rough estimate at list prices. On EC2 you pay for whole instances, so their idle
-time and how well jobs fill them aren't in it; neither are storage, data transfer or logs."""
+Cost: on EC2, the instances the jobs ran on, at AWS's prices, shared out by vCPU-time
+(instances.py); on Fargate, what Fargate charges per job. When the instances can't be looked
+up, a rough per-vCPU estimate instead. Storage, data transfer and logs aren't in it."""
 
 import math
 import re
@@ -46,14 +47,18 @@ def estimate(platform: str, spot: bool, vcpu_hours: float, gib_hours: float) -> 
 
 class Usage:
     def __init__(self):
-        self.rows = defaultdict(lambda: [0, 0.0, 0.0, 0.0])  # rule -> jobs, vCPU-h, GiB-h, USD
+        self.rows = defaultdict(lambda: [0, 0.0, 0.0, 0.0])  # rule -> jobs, vCPU-h, GiB-h, USD (not EC2 instances)
         self.seconds = defaultdict(list)  # rule -> run time of each job that ran
         self.asked = defaultdict(int)  # rule -> most memory a job asked for (MiB)
         self.logs = defaultdict(list)  # rule -> [(log group, stream)] of jobs that succeeded
         self.peaks = defaultdict(list)  # rule -> peak memory of jobs (MiB) read from their logs
         self.sampled = False
+        self.estimated = False  # some EC2 cost is the rough per-vCPU estimate
+        self.rough = defaultdict(float)  # rule -> rough estimate for jobs on known instances
 
-    def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str, spot: bool):
+    def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str, spot: bool,
+            on_known_instance: bool = False):
+        """on_known_instance: an EC2 job whose instances are known, so its cost comes from them."""
         secs = _seconds(d)
         if secs:
             self.seconds[rule].append(secs)
@@ -63,7 +68,13 @@ class Usage:
         row[0] += 1
         row[1] += vcpu * hours
         row[2] += mem_mib / 1024 * hours
-        row[3] += estimate(platform, spot, vcpu * hours, mem_mib / 1024 * hours)
+        rough = estimate(platform, spot, vcpu * hours, mem_mib / 1024 * hours)
+        if platform == "fargate" or not on_known_instance:
+            row[3] += rough
+            if platform != "fargate":
+                self.estimated = True
+        else:
+            self.rough[rule] += rough  # used only if the instances can't be priced
 
     def add_log(self, rule: str, group: str, stream: str):
         self.logs[rule].append((group, stream))
@@ -108,13 +119,19 @@ class Usage:
             out[rule] = max(100, math.ceil((want - overhead_mib) * 1.048576 / 100) * 100)
         return out
 
-    def table(self, overhead_mib: int = 256) -> Optional[str]:
+    def table(self, overhead_mib: int = 256, instance_costs: Optional[dict] = None,
+              instance_line: Optional[str] = None) -> Optional[str]:
         if not self.rows:
             return None
         width = max(10, *(len(r) for r in self.rows))
+        if instance_costs is not None:
+            how = ("cost: the EC2 instances at AWS's prices, shared out by vCPU-time"
+                   + (", partly estimated" if self.estimated else "") + "; without storage or data transfer")
+        else:
+            how = ("cost: rough estimate from the jobs' vCPUs at list prices, without instance idle "
+                   "time, storage or data transfer")
         lines = [
-            "AWS Batch usage of this run (cost: rough estimate at list prices, without instance "
-            "idle time, storage or data transfer):",
+            f"AWS Batch usage of this run ({how}):",
             f"  {'rule':<{width}}  {'jobs':>5}  {'vCPU-h':>8}  {'GiB-h':>8}  {'~USD':>8}"
             f"  {'mem MiB':>8}  {'peak MiB':>8}",
         ]
@@ -122,13 +139,21 @@ class Usage:
             return "<0.01" if 0 < c < 0.005 else f"{c:.2f}"
 
         total = [0, 0.0, 0.0, 0.0]
-        for rule, (n, v, g, c) in sorted(self.rows.items(), key=lambda kv: -kv[1][3]):
+        def cost(rule):
+            if instance_costs is None:
+                return self.rows[rule][3] + self.rough.get(rule, 0.0)
+            return self.rows[rule][3] + instance_costs.get(rule, 0.0)
+
+        for rule, (n, v, g, _c) in sorted(self.rows.items(), key=lambda kv: -cost(kv[0])):
+            c = cost(rule)
             peak = f"{max(self.peaks[rule]):.0f}" if self.peaks.get(rule) else "-"
             lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}  {usd(c):>8}"
                          f"  {self.asked.get(rule, 0):>8}  {peak:>8}")
             total = [total[0] + n, total[1] + v, total[2] + g, total[3] + c]
         if len(self.rows) > 1:
             lines.append(f"  {'total':<{width}}  {total[0]:>5}  {total[1]:>8.2f}  {total[2]:>8.2f}  {usd(total[3]):>8}")
+        if instance_line:
+            lines.append(instance_line)
         if self.peaks:
             note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
             lines.append(f"mem MiB: what the job had (the most for that rule); peak MiB: the most its "

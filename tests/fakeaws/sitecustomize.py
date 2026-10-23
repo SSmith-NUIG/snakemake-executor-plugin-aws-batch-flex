@@ -120,15 +120,19 @@ class FakeBatch:
                 out.append(dict(d, status=j["status"]))
                 continue
             rc = j["p"].poll()
+            q = j["kw"]["jobQueue"]
+            ci = None if "fargate" in q else f"arn:aws:ecs:eu-west-1:1:container-instance/fake-cluster/{'spot' if 'spot' in q else 'od'}"
             if rc is None:
                 d["status"] = "RUNNING"
+                if ci:
+                    d["container"] = {"containerInstanceArn": ci}
             else:
                 d["status"] = "SUCCEEDED" if rc == 0 else "FAILED"
                 j.setdefault("stopped", time.time())
                 d["startedAt"], d["stoppedAt"] = int(j["t"] * 1000), int(j["stopped"] * 1000)
                 j["out"] = j.get("out") or j["p"].stdout.read()
                 if os.environ.get("FAKEAWS_OUT"): open(os.environ["FAKEAWS_OUT"], "a").write(j["out"] + "\n=====\n")
-                d["container"] = {"exitCode": rc, "logStreamName": jid,
+                d["container"] = {"exitCode": rc, "logStreamName": jid, "containerInstanceArn": ci,
                                   "reason": "OutOfMemoryError: Container killed due to memory usage"
                                   if j.get("oom") else "Essential container in task exited"}
             out.append(d)
@@ -166,6 +170,38 @@ class FakeEC2:
     def describe_launch_template_versions(self, **kw):
         return {"LaunchTemplateVersions": []}
 
+    def describe_instances(self, InstanceIds):
+        # both fake instances started 30 minutes before this process and still run
+        launch = _STARTED - __import__("datetime").timedelta(minutes=30)
+        return {"Reservations": [{"Instances": [
+            {"InstanceId": i, "InstanceType": "m6i.large", "LaunchTime": launch, "State": {"Name": "running"},
+             "Placement": {"AvailabilityZone": "eu-west-1a"}, **({"InstanceLifecycle": "spot"} if i == "i-spot" else {})}
+            for i in InstanceIds]}]}
+
+    def describe_spot_price_history(self, **kw):
+        return {"SpotPriceHistory": [{"SpotPrice": "0.0400"}, {"SpotPrice": "0.0300"}]}
+
+
+_STARTED = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+
+
+class FakeECS:
+    """Container instance .../od is EC2 instance i-od (on-demand), .../spot is i-spot."""
+    def describe_container_instances(self, containerInstances, cluster=None):
+        _rec("describe_container_instances", cluster=cluster)
+        return {"containerInstances": [{"containerInstanceArn": a, "ec2InstanceId": "i-" + a.rsplit("/", 1)[-1]}
+                                       for a in containerInstances]}
+
+
+class FakePricing:
+    """m6i.large: 2 vCPUs at $0.107 an hour."""
+    def get_products(self, ServiceCode, Filters, MaxResults):
+        f = {x["Field"]: x["Value"] for x in Filters}
+        assert f["regionCode"] == "eu-west-1" and f["operatingSystem"] == "Linux"
+        item = {"product": {"attributes": {"vcpu": "2"}},
+                "terms": {"OnDemand": {"x": {"priceDimensions": {"y": {"pricePerUnit": {"USD": "0.1070000000"}}}}}}}
+        return {"PriceList": [json.dumps(item)]}
+
 
 class FakeSTS:
     def get_caller_identity(self):
@@ -188,6 +224,8 @@ def client(name, *a, **k):
     if name == "logs": return FakeLogs(_batch)
     if name == "ec2": return FakeEC2()
     if name == "sts": return FakeSTS()
+    if name == "ecs": return FakeECS()
+    if name == "pricing": return FakePricing()
     if name == "iam": return FakeIAM()
     return _real(name, *a, **k)
 boto3.client = client
