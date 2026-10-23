@@ -202,8 +202,14 @@ Snakemake loads that file by itself, on top of the `smkflex` profile, so it's al
 anything this workflow needs (memory, conda, retries, see [Tuning jobs](#tuning-jobs)); the
 `smkflex` profile keeps what's the same for every workflow (your queue, bucket and roles).
 
-`push` and `pull` skip files that are already there with the same size (`--dry-run` only lists
-them) and also take absolute paths (see [Coming from a cluster](#coming-from-a-cluster)).
+`data` is only this example's folder: push whatever files and folders your rules and sample
+sheets name (`smkflex push reads samples.tsv`), and pull whichever outputs you want
+(`smkflex pull results/qc`). `push` and `pull` skip files that are already there with the same
+size (`--dry-run` only lists them) and also take absolute paths (see
+[Coming from a cluster](#coming-from-a-cluster)); paths that go up out of the project folder
+(`../raw`) can't be mapped to storage, so use an absolute path for those. If something you push
+isn't in `.gitignore`, `push` says so, since `smkflex run` would otherwise send it along with
+the workflow.
 `export SNAKEMAKE_PROFILE=smkflex` saves typing `--profile` every time. `examples/conformance/`
 has one small workflow per feature (scripts, conda, checkpoints, Fargate, ...) if you want to
 see more.

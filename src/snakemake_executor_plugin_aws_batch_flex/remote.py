@@ -775,7 +775,22 @@ def cmd_push(a):
         rate = _rate(total, secs)
         print(f"{sent} uploaded to {prefix}" + (f" ({rate})" if rate else "")
               + (f", {skipped} already there (same size; --force sends them again)" if skipped else ""))
+        _hint_gitignore([p for p in a.paths if not os.path.isabs(p)])
     return 0
+
+
+def _hint_gitignore(paths):
+    """Data uploaded with push reaches the jobs through storage; if smkflex run would also
+    pack it with the workflow, say how to leave it out."""
+    if not paths:
+        return
+    sent = set(workflow_files("."))
+    tops = sorted({os.path.normpath(p).split(os.sep)[0] for p in paths
+                   if any(f == os.path.normpath(p) or f.startswith(os.path.normpath(p) + "/") for f in sent)})
+    if tops:
+        lines = "".join(f"{t}/\n" if os.path.isdir(t) else f"{t}\n" for t in tops)
+        print(f"\nNote: smkflex run would also send {', '.join(tops)} with the workflow (it doesn't need to: the "
+              f"jobs read it from storage). To leave it out, add to .gitignore:\n{lines}", end="")
 
 
 def cmd_check(a):

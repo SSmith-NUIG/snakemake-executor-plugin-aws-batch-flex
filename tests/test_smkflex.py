@@ -398,3 +398,15 @@ def test_snakemake_reads_the_profile_init_writes(tmp_path):
         (wf / "profiles" / "default" / "config.yaml").write_text("default-storage-prefix: s3://b/proj\ncores: 1\n")
         r = subprocess.run([sys.executable, "-m", "snakemake", "-n"], cwd=wf, capture_output=True, text=True)
         assert "workflow specific profile profiles/default" in r.stdout + r.stderr, (layout, r.stdout + r.stderr)
+
+
+def test_push_says_when_run_would_send_the_data_too(tmp_path):
+    wf = setup(tmp_path)
+    (wf / "reads").mkdir()
+    (wf / "reads" / "S1.fq").write_text("@r\nACGT\n+\nIIII\n")
+    r, _ = smkflex(wf, "push", "reads")
+    assert r.returncode == 0, r.stderr
+    assert "smkflex run would also send reads" in r.stdout and "reads/" in r.stdout.splitlines()[-1]
+    (wf / ".gitignore").write_text("reads/\n")
+    r, _ = smkflex(wf, "push", "reads", "--force")
+    assert "would also send" not in r.stdout
