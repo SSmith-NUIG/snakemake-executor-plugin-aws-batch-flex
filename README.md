@@ -15,8 +15,9 @@ AWS machines start from, and every job gets read access to it. That's why your c
 need it. On Fargate (AWS's serverless option, no machines to manage) Snakemake is installed into
 the container when the job starts instead.
 
-**How it differs from the official AWS Batch plugin.** Snakemake's own
-[aws-batch plugin](https://github.com/snakemake/snakemake-executor-plugin-aws-batch) runs
+**How it differs from the aws-batch plugin.** The other AWS Batch executor in the Snakemake
+plugin catalog,
+[snakemake-executor-plugin-aws-batch](https://github.com/snakemake/snakemake-executor-plugin-aws-batch), runs
 `snakemake` inside each job's container, so every image a rule uses needs Snakemake and the S3
 storage plugin installed; the usual biocontainers and stock images can't be used as they are.
 This plugin brings Snakemake to the job instead, so each rule can use any image, and conda envs

@@ -784,7 +784,7 @@ class Executor(RemoteExecutor):
         return n
 
     def _spot_retries_for(self, job: JobExecutorInterface) -> int:
-        attempts = job.resources.get("aws_batch_spot_attempts")  # official plugin's name: attempts
+        attempts = job.resources.get("aws_batch_spot_attempts")  # the aws-batch plugin's name: attempts
         if attempts is not None and job.resources.get("batch_spot_retries") is None:
             return self._int_resource(job, ["aws_batch_spot_attempts"], 1, 10, None) - 1
         return self._int_resource(job, ["batch_spot_retries"], 0, 9, self.settings.spot_retries) or 0
@@ -809,7 +809,7 @@ class Executor(RemoteExecutor):
         return priority if self._fair_share[queue] else None
 
     def _shm_for(self, job: JobExecutorInterface, platform: str) -> Optional[int]:
-        # batch_shm_mb, or shared_memory_size_mb as in the official aws-batch plugin
+        # batch_shm_mb, or shared_memory_size_mb as in the aws-batch plugin
         value = job.resources.get("batch_shm_mb") or job.resources.get("shared_memory_size_mb")
         if not value:
             return None
