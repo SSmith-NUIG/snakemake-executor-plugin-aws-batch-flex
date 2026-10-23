@@ -28,7 +28,12 @@ class EC2:
                     "State": {"Name": "running"}, "InstanceLifecycle": "spot",
                     "Placement": {"AvailabilityZone": "eu-west-1b"}},
         }
-        return {"Reservations": [{"Instances": [dict(insts[i], InstanceId=i) for i in InstanceIds]}]}
+        return {"Reservations": [{"Instances": [
+            dict(insts[i], InstanceId=i, BlockDeviceMappings=[{"Ebs": {"VolumeId": "vol-" + i}}])
+            for i in InstanceIds]}]}
+
+    def describe_volumes(self, VolumeIds):
+        return {"Volumes": [{"VolumeId": v, "Size": 100, "VolumeType": "gp3"} for v in VolumeIds]}
 
     def describe_spot_price_history(self, **kw):
         assert kw["AvailabilityZone"] == "eu-west-1b"
@@ -37,6 +42,9 @@ class EC2:
 
 class Pricing:
     def get_products(self, ServiceCode, Filters, MaxResults):
+        if {"Type": "TERM_MATCH", "Field": "productFamily", "Value": "Storage"} in Filters:
+            p = {"terms": {"OnDemand": {"t": {"priceDimensions": {"d": {"pricePerUnit": {"USD": "0.073"}}}}}}}
+            return {"PriceList": [json.dumps(p)]}  # gp3: $0.073 per GB-month -> 100 GiB = $0.01/h
         assert {"Type": "TERM_MATCH", "Field": "instanceType", "Value": "m6i.2xlarge"} in Filters
         p = {"product": {"attributes": {"vcpu": "8"}},
              "terms": {"OnDemand": {"t": {"priceDimensions": {"d": {"pricePerUnit": {"USD": "0.428"}}}}}}}
@@ -56,10 +64,11 @@ def test_instances_are_priced_and_shared_out_by_vcpu_time():
     assert inst.add_job("sort", job(a, 5, 50), 2)
     assert inst.add_job("sort", job(b, 35, 55), 2)
     per_rule, line = inst.costs(Pricing(), now=T0 + datetime.timedelta(minutes=60))
-    # i-a: 1 h on-demand at 0.428 -> align 0.285, sort 0.143; i-b: 0.5 h Spot at 0.12 -> sort 0.06
-    assert round(per_rule["align"], 3) == 0.285 and round(per_rule["sort"], 3) == 0.203
+    # i-a: 1 h on-demand at 0.428 + its 100 GiB disk at 0.01 -> align 0.292, sort 0.146;
+    # i-b: 0.5 h Spot at 0.12 + disk 0.005 -> sort 0.065
+    assert round(per_rule["align"], 3) == 0.292 and round(per_rule["sort"], 3) == 0.211
     assert "1 × m6i.2xlarge (Spot, 30 min in all)" in line and "1 × m6i.2xlarge (on-demand, 60 min in all)" in line
-    assert "~$0.49" in line and "1 still running" in line
+    assert "~$0.50" in line and "(disks included: $0.01)" in line and "1 still running" in line
     # vCPU-time used: 4*45 + 2*45 + 2*20 = 310 vCPU-min of 8*90 = 720 available
     assert "43% of these instances' vCPU-time" in line
 
@@ -68,7 +77,7 @@ def test_run_start_clips_an_instance_started_earlier():
     inst = Instances(ECS(), EC2(), "eu-west-1", started=T0 + datetime.timedelta(minutes=30))
     inst.add_job("x", job("arn:aws:ecs:eu-west-1:1:container-instance/c1/a", 35, 50), 8)
     per_rule, line = inst.costs(Pricing(), now=T0 + datetime.timedelta(minutes=60))
-    assert round(per_rule["x"], 3) == 0.214  # only 12:30-13:00 of i-a counts for this run
+    assert round(per_rule["x"], 3) == 0.219  # only 12:30-13:00 of i-a counts for this run
 
 
 def test_unknown_instance_and_failing_lookups():
@@ -102,3 +111,13 @@ def test_table_uses_instance_costs_or_falls_back():
     t = u.table(256, None, "EC2 cost estimated from the jobs' vCPUs (...)")
     align = next(l for l in t.splitlines() if l.strip().startswith("align")).split()
     assert align[4] == "0.20" and "rough estimate" in t  # 4 vCPU-h at $0.05
+
+
+def test_instance_priced_without_its_disk_when_volumes_are_unknown():
+    class EC2NoVolumes(EC2):
+        def describe_volumes(self, VolumeIds):
+            raise PermissionError("AccessDenied")
+    inst = Instances(ECS(), EC2NoVolumes(), "eu-west-1", started=T0)
+    inst.add_job("x", job("arn:aws:ecs:eu-west-1:1:container-instance/c1/a", 0, 60), 8)
+    per_rule, line = inst.costs(Pricing(), now=T0 + datetime.timedelta(minutes=60))
+    assert round(per_rule["x"], 3) == 0.428 and "(without their disks)" in line

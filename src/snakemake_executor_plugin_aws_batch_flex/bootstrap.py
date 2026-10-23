@@ -17,6 +17,8 @@ set -eu
 SMK_BOOT="${TMPDIR:-/tmp}/.snakemake-batch-bootstrap"
 SMK_NEED=@@NEED@@
 @@CHECK@@
+# the image's own matching Snakemake: still run it through the launcher (cache, usage figures)
+if [ "$SMK_NEED" = 0 ]; then SMK_PY=$(command -v python); fi
 if [ "$SMK_NEED" = 1 ]; then
   echo "[snakemake-batch] bootstrapping Snakemake into $SMK_BOOT" >&2
   mkdir -p "$SMK_BOOT"
@@ -101,9 +103,10 @@ a = sys.argv[1:]
 if a[:2] != ["-m", "snakemake"]:
     os.execv(sys.executable, [sys.executable] + a)
 sys.argv = ["snakemake"] + a[2:]
-_cc, _code = os.environ.get("SMK_FLEX_CONDA_CACHE", "none"), os.environ.get("SMK_FLEX_CONDA_CACHE_CODE")
-if _cc != "none" and _code:
-    # condacache.py, uploaded by the plugin (too long to send with every job)
+_code = os.environ.get("SMK_FLEX_JOB_CODE")
+if _code and "--deploy-sources" not in sys.argv:
+    # the job tools (condacache.py, jobmonitor.py), uploaded by the plugin once per run: too
+    # long to send with every job
     try:
         if _code.startswith("s3://"):
             import boto3
@@ -111,11 +114,15 @@ if _cc != "none" and _code:
             _src = boto3.client("s3").get_object(Bucket=_b, Key=_k)["Body"].read().decode()
         else:
             _src = open(_code).read()
-        _ns = {"__name__": "smkflex_condacache"}
+        _ns = {"__name__": "smkflex_jobtools"}
         exec(_src, _ns)
-        sys.argv = ["snakemake"] + _ns["install"](sys.argv[1:], _cc)
+        _ns["monitor"]()
+        _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
+        if _cc != "none":
+            sys.argv = ["snakemake"] + _ns["install"](sys.argv[1:], _cc)
     except Exception as e:
-        print(f"[snakemake-batch] conda env cache off for this job: {e!r}", file=sys.stderr)
+        print(f"[snakemake-batch] job tools off for this job (conda env cache, usage figures): {e!r}",
+              file=sys.stderr)
 if os.environ.get("SMK_FLEX_SCRIPT_PYTHON") == "host":
     runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
     sys.exit()
@@ -159,6 +166,14 @@ runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
 """
 
 
+def job_tools_source() -> str:
+    """condacache.py and jobmonitor.py as one file, for the launcher to load in the job."""
+    from pathlib import Path
+
+    here = Path(__file__).parent
+    return "\n\n".join((here / name).read_text() for name in ("condacache.py", "jobmonitor.py"))
+
+
 def image_python_snippet() -> str:
     """Point the `python` function at the launcher above (only if the prelude defined one).
     The launcher is sent compressed: ECS allows only 8192 characters of overrides per job."""
@@ -170,29 +185,6 @@ def image_python_snippet() -> str:
         '  python() { "$SMK_PY" "$SMK_WORK/.smk-launch.py" "$@"; }\n'
         "fi\n"
     )
-
-
-def peak_memory_snippet() -> str:
-    """Log the most memory the job's processes used, for the end-of-run table. It's sampled
-    every 2 s from the cgroup's memory.stat: anonymous plus shared memory (v2 anon/shmem, v1
-    rss/shmem), i.e. without file cache, which the kernel frees before it kills anything and
-    which fills up to the limit while e.g. conda unpacks packages. Needs awk; otherwise nothing
-    is logged."""
-    return _compact(r"""
-SMK_MEMSTAT="${SMK_FLEX_MEMSTAT_FILE:-/sys/fs/cgroup/memory.stat}"
-if [ -r "$SMK_MEMSTAT" ] && command -v awk >/dev/null 2>&1; then
-  smk_mem() { awk '$1=="anon"||$1=="rss"||$1=="shmem"{s+=$2} END{print s+0}' "$SMK_MEMSTAT" 2>/dev/null || echo 0; }
-  ( m=0; while :; do n=$(smk_mem); if [ "${n:-0}" -gt "$m" ]; then m=$n; echo "$m" > "$SMK_WORK/.smk-peak"; fi; sleep 2; done ) &
-  SMK_SAMPLER=$!
-  smk_peak() {
-    kill "$SMK_SAMPLER" 2>/dev/null || true
-    p=$(cat "$SMK_WORK/.smk-peak" 2>/dev/null || echo 0); n=$(smk_mem)
-    [ "${n:-0}" -gt "${p:-0}" ] && p=$n
-    echo "[snakemake-batch] peak-memory-bytes=$p" >&2
-  }
-  trap smk_peak EXIT
-fi
-""")
 
 
 def _py_check(snakemake_version: str, package_names: Iterable[str]) -> str:

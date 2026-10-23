@@ -24,7 +24,7 @@ from snakemake_interface_executor_plugins.settings import (
     ExecutorSettingsBase,
 )
 
-from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet, peak_memory_snippet
+from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet, job_tools_source
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, describe_existing, is_ecr
 from .naming import batch_job_name
@@ -635,7 +635,7 @@ class Executor(RemoteExecutor):
             mounts=mounts,
             registry_credentials=registry_credentials,
         )
-        self.conda_cache_code = self._upload_conda_cache_code()
+        self.job_code = self._upload_job_code()
         self.default_image = s.default_image or getattr(
             self.workflow.remote_execution_settings, "container_image", None
         )
@@ -683,11 +683,10 @@ class Executor(RemoteExecutor):
         if not s.no_auto_tags:
             self.logger.info(f"Jobs are tagged snakemake-run-id={self.run_id}")
 
-    def _upload_conda_cache_code(self) -> Optional[str]:
-        """Put condacache.py next to the workflow's files (it's too long to send with every
-        job); the jobs' launcher loads it from there. None turns the cache off."""
-        if self.conda_cache == "none":
-            return None
+    def _upload_job_code(self) -> Optional[str]:
+        """Put the job tools (conda env cache, usage figures) next to the workflow's files: too
+        long to send with every job, the jobs' launcher loads them from there. None: jobs run
+        without them."""
         import hashlib
 
         from . import headjob
@@ -695,15 +694,14 @@ class Executor(RemoteExecutor):
         prefix = str(getattr(self.workflow.storage_settings, "default_storage_prefix", "") or "").rstrip("/")
         if not prefix:
             return None
-        code = (os.path.join(os.path.dirname(__file__), "condacache.py"))
-        with open(code, "rb") as f:
-            data = f.read()
-        url = f"{prefix}/.smkflex/code/condacache-{hashlib.sha256(data).hexdigest()[:12]}.py"
+        data = job_tools_source().encode()
+        url = f"{prefix}/.smkflex/code/jobtools-{hashlib.sha256(data).hexdigest()[:12]}.py"
         try:
             if headjob.get(url) != data:
                 headjob.put(url, data)
         except Exception as e:
-            self.logger.warning(f"conda env cache off: could not upload its code to {url} ({e})")
+            self.logger.warning(f"jobs run without the conda env cache and usage figures: could not "
+                                f"upload their code to {url} ({e})")
             return None
         return url
 
@@ -901,7 +899,6 @@ class Executor(RemoteExecutor):
             if self.settings.conda_path and platform == "ec2" and conda_mount:
                 base += "\n" + conda_snippet(self.settings.conda_path)
             base += "\n" + image_python_snippet()  # SMK_FLEX_SCRIPT_PYTHON decides per job
-            base += peak_memory_snippet()
             self._preludes[key] = base
         return self._preludes[key]
 
@@ -1019,9 +1016,9 @@ class Executor(RemoteExecutor):
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()
                 ]
                 + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}]
-                + ([{"name": "SMK_FLEX_CONDA_CACHE", "value": self.conda_cache},
-                    {"name": "SMK_FLEX_CONDA_CACHE_CODE", "value": self.conda_cache_code}]
-                   if self.conda_cache_code else []),
+                + ([{"name": "SMK_FLEX_JOB_CODE", "value": self.job_code}] if self.job_code else [])
+                + ([{"name": "SMK_FLEX_CONDA_CACHE", "value": self.conda_cache}]
+                   if self.job_code and self.conda_cache != "none" else []),
             },
         )
         spot_retries = self._spot_retries_for(job)

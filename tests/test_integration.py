@@ -427,13 +427,18 @@ def test_peak_memory_in_the_table(tmp_path, monkeypatch):
     stat = tmp_path / "memory.stat"  # every fake job "used" 1 GiB (plus cache, which doesn't count)
     stat.write_text(f"anon {768 * 1024 * 1024}\nfile {3 * 1024 ** 3}\nshmem {256 * 1024 * 1024}\n")
     monkeypatch.setenv("SMK_FLEX_MEMSTAT_FILE", str(stat))
+    cpu = tmp_path / "cpu.stat"  # a CPU counter that doesn't move
+    cpu.write_text("usage_usec 1000000\n")
+    monkeypatch.setenv("SMK_FLEX_CPUSTAT_FILE", str(cpu))
     smk = SNAKEFILE.replace("resources: mem_mb=3000", "resources: mem_mb=8000")
     r, _ = run(tmp_path, smk)
     out = r.stdout + r.stderr
     assert r.returncode == 0, out
     usage = out.split("AWS Batch usage of this run")[1]
     row = next(l for l in usage.splitlines() if l.strip().startswith("make_a "))
-    assert row.split()[-2:] == ["7886", "1024"]  # 8000 MB -> 7630 MiB + 256; peak 1 GiB
+    cols = row.split()
+    # vCPUs 4, busy (from the fake cpu.stat: unchanged, so 0), mem 8000 MB -> 7630 MiB + 256, peak 1 GiB
+    assert cols[5:9] == ["4", "0.0", "7886", "1024"], row
     assert "set-resources:\n  make_a:\n    mem_mb: 1200    # had 7886 MiB, peak 1024" in out
 
 
@@ -442,8 +447,8 @@ def test_conda_cache_is_set_up_for_jobs(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     sub = next(c for c in calls if c["call"] == "submit_job")
     assert sub["env"]["SMK_FLEX_CONDA_CACHE"] == "instance"
-    code = sub["env"]["SMK_FLEX_CONDA_CACHE_CODE"]
-    assert code.startswith(str(tmp_path / "store" / ".smkflex" / "code" / "condacache-"))
+    code = sub["env"]["SMK_FLEX_JOB_CODE"]
+    assert code.startswith(str(tmp_path / "store" / ".smkflex" / "code" / "jobtools-"))
     # (the launcher that turns it on in the job is tested in test_condacache.py: these fake jobs
     # find Snakemake on PATH, so they don't use it)
     jd = next(c for c in calls if c["call"] == "register_job_definition")
@@ -454,7 +459,7 @@ def test_conda_cache_is_set_up_for_jobs(tmp_path):
     r, calls = run(tmp_path / "off", SNAKEFILE, "--aws-batch-flex-conda-cache", "none")
     assert r.returncode == 0, r.stdout + r.stderr
     sub = next(c for c in calls if c["call"] == "submit_job")
-    assert "SMK_FLEX_CONDA_CACHE" not in sub["env"]
+    assert "SMK_FLEX_CONDA_CACHE" not in sub["env"] and "SMK_FLEX_JOB_CODE" in sub["env"]
     r, _ = run(tmp_path / "bad", SNAKEFILE, "--aws-batch-flex-conda-cache", "somewhere")
     assert r.returncode != 0 and "must be none, instance or an s3:// URL" in r.stdout + r.stderr
 

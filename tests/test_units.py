@@ -176,4 +176,4 @@ def test_memory_suggestions():
     import yaml
     block = t[t.index("set-resources:"):]
     assert yaml.safe_load(block)["set-resources"]["tight"] == {"mem_mb": 5100}  # pastes as YAML
-    assert "peak MiB" in t
+    assert "busy" in t and "disk GiB" in t

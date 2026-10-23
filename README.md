@@ -499,26 +499,31 @@ Envs can also be baked into the machine image and used by name (`conda: "rnaseq"
 ### What a run used
 
 At the end of a run the plugin prints what each rule used, from Batch's own start and stop times
-(Spot retries included), what it cost, and how much memory its jobs really needed:
+(Spot retries included), what it cost, and how much memory, CPU and disk its jobs really needed:
 
 ```
 AWS Batch usage of this run (cost: the EC2 instances at AWS's prices, shared out by vCPU-time; without storage or data transfer):
-  rule         jobs    vCPU-h     GiB-h      ~USD   mem MiB  peak MiB
-  star_align      4      0.96      0.32      0.21      4071      1840
-  fastp_pe        4      0.08      0.32      0.02      4071       310
+  rule         jobs    vCPU-h     GiB-h      ~USD  vCPUs   busy   mem MiB    peak  disk GiB
+  star_align      4      0.96      0.32      0.21      8    7.6      4071    1840       3.2
+  fastp_pe        4      0.08      0.32      0.02      4    1.4      4071     310       0.4
   total           8      1.04      0.64      0.23
-EC2: 1 × m6i.2xlarge (on-demand, 32 min in all): ~$0.23 at AWS's prices; the jobs used 24% of these instances' vCPU-time.
+EC2: 1 × m6i.2xlarge (on-demand, 32 min in all): ~$0.23 at AWS's prices (disks included: $0.01); the jobs used 24% of these instances' vCPU-time.
+vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most memory its processes used (without file cache); disk GiB: the most its working folder took. Each the highest of the rule's jobs, sampled every 2 s.
 Memory for each rule (its peak + 30%), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
 set-resources:
   fastp_pe:
     mem_mb: 300     # had 4071 MiB, peak 310
   star_align:
     mem_mb: 2300    # had 4071 MiB, peak 1840
+Threads for rules that never had most of theirs busy (the most in use at once + 25%; a burst shorter than 2 s isn't seen, so check the tool first):
+set-threads:
+  fastp_pe: 2     # had 4, at most 1.4 busy
 ```
 
 - **Cost:** on EC2 you pay for whole instances, so that's what's counted: the plugin notes which
   instances the jobs ran on, how long each ran during the run (idle time included) and its type,
-  and prices it at AWS's on-demand list price or the Spot price of its zone at the time. Each
+  and prices it, with its disk, at AWS's on-demand list price or the Spot price of its zone at
+  the time. Each
   instance's cost is shared out to the rules by their jobs' vCPU-time on it. The `EC2:` line says
   which instances they were and how much of them the jobs used: a low share means jobs left
   instances half empty, often because one rule's memory needs a big instance. Fargate is priced
@@ -528,15 +533,23 @@ set-resources:
   rough estimate from the jobs' vCPUs and says so. AWS Cost Explorer has the exact figures, a day
   later: the instances are tagged `ManagedBy=snakemake-batch-flex`, which you can filter by once
   it's switched on under **Billing** > **Cost allocation tags**.
-- **Memory:** each job samples its processes' memory every 2 seconds (from Linux's cgroup
-  statistics, without file cache, which Linux frees before it kills anything) and logs the most
-  it saw; the plugin reads those lines from the job logs (on runs with more than 300 jobs, from
-  25 per rule). A spike shorter than 2 seconds can be missed, which the retry with more memory
+- **Memory, CPU and disk:** each job samples its container every 2 seconds and logs the most it
+  saw: its processes' memory (from Linux's cgroup statistics, without file cache, which Linux
+  frees before it kills anything), how many vCPUs were busy at once, and how big its working
+  folder (inputs, outputs, conda downloads) got. The plugin reads those lines from the job logs
+  (on runs with more than 300 jobs, from 25 per rule). A spike shorter than 2 seconds can be missed, which the retry with more memory
   covers. For a job that builds its conda environment, that build counts too (often 1-1.5 GB).
   The `set-resources:` block has every rule whose peak is known, at its peak plus 30% (at least
   512 MiB per job): paste it into the project's settings, and the next run neither wastes room
   on the instances nor runs out. On rna-seq-star-deseq2's test data the rules used 0.3-2.7 GB of
   the 4 GB they asked for, and ran fine with the suggestions.
+- **Threads:** rules that asked for 2 or more vCPUs but never had more than 60% of them busy get
+  a `set-threads:` suggestion (the most in use at once plus 25%). Pipelines written for big
+  cluster nodes often ask for more threads than their tools use, and on Batch that means bigger,
+  half-idle instances. A tool that uses its threads only in bursts shorter than 2 seconds can
+  look idle, so check before lowering.
+- **Disk:** a rule whose jobs used more than 20 GiB gets a hint, since on EC2 the jobs on one
+  instance share its disk, and on Fargate a job has 20 GiB unless `disk_mb` asks for more.
 
 Turn the table off with `no-cost-summary`.
 
@@ -889,8 +902,8 @@ The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `Termi
 job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` and
 `ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
 far from yours, and `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
-`ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price the instances a run
-used. `terraform output launcher_policy_json` prints a policy with all of this. The job role needs
+`ec2:DescribeVolumes`, `ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price
+the instances (and their disks) a run used. `terraform output launcher_policy_json` prints a policy with all of this. The job role needs
 read/write on the prefix. For `smkflex`, the head job's role needs the same as the identity running
 `snakemake`, and that identity also needs `iam:PassRole` on the head role (both are in the
 Terraform setup).
@@ -914,7 +927,7 @@ rna-seq-star-deseq2 pipeline on its test data (with `snakemake`, as a `smkflex` 
 up with `snakedeploy`), and the conda env cache on it (per machine: 12 builds instead of 52, 11
 instead of 18-21 minutes; from S3 on a second run: no builds, 7.5 minutes).
 
-Only tested against a fake Batch: private registry
+Only tested against a fake Batch: the CPU and disk figures and disk cost, private registry
 credentials (outside AWS), `--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being
 taken back mid-job.
 

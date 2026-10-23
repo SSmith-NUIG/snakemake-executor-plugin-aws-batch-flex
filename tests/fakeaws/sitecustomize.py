@@ -175,8 +175,12 @@ class FakeEC2:
         launch = _STARTED - __import__("datetime").timedelta(minutes=30)
         return {"Reservations": [{"Instances": [
             {"InstanceId": i, "InstanceType": "m6i.large", "LaunchTime": launch, "State": {"Name": "running"},
+             "BlockDeviceMappings": [{"Ebs": {"VolumeId": "vol-" + i}}],
              "Placement": {"AvailabilityZone": "eu-west-1a"}, **({"InstanceLifecycle": "spot"} if i == "i-spot" else {})}
             for i in InstanceIds]}]}
+
+    def describe_volumes(self, VolumeIds):
+        return {"Volumes": [{"VolumeId": v, "Size": 100, "VolumeType": "gp3"} for v in VolumeIds]}
 
     def describe_spot_price_history(self, **kw):
         return {"SpotPriceHistory": [{"SpotPrice": "0.0400"}, {"SpotPrice": "0.0300"}]}
@@ -197,6 +201,9 @@ class FakePricing:
     """m6i.large: 2 vCPUs at $0.107 an hour."""
     def get_products(self, ServiceCode, Filters, MaxResults):
         f = {x["Field"]: x["Value"] for x in Filters}
+        if f.get("productFamily") == "Storage":
+            item = {"terms": {"OnDemand": {"x": {"priceDimensions": {"y": {"pricePerUnit": {"USD": "0.088"}}}}}}}
+            return {"PriceList": [json.dumps(item)]}
         assert f["regionCode"] == "eu-west-1" and f["operatingSystem"] == "Linux"
         item = {"product": {"attributes": {"vcpu": "2"}},
                 "terms": {"OnDemand": {"x": {"priceDimensions": {"y": {"pricePerUnit": {"USD": "0.1070000000"}}}}}}}

@@ -1,5 +1,5 @@
 """The conda env cache (condacache.py), with a stand-in for Snakemake's Env."""
-import os, threading, time
+import os, re, threading, time
 
 from snakemake_executor_plugin_aws_batch_flex import condacache
 
@@ -102,22 +102,27 @@ def _job(tmp_path, code):
     work.mkdir(exist_ok=True)
     script = (f'set -eu\nSMK_WORK={work}\nSMK_PY={sys.executable}\npython() {{ "$SMK_PY" "$@"; }}\n'
               f'{image_python_snippet()}\ncd {tmp_path}\npython -m snakemake -c1 -q\n')
-    env = dict(os.environ, SMK_FLEX_CONDA_CACHE="instance", SMK_FLEX_CONDA_CACHE_CODE=str(code),
+    env = dict(os.environ, SMK_FLEX_CONDA_CACHE="instance", SMK_FLEX_JOB_CODE=str(code),
                SMK_FLEX_CONDA_ROOT=str(tmp_path / "root"))
     return subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=120)
 
 
-def test_launcher_turns_the_cache_on(tmp_path):
-    code = os.path.join(os.path.dirname(condacache.__file__), "condacache.py")
+def test_launcher_turns_the_job_tools_on(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import job_tools_source
+    code = tmp_path / "jobtools.py"
+    code.write_text(job_tools_source())
     r = _job(tmp_path, code)
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"PREFIX {tmp_path / 'root' / condacache.glibc()}" in r.stdout + r.stderr
+    # and the usage figures, at the end
+    assert re.search(r"\[snakemake-batch\] peak-memory-bytes=\d+ peak-cpus=[\d.]+ avg-cpus=[\d.]+ "
+                     r"peak-disk-bytes=\d+", r.stderr), r.stderr
 
 
 def test_launcher_runs_the_job_without_the_cache_code(tmp_path):
     r = _job(tmp_path, tmp_path / "missing.py")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "conda env cache off for this job" in r.stderr and "PREFIX None" in r.stdout + r.stderr
+    assert "job tools off for this job" in r.stderr and "PREFIX None" in r.stdout + r.stderr
 
 
 def test_install_in_many_jobs_at_once(tmp_path, monkeypatch):

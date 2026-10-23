@@ -278,8 +278,8 @@ data "aws_iam_policy_document" "launcher" {
   statement {
     # optional: lets the plugin price the instances a run used, for the table at the end
     actions = [
-      "ecs:DescribeContainerInstances", "ec2:DescribeInstances", "ec2:DescribeSpotPriceHistory",
-      "pricing:GetProducts",
+      "ecs:DescribeContainerInstances", "ec2:DescribeInstances", "ec2:DescribeVolumes",
+      "ec2:DescribeSpotPriceHistory", "pricing:GetProducts",
     ]
     resources = ["*"]
   }

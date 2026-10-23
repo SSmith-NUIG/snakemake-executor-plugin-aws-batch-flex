@@ -24,12 +24,15 @@ FARGATE_SPOT_FACTOR = 0.3
 SHORT_JOB_SECONDS = 60
 MANY_JOBS = 20
 
-# Peak memory: each job logs it when it ends (bootstrap.peak_memory_snippet). Reading the logs
-# costs an API call per job, so big runs read a sample of each rule's jobs.
-PEAK_RE = re.compile(r"\[snakemake-batch\] peak-memory-bytes=(\d+)")
+# Usage figures: each job logs them when it ends (jobmonitor.py). Reading the logs costs an
+# API call per job, so big runs read a sample of each rule's jobs.
+USAGE_RE = re.compile(r"\[snakemake-batch\] (peak-memory-bytes=\S+.*)")
 PEAK_SAMPLE = 25  # jobs per rule, for runs with more than ALL_PEAKS jobs
 ALL_PEAKS = 300
 HEADROOM = 1.3  # suggested memory = peak * HEADROOM
+THREAD_HEADROOM = 1.25  # suggested threads = most in use at once * THREAD_HEADROOM
+FEW_THREADS = 0.6  # suggest fewer threads when a rule never had more than this share busy
+BIG_DISK_GIB = 20  # say so when a rule's job used more disk than this
 
 
 def _seconds(d: dict) -> float:
@@ -52,6 +55,10 @@ class Usage:
         self.asked = defaultdict(int)  # rule -> most memory a job asked for (MiB)
         self.logs = defaultdict(list)  # rule -> [(log group, stream)] of jobs that succeeded
         self.peaks = defaultdict(list)  # rule -> peak memory of jobs (MiB) read from their logs
+        self.busy = defaultdict(list)  # rule -> most vCPUs in use at once, per job
+        self.disk = defaultdict(list)  # rule -> most disk a job's working folder took (GiB)
+        self.threads = defaultdict(float)  # rule -> most vCPUs a job asked for
+        self.platform = {}  # rule -> ec2 | fargate
         self.sampled = False
         self.estimated = False  # some EC2 cost is the rough per-vCPU estimate
         self.rough = defaultdict(float)  # rule -> rough estimate for jobs on known instances
@@ -64,6 +71,8 @@ class Usage:
             self.seconds[rule].append(secs)
         hours = secs / 3600
         self.asked[rule] = max(self.asked[rule], mem_mib)
+        self.threads[rule] = max(self.threads[rule], vcpu)
+        self.platform[rule] = platform
         row = self.rows[rule]
         row[0] += 1
         row[1] += vcpu * hours
@@ -99,15 +108,24 @@ class Usage:
             except Exception:
                 return rule, None
             for e in reversed(events):
-                m = PEAK_RE.search(e.get("message", ""))
+                m = USAGE_RE.search(e.get("message", ""))
                 if m:
-                    return rule, int(m.group(1)) / 1024 / 1024
+                    return rule, dict(kv.split("=", 1) for kv in m.group(1).split() if "=" in kv)
             return rule, None
 
         with ThreadPoolExecutor(8) as pool:
-            for rule, peak in pool.map(one, todo):
-                if peak:
-                    self.peaks[rule].append(peak)
+            for rule, fields in pool.map(one, todo):
+                if not fields:
+                    continue
+                try:
+                    if int(fields.get("peak-memory-bytes", 0)):
+                        self.peaks[rule].append(int(fields["peak-memory-bytes"]) / 1024 / 1024)
+                    if "peak-cpus" in fields:
+                        self.busy[rule].append(float(fields["peak-cpus"]))
+                    if "peak-disk-bytes" in fields:
+                        self.disk[rule].append(int(fields["peak-disk-bytes"]) / 1024 ** 3)
+                except ValueError:
+                    pass
 
     def suggestions(self, overhead_mib: int) -> dict:
         """rule -> mem_mb that gives its jobs their peak plus headroom (at least 512 MiB in
@@ -117,6 +135,15 @@ class Usage:
             want = max(512, math.ceil(max(peaks) * HEADROOM / 100) * 100)  # container memory, MiB
             # the plugin adds overhead_mib for Snakemake itself; mem_mb is in MB
             out[rule] = max(100, math.ceil((want - overhead_mib) * 1.048576 / 100) * 100)
+        return out
+
+    def thread_suggestions(self) -> dict:
+        """rule -> threads, for rules that never had most of their vCPUs busy at once."""
+        out = {}
+        for rule, busy in self.busy.items():
+            asked, most = self.threads.get(rule, 0), max(busy)
+            if asked >= 2 and most <= asked * FEW_THREADS:
+                out[rule] = max(1, min(int(asked) - 1, math.ceil(most * THREAD_HEADROOM)))
         return out
 
     def table(self, overhead_mib: int = 256, instance_costs: Optional[dict] = None,
@@ -133,7 +160,7 @@ class Usage:
         lines = [
             f"AWS Batch usage of this run ({how}):",
             f"  {'rule':<{width}}  {'jobs':>5}  {'vCPU-h':>8}  {'GiB-h':>8}  {'~USD':>8}"
-            f"  {'mem MiB':>8}  {'peak MiB':>8}",
+            f"  {'vCPUs':>5}  {'busy':>5}  {'mem MiB':>8}  {'peak':>6}  {'disk GiB':>8}",
         ]
         def usd(c):
             return "<0.01" if 0 < c < 0.005 else f"{c:.2f}"
@@ -147,8 +174,11 @@ class Usage:
         for rule, (n, v, g, _c) in sorted(self.rows.items(), key=lambda kv: -cost(kv[0])):
             c = cost(rule)
             peak = f"{max(self.peaks[rule]):.0f}" if self.peaks.get(rule) else "-"
+            busy = f"{max(self.busy[rule]):.1f}" if self.busy.get(rule) else "-"
+            disk = f"{max(self.disk[rule]):.1f}" if self.disk.get(rule) else "-"
+            vcpus = f"{self.threads.get(rule, 0):g}"
             lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}  {usd(c):>8}"
-                         f"  {self.asked.get(rule, 0):>8}  {peak:>8}")
+                         f"  {vcpus:>5}  {busy:>5}  {self.asked.get(rule, 0):>8}  {peak:>6}  {disk:>8}")
             total = [total[0] + n, total[1] + v, total[2] + g, total[3] + c]
         if len(self.rows) > 1:
             lines.append(f"  {'total':<{width}}  {total[0]:>5}  {total[1]:>8.2f}  {total[2]:>8.2f}  {usd(total[3]):>8}")
@@ -156,8 +186,9 @@ class Usage:
             lines.append(instance_line)
         if self.peaks:
             note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
-            lines.append(f"mem MiB: what the job had (the most for that rule); peak MiB: the most its "
-                         f"processes used{note}, sampled every 2 s, without file cache.")
+            lines.append(f"vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most "
+                         f"memory its processes used (without file cache); disk GiB: the most its working "
+                         f"folder took. Each the highest of the rule's jobs{note}, sampled every 2 s.")
         tips = self.suggestions(overhead_mib)
         if tips:
             lines.append("Memory for each rule (its peak + 30%), to paste into the project's "
@@ -167,6 +198,18 @@ class Usage:
                 had = self.asked.get(rule)
                 lines += [f"  {rule}:",
                           f"    mem_mb: {mb:<8}# had {had} MiB, peak {max(self.peaks[rule]):.0f}"]
+        threads = self.thread_suggestions()
+        if threads:
+            lines.append("Threads for rules that never had most of theirs busy (the most in use at once "
+                         "+ 25%; a burst shorter than 2 s isn't seen, so check the tool first):")
+            lines.append("set-threads:")
+            for rule, n in sorted(threads.items()):
+                lines.append(f"  {rule}: {n:<6}# had {self.threads[rule]:g}, at most {max(self.busy[rule]):.1f} busy")
+        for rule, gib in sorted((r, max(d)) for r, d in self.disk.items() if d and max(d) > BIG_DISK_GIB):
+            where = ("Fargate gives a job 20 GiB unless disk_mb asks for more"
+                     if self.platform.get(rule) == "fargate" else
+                     "on EC2 the jobs on an instance share its disk (root_volume_gib in Terraform)")
+            lines.append(f"Hint: {rule}'s jobs used up to {gib:.0f} GiB of disk each; {where}.")
         for rule, secs in sorted(self.seconds.items()):
             if len(secs) >= MANY_JOBS and statistics.median(secs) < SHORT_JOB_SECONDS:
                 lines.append(
