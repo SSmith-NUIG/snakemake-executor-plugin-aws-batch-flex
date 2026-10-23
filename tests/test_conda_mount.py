@@ -20,7 +20,7 @@ def test_conda_script_creates_named_envs_and_is_valid_bash(tmp_path):
 
 def test_snippet_puts_condabin_last_and_redirects_cache():
     s = conda_snippet("/opt/miniforge3")
-    assert 'PATH="$PATH:/opt/miniforge3/condabin"' in s and "CONDA_PKGS_DIRS" in s
+    assert 'PATH="$PATH:/opt/miniforge3/condabin:/opt/miniforge3/smkflex-bin"' in s and "CONDA_PKGS_DIRS" in s
 
 
 @pytest.mark.skipif(not Path(ROOT, "bin/conda").exists(), reason="no conda install for the test")
