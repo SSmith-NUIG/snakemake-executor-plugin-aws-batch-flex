@@ -55,12 +55,17 @@ rule align:
 - Python `script:` rules run with the image's own Python (3.10 or newer), so they can use its
   packages; `batch_script_python="host"` uses Snakemake's instead.
 - `conda:` and `wrapper:` work with `--sdm conda` (conda from the image, or baked into the AMI).
+  Built envs are reused instead of built in every job: by the jobs on the same EC2 machine, or
+  from the bucket for later jobs and runs (`aws-batch-flex-conda-cache`).
 - If `snakemake` is killed, jobs it left running are cancelled when you restart it.
 - Private images: ECR works through the IAM roles; other registries through Secrets Manager
   (`aws-batch-flex-registry-credentials`).
 
-At the end of a run the plugin prints each rule's vCPU-hours, a rough cost, and the peak memory
-its jobs used, with a `set-resources:` block to paste into the project's settings.
+At the end of a run the plugin prints what each rule used and cost. The cost comes from the EC2
+instances the run used (their type, on-demand or Spot price, and disks), shared out by each
+rule's vCPU-time. The table also shows each rule's peak memory, how many vCPUs were busy at once
+and how much disk its jobs took, with `set-resources:` and `set-threads:` blocks to paste into
+the project's settings.
 
 # Published pipelines and long runs
 

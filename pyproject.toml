@@ -1,12 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [project]
 name = "snakemake-executor-plugin-aws-batch-flex"
 version = "0.1.0"
 description = "Snakemake executor plugin for AWS Batch that runs every rule in its own container image"
-readme = "README.md"
+dynamic = ["readme"]
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Stephen Smith" }]
@@ -39,6 +39,17 @@ smkflex = "snakemake_executor_plugin_aws_batch_flex.remote:main"
 
 [project.optional-dependencies]
 test = ["pytest", "snakemake", "snakemake-storage-plugin-fs", "snakemake-storage-plugin-s3"]
+
+# PyPI gives headings no anchors: links within the README go to it on GitHub instead
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\(#'
+replacement = '](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex#'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snakemake_executor_plugin_aws_batch_flex"]
