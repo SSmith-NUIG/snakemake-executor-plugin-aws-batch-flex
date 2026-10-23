@@ -435,7 +435,7 @@ set-resources:
 
 Snakemake features that work as usual (each has a small example in `examples/conformance/`):
 `shell:` commands; `script:` files in Python, R or bash; `run:` blocks; `conda:` environments and
-`wrapper:`s; `retries: 2`, and resources that grow with each attempt, e.g.
+wrappers (`wrapper:`); `retries: 2`, and resources that grow with each attempt, e.g.
 `mem_mb=lambda wildcards, attempt: 4000 * attempt`; `group:` (grouped rules run as one Batch job,
 so they must share an image), `checkpoint`, `temp()`, `directory()`, `shadow:`, `log:` and
 `benchmark:`.
@@ -453,7 +453,7 @@ image as below. `batch_script_python="host"` on a rule (or `aws-batch-flex-scrip
 for all) always uses Snakemake's Python.
 
 **Python packages your Snakefile imports.** Snakemake reads the Snakefile not only where you start
-it but again inside every job, so a package the Snakefile (or a file it `include:`s) imports at
+it but again inside every job, so a package the Snakefile (or a file it includes with `include:`) imports at
 the top, like `import pandas`, is needed in the jobs as well. Many published pipelines do this.
 `setup.sh` puts pandas into the machine image; add others with `--extra-package NAME` when
 setting up, or later with [Updating the machine image](#updating-the-machine-image). Jobs that
@@ -702,7 +702,7 @@ Jobs are tagged automatically with `snakemake-run-id`, `snakemake-workflow`, `sn
 | `smkflex pull PATH...` | Downloads outputs (e.g. `results`, `logs`) from the bucket into the current folder (`--to` for another). |
 | `smkflex run [-- ARGS]` | Runs the workflow as a head job on AWS (see [Long runs](#long-runs-smkflex)); `--git URL` for a repository. |
 | `smkflex logs JOB_ID` | Prints a run's Snakemake output (`--follow` to keep watching). |
-| `smkflex status` | Lists recent `smkflex run`s, with the commit each ran. |
+| `smkflex status` | Lists the recent runs started with `smkflex run`, and the commit each one ran. |
 | `smkflex cancel JOB_ID` | Stops a run; Snakemake cancels its jobs first. |
 | `smkflex check` | Checks the setup: AWS login, queue, roles, bucket, versions. |
 
