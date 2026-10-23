@@ -706,7 +706,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | `mem-overhead-mib` | `256` | Memory added to each job on top of the rule's `mem_mb`, for the Snakemake process that runs in the job. |
 | `oom-memory-factor` | `2` | When a job runs out of memory and Snakemake retries it (`retries:`), the retry gets this many times the memory, and again on each further retry (on Fargate, up to 120 GiB). `1` retries with the same memory. |
 | `spot-retries` | `2` | How many times Batch restarts a job when AWS takes its Spot machine back. `0`: never. |
-| `ephemeral-storage-gib` | *20 GiB, Fargate's own* | Fargate only: disk space for every job, 21-200 GiB. A rule's `disk_mb` can ask for more. (On EC2, jobs share their machine's disk; its size is set in Terraform.) |
+| `ephemeral-storage-gib` | *none: jobs get 20 GiB* | Fargate only: disk space for every job, in GiB: a whole number from 21 to 200, e.g. `50`. Without it, each job has the 20 GiB Fargate always gives. A rule's `disk_mb` can ask for more for its own jobs. (On EC2, jobs share their machine's disk; its size is set in Terraform.) |
 | `assign-public-ip` | `ENABLED` | Fargate only: `ENABLED` gives jobs a public IP address, which they need to reach the internet (images, S3) unless the subnet has a NAT gateway. `DISABLED` for subnets that do. |
 
 **Conda**
