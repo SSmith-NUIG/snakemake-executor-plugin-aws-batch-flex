@@ -35,6 +35,7 @@ from .preflight import ami_snakemake_version, check_queue, check_role, queue_use
 from .sizing import fargate_size
 
 ACTIVE = ("SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING")
+HEAD_IMAGE = "buildpack-deps:bookworm-scm"
 SKIP_DIRS = {".snakemake", ".smkflex", ".git", "__pycache__"}
 
 # Runs in the head job before anything else: fetch and unpack the bundle. Kept small, since
@@ -435,7 +436,8 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
         tags={},
         mounts=mounts,
     )
-    image = a.image or profile.get("aws-batch-flex-default-image") or "debian:12"
+    # Debian 12 with git: Snakemake needs git for pipelines loaded from GitHub (snakedeploy's)
+    image = a.image or HEAD_IMAGE
     jobdef = jobdefs.ensure(image, platform)
     vcpu, mem = str(a.vcpus), a.mem_mb
     if platform == "fargate":
@@ -931,7 +933,7 @@ def main(argv=None):
                    "(default: the folder's or repository's name)")
     r.add_argument("--queue", help="queue for the head job (default: the profile's)")
     r.add_argument("--role", help="IAM role for the head job (default: aws-batch-flex-head-role-arn)")
-    r.add_argument("--image", help="image for the head job (default: the profile's default image)")
+    r.add_argument("--image", help=f"image for the head job (default: {HEAD_IMAGE}, Debian 12 with git)")
     r.add_argument("--vcpus", type=int, default=1)
     r.add_argument("--mem-mb", type=int, default=2048)
     r.add_argument("--max-bundle-mb", type=int, default=100)

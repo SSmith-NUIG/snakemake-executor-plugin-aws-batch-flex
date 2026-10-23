@@ -85,6 +85,13 @@ if [ ! -x "$ROOT/bin/conda" ]; then
   rm -f /tmp/miniforge.sh
 fi
 @ENVS@
+# git for jobs whose image has none: Snakemake needs it for pipelines loaded from GitHub
+# (module ... github(...), what snakedeploy sets up). conda-forge's git brings its own libraries,
+# so it works in any image; smkflex-bin holds only a link to it, for the end of jobs' PATH.
+if [ ! -x "$ROOT/envs/smkflex-git/bin/git" ]; then
+  "$ROOT/bin/conda" create -y -q -p "$ROOT/envs/smkflex-git" -c conda-forge git
+fi
+mkdir -p "$ROOT/smkflex-bin" && ln -sf ../envs/smkflex-git/bin/git "$ROOT/smkflex-bin/git"
 "$ROOT/bin/conda" clean -a -y -q || true
 chmod -R a+rX "$ROOT"
 echo "conda ready at $ROOT"

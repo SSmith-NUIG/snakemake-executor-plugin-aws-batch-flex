@@ -58,6 +58,9 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     store = tmp_path / "store"
     assert (store / "b.txt").read_text() == "A\nB\n"
     head = next(c for c in calls if c["call"] == "submit_job" and c["jobName"] == "smkflex-wf")
+    # the head job's image has git (Snakemake needs it for pipelines loaded from GitHub)
+    jobdefs = {c["name"]: c["image"] for c in calls if c["call"] == "register_job_definition"}
+    assert jobdefs[head["jobdef"]] == "buildpack-deps:bookworm-scm"
     assert head["tags"]["smkflex-workflow"] == "wf"
     assert {"type": "MEMORY", "value": "2048"} in head["res"]
     # the head job removes the uploaded workflow when it's done

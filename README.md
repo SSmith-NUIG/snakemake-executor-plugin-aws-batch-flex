@@ -257,6 +257,11 @@ out of memory once.
 - **A pipeline's own tests** (`.test/` in its repository) are run with `--directory .test`. That
   doesn't work with remote storage, because Snakemake only sends the jobs the code inside the
   folder it starts in. Copy the test config into `config/` instead.
+- **git:** Snakemake keeps a git clone of a pipeline loaded from GitHub, so `git` has to be
+  wherever the Snakefile is read: on your machine, in the `smkflex` head job (its image has it),
+  and in every job. On EC2, jobs whose image has no git use the one in the machine image (made
+  with conda, so images built before this need `scripts/update-ami.sh`); on Fargate, the rules'
+  images need their own.
 - **Private pipeline repositories** need `GITHUB_TOKEN` set where Snakemake runs and in the jobs
   (`--envvars GITHUB_TOKEN`).
 
@@ -364,7 +369,8 @@ returns. Anything after the options goes to Snakemake, e.g. `smkflex run -- --fo
   saved to the bucket at the end of every run and restored at the start of the next, so reruns
   behave as they do on one machine. Runs with the same name (`--name`, default: the folder's
   name) share them, and a second run of a workflow that's still running is refused.
-- The head job uses 1 vCPU and 2 GiB (`--vcpus`, `--mem-mb`) for as long as the workflow runs,
+- The head job runs in `buildpack-deps:bookworm-scm` (Debian 12 with git; `--image` for
+  another) and uses 1 vCPU and 2 GiB (`--vcpus`, `--mem-mb`) for as long as the workflow runs,
   on the profile's queue (`--queue` for another one). Don't use a Spot queue for it.
 - It needs remote storage (`default-storage-prefix`) and the profile setting
   `aws-batch-flex-head-role-arn`; the profile from `setup.sh` has both.
@@ -594,7 +600,8 @@ the normal queue.
 
 **Fargate** runs each job without machines to manage, and bills per job; `setup.sh --fargate`
 creates a Fargate queue. Jobs there install Snakemake when they start (10-15 s), get their scratch
-disk from `disk_mb`, need `conda` in the image for `conda:` rules (the S3 conda cache saves them building envs), and
+disk from `disk_mb`, need `conda` in the image for `conda:` rules (the S3 conda cache saves them building envs) and
+`git` for pipelines loaded from GitHub, and
 are limited to 16 vCPUs and 120 GiB. EC2 and Fargate queues can be mixed in one run with
 `batch_queue`.
 
