@@ -568,19 +568,21 @@ Most of a pipeline carries over unchanged; these are the parts that don't.
 
 **Paths and data.** Your files have to be in the bucket, under the storage prefix (the project's
 folder in the bucket, which `smkflex init` sets up). Relative paths map straight onto it:
-`data/S1.fq` is `s3://BUCKET/snakemake/my-project/data/S1.fq`. Absolute paths do too:
-`/shared/refs/hg38.fa` becomes `s3://BUCKET/snakemake/my-project/shared/refs/hg38.fa`, so a config
-full of cluster paths can stay as it is: `smkflex push` uploads each path to where Snakemake will
-look for it.
+`data/S1.fq` is `s3://BUCKET/snakemake/my-project/data/S1.fq`. Absolute paths do too. Say your
+config points at a reference genome in a shared folder on the cluster, e.g.
+`genome: /shared/refs/hg38.fa` (use whatever paths your config has): that file is looked for at
+`s3://BUCKET/snakemake/my-project/shared/refs/hg38.fa`. So a config full of cluster paths can stay
+as it is, and `smkflex push` uploads each path to where Snakemake will look for it:
 
 ```bash
-smkflex push data             # relative paths, from the project folder
-smkflex push /shared/refs     # absolute ones, e.g. on the cluster itself, where the data is
+smkflex push data             # a relative path, from the project folder
+smkflex push /shared/refs     # an absolute one (your own), e.g. run on the cluster, where the data is
 ```
 
 It sends 16 files at a time (and big files in parallel parts), as fast as `aws s3 sync`, and
-skips files that are already there with the same size, so an interrupted upload just continues. Data that's already in S3, e.g. from a sequencing provider,
-doesn't need copying: in the rule, refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The
+skips files that are already there with the same size, so an interrupted upload just continues.
+
+Data that's already in S3, e.g. from a sequencing provider, doesn't need copying: in the rule, refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The
 job role then needs read access to that bucket, which the Terraform setup doesn't give it (add a
 policy with `s3:GetObject` and `s3:ListBucket` for it to the job role).
 
