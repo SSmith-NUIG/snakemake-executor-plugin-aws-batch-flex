@@ -330,6 +330,11 @@ def test_profile_by_name(tmp_path):
     # the only installed profile for this plugin is used without --profile
     r, _ = smkflex(wf, "check", env_extra={"XDG_CONFIG_HOME": str(cfg_home)})
     assert "(using profile lab" in r.stderr and f"profile {cfg_home}/snakemake/lab" in r.stdout
+    # two of them: say which exist instead of guessing
+    (cfg_home / "snakemake" / "lab2").mkdir()
+    (cfg_home / "snakemake" / "lab2" / "config.yaml").write_text("executor: aws-batch-flex\n")
+    r, _ = smkflex(wf, "check", env_extra={"XDG_CONFIG_HOME": str(cfg_home)})
+    assert "2 profiles for this plugin" in r.stdout + r.stderr and "lab, lab2" in r.stdout + r.stderr
 
 
 def test_plain_folder_follows_its_gitignore(tmp_path):

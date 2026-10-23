@@ -103,6 +103,9 @@ def _only_installed_profile():
     if len(names) == 1:
         print(f"(using profile {names[0]} from {base})", file=sys.stderr)
         return names[0]
+    if names:
+        raise Fail(f"there are {len(names)} profiles for this plugin in {base} ({', '.join(names)}): "
+                   f"say which with --profile {names[0]} (or export SNAKEMAKE_PROFILE={names[0]})")
     return None
 
 
