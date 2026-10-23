@@ -164,7 +164,7 @@ smkflex pull results             # downloads results/ from it
 ```
 
 `push` and `pull` skip files that are already there with the same size (`--dry-run` only lists
-them). `export SNAKEMAKE_PROFILE=smkflex` saves typing `--profile` every time.
+them); both also take absolute paths, see [Coming from a cluster](#coming-from-a-cluster). `export SNAKEMAKE_PROFILE=smkflex` saves typing `--profile` every time.
 The [Snakemake tutorial](https://snakemake.readthedocs.io/en/stable/tutorial/tutorial.html)
 explains rules, wildcards and the rest; everything in it works here, with the differences listed
 under [Limits](#limits).
@@ -562,15 +562,16 @@ Most of a pipeline carries over unchanged; these are the parts that don't.
 folder in the bucket, which `smkflex init` sets up). Relative paths map straight onto it:
 `data/S1.fq` is `s3://BUCKET/snakemake/my-project/data/S1.fq`. Absolute paths do too:
 `/shared/refs/hg38.fa` becomes `s3://BUCKET/snakemake/my-project/shared/refs/hg38.fa`, so a config
-full of cluster paths can stay as it is if the files are uploaded to the same place:
+full of cluster paths can stay as it is: `smkflex push` uploads each path to where Snakemake will
+look for it.
 
 ```bash
-smkflex push data                                   # relative paths, from the project folder
-aws s3 sync /shared/refs s3://BUCKET/snakemake/my-project/shared/refs   # absolute ones
+smkflex push data             # relative paths, from the project folder
+smkflex push /shared/refs     # absolute ones, e.g. on the cluster itself, where the data is
 ```
 
-For large data (hundreds of GB), `aws s3 sync` is the faster tool, and it can be run on the
-cluster itself, where the data is. Data that's already in S3, e.g. from a sequencing provider,
+It sends 16 files at a time (and big files in parallel parts), as fast as `aws s3 sync`, and
+skips files that are already there with the same size, so an interrupted upload just continues. Data that's already in S3, e.g. from a sequencing provider,
 doesn't need copying: in the rule, refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The
 job role then needs read access to that bucket, which the Terraform setup doesn't give it (add a
 policy with `s3:GetObject` and `s3:ListBucket` for it to the job role).

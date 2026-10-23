@@ -296,7 +296,26 @@ def test_push(tmp_path):
     r, _ = smkflex(wf, "push", "data")
     assert "0 uploaded" in r.stdout and "2 already there" in r.stdout
     r, _ = smkflex(wf, "push", "../x")
-    assert r.returncode == 2 and "inside this folder" in r.stderr
+    assert r.returncode == 2 and "outside the workflow folder" in r.stderr
+
+
+def test_push_absolute_paths_and_many_files(tmp_path):
+    # a cluster config's /shared/refs/x is <prefix>/shared/refs/x in storage, as Snakemake maps it
+    wf = setup(tmp_path)
+    refs = tmp_path / "shared" / "refs"
+    refs.mkdir(parents=True)
+    for i in range(40):
+        (refs / f"chr{i}.fa").write_text(f">chr{i}\nACGT\n")
+    r, _ = smkflex(wf, "push", str(refs))
+    assert r.returncode == 0, r.stderr
+    assert "40 uploaded" in r.stdout
+    stored = tmp_path / "store" / str(refs).lstrip("/")
+    assert (stored / "chr7.fa").read_text() == ">chr7\nACGT\n"
+    # pull puts an absolute path under --to (here: the workflow folder), never at the real path
+    (refs / "chr7.fa").unlink()
+    r, _ = smkflex(wf, "pull", str(refs / "chr7.fa"))
+    assert r.returncode == 0, r.stderr
+    assert (wf / str(refs).lstrip("/") / "chr7.fa").exists() and not (refs / "chr7.fa").exists()
 
 
 def test_profile_by_name(tmp_path):

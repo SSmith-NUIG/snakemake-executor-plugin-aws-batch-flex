@@ -592,20 +592,57 @@ def _remote_files(prefix, path, s3):
     return sorted(out)
 
 
+TRANSFER_THREADS = 16  # files at once; big files are also split into parallel parts by boto3
+
+
+def _storage_path(path):
+    """Where Snakemake puts a workflow path in storage, relative to the prefix: as it is, or
+    for an absolute path without its leading /."""
+    norm = os.path.normpath(path)
+    if norm == ".." or norm.startswith(".." + os.sep):
+        raise Fail(f"{path}: Snakemake can't map paths outside the workflow folder to storage; "
+                   "use the path the workflow names (relative, or absolute like /shared/refs)")
+    return norm.lstrip("/") if os.path.isabs(norm) else norm
+
+
+def _transfer(jobs, work, verb):
+    """Run work(item) for every item, TRANSFER_THREADS at a time; prints each as it finishes."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    done = total = 0
+    start = time.time()
+    with ThreadPoolExecutor(TRANSFER_THREADS) as pool:
+        futures = {pool.submit(work, item): item for item in jobs}
+        for f in as_completed(futures):
+            name, size = futures[f][0], futures[f][-1]
+            f.result()  # re-raises the first error
+            done += 1
+            total += size
+            print(f"{verb} {name}")
+    secs = max(time.time() - start, 0.001)
+    return done, total, secs
+
+
+def _rate(total, secs):
+    mb = total / 1e6
+    return f"{mb:.1f} MB in {secs:.0f} s ({mb / secs:.1f} MB/s)" if total else ""
+
+
 def cmd_pull(a):
     _dir, profile = _load_profile(a.profile)
-    prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
+    prefix = str(a.prefix or profile.get("default-storage-prefix") or "").rstrip("/")
     if not prefix:
         raise Fail("no default-storage-prefix in the profile")
     region = profile.get("aws-batch-flex-region")
-    s3 = boto3.client("s3", config=BotoConfig(region_name=region)) if prefix.startswith("s3://") else None
+    s3 = boto3.client("s3", config=BotoConfig(region_name=region, max_pool_connections=TRANSFER_THREADS * 2)) \
+        if prefix.startswith("s3://") else None
     if not a.paths:
         tops = sorted({rel.split("/")[0] for rel, _ in _remote_files(prefix, "", s3)
                        if not rel.startswith((".smkflex/", "snakemake-workflow-sources."))})
         raise Fail("say what to download, e.g. `smkflex pull results`. In storage: " + (", ".join(tops) or "nothing"))
-    got = skipped = 0
+    todo, skipped = [], 0
     for path in a.paths:
-        files = _remote_files(prefix, path, s3)
+        files = _remote_files(prefix, _storage_path(path), s3)
         if not files:
             print(f"nothing in storage under {path}", file=sys.stderr)
         for rel, size in files:
@@ -616,19 +653,23 @@ def cmd_pull(a):
             if a.dry_run:
                 print(f"would download {rel} ({size} bytes)")
                 continue
-            os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-            if s3:
-                bucket, _, base = prefix[len("s3://"):].partition("/")
-                key = f"{base.strip('/')}/{rel}" if base.strip("/") else rel
-                s3.download_file(bucket, key, dest)
-            else:
-                with open(os.path.join(prefix, rel), "rb") as src, open(dest, "wb") as out:
-                    out.write(src.read())
-            print(f"downloaded {rel}")
-            got += 1
+            todo.append((rel, dest, size))
+
+    def get(item):
+        rel, dest, _size = item
+        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+        if s3:
+            bucket, _, base = prefix[len("s3://"):].partition("/")
+            key = f"{base.strip('/')}/{rel}" if base.strip("/") else rel
+            s3.download_file(bucket, key, dest)
+        else:
+            shutil.copyfile(os.path.join(prefix, rel), dest)
+
     if not a.dry_run:
-        print(f"{got} downloaded, {skipped} already here (same size; --force downloads them again)"
-              if skipped else f"{got} downloaded")
+        got, total, secs = _transfer(todo, get, "downloaded")
+        rate = _rate(total, secs)
+        print(f"{got} downloaded" + (f" ({rate})" if rate else "")
+              + (f", {skipped} already here (same size; --force downloads them again)" if skipped else ""))
     return 0
 
 
@@ -681,39 +722,59 @@ def cmd_init(a):
 
 
 def cmd_push(a):
-    """Upload local input files to the same paths under the storage prefix, where the
-    workflow's rules look for them."""
+    """Upload local input files to where the workflow's rules look for them in storage: a
+    relative path to the same path under the prefix, an absolute one (/shared/refs) to
+    prefix/shared/refs, as Snakemake maps them."""
     _dir, profile = _load_profile(a.profile)
     prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
     if a.prefix:
         prefix = a.prefix.rstrip("/")
     if not prefix:
         raise Fail("no default-storage-prefix in the profile")
-    files = added_files(a.paths)
-    s3 = boto3.client("s3", config=BotoConfig(region_name=profile.get("aws-batch-flex-region"))) \
+    files = {}
+    for path in a.paths:
+        target = _storage_path(path)
+        if not os.path.exists(path):
+            raise Fail(f"{path}: no such file or folder")
+        if os.path.isfile(path):
+            files[target] = path
+            continue
+        for d, dirs, names in os.walk(path):
+            dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+            for n in names:
+                local = os.path.join(d, n)
+                files[os.path.normpath(os.path.join(target, os.path.relpath(local, path)))] = local
+    s3 = boto3.client("s3", config=BotoConfig(region_name=profile.get("aws-batch-flex-region"),
+                                              max_pool_connections=TRANSFER_THREADS * 2)) \
         if prefix.startswith("s3://") else None
     there = {}
     for top in {f.split("/")[0] for f in files}:
         there.update(dict(_remote_files(prefix, top, s3)))
-    sent = skipped = 0
+    todo, skipped = [], 0
     for rel, local in sorted(files.items()):
-        if not a.force and there.get(rel) == os.path.getsize(local):
+        size = os.path.getsize(local)
+        if not a.force and there.get(rel) == size:
             skipped += 1
             continue
         if a.dry_run:
-            print(f"would upload {rel} ({os.path.getsize(local)} bytes)")
+            print(f"would upload {rel} ({size} bytes)")
             continue
+        todo.append((rel, local, size))
+
+    def put(item):
+        rel, local, _size = item
         if s3:
             bucket, _, base = prefix[len("s3://"):].partition("/")
             s3.upload_file(local, bucket, f"{base}/{rel}" if base else rel)
         else:
             os.makedirs(os.path.dirname(os.path.join(prefix, rel)), exist_ok=True)
             shutil.copyfile(local, os.path.join(prefix, rel))
-        print(f"uploaded {rel}")
-        sent += 1
+
     if not a.dry_run:
-        print(f"{sent} uploaded to {prefix}" + (f", {skipped} already there (same size; --force sends "
-                                                 "them again)" if skipped else ""))
+        sent, total, secs = _transfer(todo, put, "uploaded")
+        rate = _rate(total, secs)
+        print(f"{sent} uploaded to {prefix}" + (f" ({rate})" if rate else "")
+              + (f", {skipped} already there (same size; --force sends them again)" if skipped else ""))
     return 0
 
 
@@ -869,6 +930,7 @@ def main(argv=None):
     s.add_argument("paths", nargs="*", help="paths as the workflow names them, e.g. results or results/summary.tsv")
     s.add_argument("--profile")
     s.add_argument("--to", default=".", help="folder to download into (default: here)")
+    s.add_argument("--prefix", help="storage prefix to download from (default: the profile's default-storage-prefix)")
     s.add_argument("--dry-run", action="store_true", help="only list what would be downloaded")
     s.add_argument("--force", action="store_true", help="download files that are already here too")
     s = sub.add_parser("init", help="set up this folder as a project: its own folder in the bucket, and a "
@@ -876,7 +938,8 @@ def main(argv=None):
     s.add_argument("--profile")
     s.add_argument("--name", help="the project's folder name in the bucket (default: this folder's name)")
     s = sub.add_parser("push", help="upload input files or folders to the workflow's storage, at the same paths")
-    s.add_argument("paths", nargs="+", help="local paths as the workflow names them, e.g. data or data/reads.fq")
+    s.add_argument("paths", nargs="+", help="local paths as the workflow names them: relative (data, "
+                   "data/reads.fq) or absolute (/shared/refs), as in the config")
     s.add_argument("--profile")
     s.add_argument("--prefix", help="storage prefix to upload to (default: the profile's default-storage-prefix)")
     s.add_argument("--dry-run", action="store_true", help="only list what would be uploaded")
