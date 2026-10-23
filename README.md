@@ -674,6 +674,10 @@ happens once rather than in every job, built envs are reused (`aws-batch-flex-co
   runs, other projects and Fargate jobs unpack it in seconds instead. `setup.sh` puts this line,
   commented out, in the profile. An env is typically 0.1-2 GB, a few cents a month each.
 
+On rna-seq-star-deseq2's test data, a run took 18-21 minutes with every job building its envs,
+11 minutes with the per-machine cache (12 builds instead of 52), and 7.5 minutes on a second run
+with the S3 cache (no builds at all).
+
 An env is only reused for the same definition (the YAML file, its pinned versions, the wrapper
 version) and for images with the same C library version (glibc), which is what conda chooses
 its packages for, so a cached env never differs from one the job would have built. Changing an
@@ -807,12 +811,13 @@ and cost table (with each rule's peak memory and the hint about many short jobs)
 that ran out of memory with more, the whole setup with `scripts/setup.sh` (twice, as a second,
 separate setup in the same account; with conda and pandas in the image, and `smkflex
 init`/`push`/`pull`), and the published rna-seq-star-deseq2 pipeline on its test data (with
-`snakemake`, as a `smkflex` head job, and set up with `snakedeploy`).
+`snakemake`, as a `smkflex` head job, and set up with `snakedeploy`), and the conda env cache on
+it (per machine: 12 builds instead of 52, 11 instead of 18-21 minutes; from S3 on a second run:
+no builds, 7.5 minutes).
 
 Only tested against a fake Batch: private registry credentials (outside AWS),
 `--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being taken back mid-job.
-Tested locally with real conda, not yet on AWS: the conda env cache (reuse on one machine, and
-restoring from the cache on an empty one).
+
 Not tested yet: `notebook:`, Julia, GPU.
 
 ### Limits
