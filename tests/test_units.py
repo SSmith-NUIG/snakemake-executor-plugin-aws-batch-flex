@@ -177,3 +177,27 @@ def test_memory_suggestions():
     block = t[t.index("set-resources:"):]
     assert yaml.safe_load(block)["set-resources"]["tight"] == {"mem_mb": 5100}  # pastes as YAML
     assert "busy" in t and "disk GiB" in t
+
+
+def test_sources_patch_leaves_other_executors_alone(tmp_path, monkeypatch):
+    """Snakemake imports every executor plugin; the get_sources patch only acts for this one."""
+    import types
+
+    import snakemake.api  # noqa: F401  (loads Snakemake in the order its CLI does)
+    from snakemake.dag import DAG
+
+    import snakemake_executor_plugin_aws_batch_flex as plugin
+
+    plugin._skip_remote_module_scripts()  # in case the plugin was imported before Snakemake
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "samples.tsv").write_text("s\n")
+    monkeypatch.setattr(DAG.get_sources, "__wrapped__", lambda self: {"Snakefile"})
+
+    def dag(executor):
+        wf = types.SimpleNamespace(executor_plugin=types.SimpleNamespace(name=executor), rules=[])
+        return types.SimpleNamespace(workflow=wf)
+
+    assert DAG.get_sources(dag("slurm")) == {"Snakefile"}
+    assert DAG.get_sources(dag("aws-batch-flex")) == {"Snakefile", "config/samples.tsv"}

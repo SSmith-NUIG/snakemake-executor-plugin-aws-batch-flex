@@ -376,12 +376,14 @@ common_settings = CommonSettings(
     init_seconds_before_status_checks=10,
 )
 
+PLUGIN_NAME = "aws-batch-flex"
 FARGATE_MAX_DISK_GIB = 200
 CONDA_CACHE_HOST_DIR = "/var/cache/smkflex-conda"
 CONDA_CACHE_JOB_DIR = "/tmp/smkflex-conda"  # condacache.ROOT
 FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
+SHARING_CHECK_SECONDS = 30  # how often to look for other work on this run's instances
 _STATUS_RUNNING = {"SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"}
 
 
@@ -460,6 +462,11 @@ def _skip_remote_module_scripts():
         return
 
     def get_sources(self):
+        # Snakemake imports every installed executor plugin, so this runs for all of them:
+        # leave other executors' runs as they are
+        plugin = getattr(getattr(self, "workflow", None), "executor_plugin", None)
+        if getattr(plugin, "name", None) != PLUGIN_NAME:
+            return get_sources.__wrapped__(self)
         hidden = []
         for rule in getattr(self.workflow, "rules", []):
             base = getattr(rule, "basedir", None)
@@ -470,7 +477,7 @@ def _skip_remote_module_scripts():
                         hidden.append((rule, attr, value))
                         setattr(rule, attr, None)
         try:
-            files = orig(self)
+            files = get_sources.__wrapped__(self)
         finally:
             for rule, attr, value in hidden:
                 setattr(rule, attr, value)
@@ -483,6 +490,7 @@ def _skip_remote_module_scripts():
         return files
 
     get_sources._skips_remote = True
+    get_sources.__wrapped__ = orig
     DAG.get_sources = get_sources
 
 
@@ -655,6 +663,7 @@ class Executor(RemoteExecutor):
         self.usage = Usage()
         self._oom: dict = {}  # job id -> times it ran out of memory
         self._spot: dict = {}  # queue -> runs on Spot
+        self._sharing_checked = 0.0
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
             self._platforms[s.queue] = s.platform or detected or "ec2"
@@ -1088,6 +1097,7 @@ class Executor(RemoteExecutor):
             for d in resp["jobs"]:
                 described[d["jobId"]] = d
 
+        ours = {}  # container instance -> this run's jobs running there
         for jid, info in by_id.items():
             d = described.get(jid)
             if d is None:
@@ -1097,7 +1107,7 @@ class Executor(RemoteExecutor):
                 continue
             status = d["status"]
             if status in ("SUCCEEDED", "FAILED"):
-                self._record_usage(info, d)
+                await asyncio.to_thread(self._record_usage, info, d)
             if status == "SUCCEEDED":
                 self.report_job_success(info)
             elif status == "FAILED":
@@ -1109,10 +1119,15 @@ class Executor(RemoteExecutor):
                 arn = (d.get("container") or {}).get("containerInstanceArn")
                 if arn and arn not in self.instances.ids:
                     await asyncio.to_thread(self.instances.note, arn)
+                if arn and status in ("STARTING", "RUNNING"):
+                    ours[arn] = ours.get(arn, 0) + 1
                 self._warn_if_stuck(d, info)
                 yield info
             else:
                 yield info
+        if ours and time.time() - self._sharing_checked >= SHARING_CHECK_SECONDS:
+            self._sharing_checked = time.time()
+            await asyncio.to_thread(self.instances.check_sharing, ours)
 
     def _record_usage(self, info: SubmittedJobInfo, d: dict):
         queue = info.aux.get("queue")

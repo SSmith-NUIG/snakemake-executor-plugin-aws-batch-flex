@@ -418,3 +418,55 @@ def test_push_says_when_run_would_send_the_data_too(tmp_path):
     (wf / ".gitignore").write_text("reads/\n")
     r, _ = smkflex(wf, "push", "reads", "--force")
     assert "would also send" not in r.stdout
+
+
+def test_logs_and_cancel_take_the_region_from_the_installed_profile(tmp_path, monkeypatch):
+    from snakemake_executor_plugin_aws_batch_flex import remote
+
+    prof = tmp_path / "config" / "snakemake" / "smkflex"
+    prof.mkdir(parents=True)
+    (prof / "config.yaml").write_text("executor: aws-batch-flex\naws-batch-flex-region: eu-west-1\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("SNAKEMAKE_PROFILE", raising=False)
+    monkeypatch.chdir(tmp_path)
+    seen = []
+    monkeypatch.setattr(remote, "_clients", lambda p: seen.append(p.get("aws-batch-flex-region")) or (None, None, None))
+    monkeypatch.setattr(remote, "follow", lambda *a: 0)
+    assert remote.main(["logs", "J1"]) == 0
+    assert remote.main(["logs", "J1", "--region", "us-east-1"]) == 0
+    assert seen == ["eu-west-1", "us-east-1"]
+    # no profile at all: the AWS config's region
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "none"))
+    assert remote.main(["logs", "J1"]) == 0 and seen[-1] is None
+
+
+def test_status_reads_every_page_and_describes_100_at_a_time(tmp_path, monkeypatch, capsys):
+    from snakemake_executor_plugin_aws_batch_flex import remote
+
+    jobs = [{"jobId": f"j{i}", "jobName": f"smkflex-wf{i}", "status": "SUCCEEDED", "createdAt": i * 1000}
+            for i in range(250)]
+
+    class Batch:
+        def list_jobs(self, nextToken=None, **kw):
+            start = int(nextToken or 0)
+            page = {"jobSummaryList": jobs[start:start + 100]}
+            if start + 100 < len(jobs):
+                page["nextToken"] = str(start + 100)
+            return page
+
+        def describe_jobs(self, jobs):
+            assert len(jobs) <= 100
+            return {"jobs": [{"jobId": j, "tags": {"smkflex-commit": "abc"}} for j in jobs]}
+
+    monkeypatch.setattr(remote, "_load_profile", lambda p: ("p", {"aws-batch-flex-queue": "q"}))
+    monkeypatch.setattr(remote, "_clients", lambda p: (Batch(), None, None))
+    assert remote.main(["status", "--limit", "150"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 150 and out[0].startswith("j249 ") and "abc" in out[0]
+
+
+def test_run_refuses_options_nobody_knows(tmp_path):
+    wf = setup(tmp_path)
+    r, calls = smkflex(wf, "run", "--wiat")
+    assert r.returncode == 2 and "--wiat" in r.stderr, r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)

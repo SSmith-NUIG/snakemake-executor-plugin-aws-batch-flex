@@ -31,6 +31,7 @@ from .bootstrap import build_host_prelude, build_prelude, conda_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
 from .naming import batch_job_name
+from .tags import MANAGED_BY
 from .preflight import ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
 from .sizing import fargate_size
 
@@ -347,7 +348,25 @@ def _tag(value):
     return re.sub(r"[^A-Za-z0-9 _.:/=+\-@]", "_", str(value))[:256]
 
 
+def _check_snakemake_args(args):
+    """Fail on options Snakemake doesn't know (a typo in an smkflex option such as --wiat
+    ends up here too), before anything is uploaded or submitted."""
+    try:
+        from snakemake.cli import get_argument_parser
+    except ImportError:
+        return
+    try:
+        _ns, unknown = get_argument_parser().parse_known_args(args)
+    except SystemExit:
+        raise Fail("snakemake can't use these arguments (see above)") from None
+    unknown = [u for u in unknown if u.startswith("-")]
+    if unknown:
+        raise Fail(f"neither smkflex run nor snakemake has the option(s) {' '.join(unknown)} "
+                   "(see smkflex run --help and snakemake --help)")
+
+
 def cmd_run(a, snakemake_args):
+    _check_snakemake_args(snakemake_args)
     tmp = None
     try:
         if a.git:
@@ -453,7 +472,7 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
             "resourceRequirements": [{"type": "VCPU", "value": vcpu}, {"type": "MEMORY", "value": str(mem)}],
             "environment": env,
         },
-        tags={"smkflex-workflow": name[:256], "smkflex-state": state_key, **source},
+        tags={"smkflex-workflow": name[:256], "smkflex-state": state_key, **source, **MANAGED_BY},
         propagateTags=True,
     )
     jid = resp["jobId"]
@@ -521,19 +540,27 @@ def follow(batch, logs, jid, follow_logs):
             time.sleep(5)
 
 
-def cmd_logs(a):
-    _dir, profile = _load_profile(a.profile) if (a.profile or os.path.isdir("profile")) else (None, {})
+def _job_clients(a):
+    """Clients for commands that only need a job ID: the profile (as the other commands find
+    it) for the region, else the AWS config's; --region overrides both."""
+    try:
+        _dir, profile = _load_profile(a.profile)
+    except Fail:
+        if a.profile:
+            raise
+        profile = {}
     if a.region:
         profile["aws-batch-flex-region"] = a.region
-    batch, logs, _r = _clients(profile)
+    return _clients(profile)
+
+
+def cmd_logs(a):
+    batch, logs, _r = _job_clients(a)
     return follow(batch, logs, a.job_id, a.follow)
 
 
 def cmd_cancel(a):
-    _dir, profile = _load_profile(a.profile) if (a.profile or os.path.isdir("profile")) else (None, {})
-    if a.region:
-        profile["aws-batch-flex-region"] = a.region
-    batch, _logs, _r = _clients(profile)
+    batch, _logs, _r = _job_clients(a)
     jobs = batch.describe_jobs(jobs=[a.job_id])["jobs"]
     if not jobs:
         raise Fail(f"no job {a.job_id}")
@@ -554,13 +581,25 @@ def cmd_status(a):
     _dir, profile = _load_profile(a.profile)
     batch, _logs, _r = _clients(profile)
     queue = a.queue or profile.get("aws-batch-flex-queue")
-    resp = batch.list_jobs(jobQueue=queue, filters=[{"name": "JOB_NAME", "values": ["smkflex-*"]}])
-    rows = sorted(resp.get("jobSummaryList", []), key=lambda j: j.get("createdAt", 0), reverse=True)[:a.limit]
+    rows, token = [], None
+    while True:
+        kw = dict(jobQueue=queue, filters=[{"name": "JOB_NAME", "values": ["smkflex-*"]}])
+        if token:
+            kw["nextToken"] = token
+        resp = batch.list_jobs(**kw)
+        rows += resp.get("jobSummaryList", [])
+        token = resp.get("nextToken")
+        if not token:
+            break
+    rows = sorted(rows, key=lambda j: j.get("createdAt", 0), reverse=True)[:a.limit]
     if not rows:
         print(f"no smkflex runs in queue {queue}")
         return 0
-    # the summaries have no tags; the commit is on the job itself
-    tags = {d["jobId"]: d.get("tags") or {} for d in batch.describe_jobs(jobs=[j["jobId"] for j in rows])["jobs"]}
+    # the summaries have no tags; the commit is on the job itself (describe_jobs: 100 at a time)
+    tags = {}
+    for i in range(0, len(rows), 100):
+        for d in batch.describe_jobs(jobs=[j["jobId"] for j in rows[i:i + 100]])["jobs"]:
+            tags[d["jobId"]] = d.get("tags") or {}
     for j in rows:
         when = datetime.fromtimestamp(j.get("createdAt", 0) / 1000).strftime("%Y-%m-%d %H:%M")
         t = tags.get(j["jobId"], {})

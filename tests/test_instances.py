@@ -121,3 +121,37 @@ def test_instance_priced_without_its_disk_when_volumes_are_unknown():
     inst.add_job("x", job("arn:aws:ecs:eu-west-1:1:container-instance/c1/a", 0, 60), 8)
     per_rule, line = inst.costs(Pricing(), now=T0 + datetime.timedelta(minutes=60))
     assert round(per_rule["x"], 3) == 0.428 and "(without their disks)" in line
+
+
+def test_instance_shared_with_other_work_is_charged_by_this_runs_vcpu_time():
+    class ECSBusy(ECS):
+        def describe_container_instances(self, containerInstances, cluster=None):
+            r = super().describe_container_instances(containerInstances, cluster)
+            for ci, arn in zip(r["containerInstances"], containerInstances):
+                ci.update(containerInstanceArn=arn, runningTasksCount=3)  # 1 of ours + 2 others
+            return r
+
+    inst = Instances(ECSBusy(), EC2(), "eu-west-1", started=T0)
+    arn = "arn:aws:ecs:eu-west-1:1:container-instance/c1/a"
+    inst.note(arn)
+    inst.check_sharing({arn: 1})
+    assert inst.shared == {"i-a"}
+    inst.add_job("x", job(arn, 0, 60), 2)  # 2 of the 8 vCPUs for the hour: a quarter
+    per_rule, line = inst.costs(Pricing(), now=T0 + datetime.timedelta(minutes=60))
+    assert round(per_rule["x"], 4) == round((0.428 + 0.01) / 4, 4)
+    assert "1 of them also ran other work" in line and "the jobs used" not in line
+
+
+def test_instance_running_only_this_runs_jobs_is_not_shared():
+    class ECSOurs(ECS):
+        def describe_container_instances(self, containerInstances, cluster=None):
+            r = super().describe_container_instances(containerInstances, cluster)
+            for ci, arn in zip(r["containerInstances"], containerInstances):
+                ci.update(containerInstanceArn=arn, runningTasksCount=2)
+            return r
+
+    inst = Instances(ECSOurs(), EC2(), "eu-west-1", started=T0)
+    arn = "arn:aws:ecs:eu-west-1:1:container-instance/c1/a"
+    inst.note(arn)
+    inst.check_sharing({arn: 2})
+    assert not inst.shared

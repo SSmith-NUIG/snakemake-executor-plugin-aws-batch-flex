@@ -2,7 +2,9 @@
 they ran (from the run's start, or theirs, until they stopped or the run ended), priced at
 AWS's on-demand list price or the Spot price history of their zone, plus their disks (EBS
 volumes, noted while the instance exists, since they go with it). Each instance's cost is
-shared out to the rules by their jobs' vCPU-time on it, idle time included.
+shared out to the rules by their jobs' vCPU-time on it, idle time included. An instance that
+also ran other work (another run, a head job) is charged only for this run's share of its
+vCPU-time, idle time not included.
 
 Best effort: whatever can't be found out (no permission, an instance EC2 no longer knows) is
 left to the rough per-job estimate in costs.py."""
@@ -11,7 +13,6 @@ import datetime
 import json
 import re
 from collections import defaultdict
-from typing import Optional
 
 _STOPPED_AT = re.compile(r"\((\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) GMT\)")
 
@@ -39,6 +40,7 @@ class Instances:
         self.ids = {}  # container instance ARN -> EC2 instance id (None: couldn't find out)
         self.volumes = {}  # EC2 instance id -> [(GiB, volume type)], or None if unknown
         self.vcpu_seconds = defaultdict(lambda: defaultdict(float))  # instance -> rule -> vCPU-s
+        self.shared = set()  # instances seen running containers that aren't this run's jobs
         self.problem = None
 
     def note(self, arn):
@@ -69,6 +71,25 @@ class Instances:
                     self.volumes[iid] = [(v["Size"], v.get("VolumeType", "gp3")) for v in vols]
             except Exception:
                 pass  # priced without its disk
+
+    def check_sharing(self, ours):
+        """ours: {container instance ARN: how many of this run's jobs are running there}. An
+        instance running more containers than that also runs other work."""
+        by_cluster = defaultdict(list)
+        for arn in ours:
+            if self.ids.get(arn) and self.ids[arn] not in self.shared and "/" in arn:
+                by_cluster[arn.split(":container-instance/", 1)[-1].split("/")[0]].append(arn)
+        for cluster, arns in by_cluster.items():
+            for i in range(0, len(arns), 100):
+                try:
+                    found = self.ecs.describe_container_instances(
+                        cluster=cluster, containerInstances=arns[i:i + 100]).get("containerInstances") or []
+                except Exception:
+                    return  # best effort
+                for ci in found:
+                    arn = ci.get("containerInstanceArn")
+                    if arn in ours and ci.get("runningTasksCount", 0) > ours[arn]:
+                        self.shared.add(self.ids[arn])
 
     def add_job(self, rule, d, vcpu):
         """Count a finished job's vCPU-time on the instances it ran on (every attempt). False
@@ -177,6 +198,10 @@ class Instances:
                 except Exception as e:
                     return None, _why(e, "ec2:DescribeSpotPriceHistory")
             cost = hourly * hours
+            total = sum(rules.values())
+            # shared with other work: only this run's part of its vCPU-time
+            share = min(1.0, total / (vcpus * hours * 3600)) if iid in self.shared and vcpus and hours else 1.0
+            cost *= share
             vols = self.volumes.get(iid)
             if vols is None:
                 disks_known = False
@@ -185,26 +210,29 @@ class Instances:
                     try:
                         if vtype not in disk_prices:
                             disk_prices[vtype] = self._volume_price(pricing, vtype)
-                        extra = gib * disk_prices[vtype] / 730 * hours  # per GB-month, 730 h a month
+                        extra = gib * disk_prices[vtype] / 730 * hours * share  # per GB-month, 730 h a month
                         cost += extra
                         disk_usd += extra
                     except Exception:
                         disks_known = False
-            total = sum(rules.values())
             for rule, secs in rules.items():
                 per_rule[rule] += cost * secs / total if total else 0
             g = groups[(itype, "Spot" if spot else "on-demand")]
             g[0] += 1
             g[1] += hours * 60
             g[2] += cost
-            used += total
-            available += vcpus * hours * 3600
+            if iid not in self.shared:
+                used += total
+                available += vcpus * hours * 3600
         parts = [f"{n} × {t} ({kind}, {mins:.0f} min in all)" for (t, kind), (n, mins, _c) in sorted(groups.items())]
         total_usd = sum(g[2] for g in groups.values())
         usd = "<$0.01" if 0 < total_usd < 0.005 else f"~${total_usd:.2f}"
         disks = (f" (disks included: ${disk_usd:.2f})" if disks_known and disk_usd >= 0.005 else
                  " (disks included)" if disks_known else " (without their disks)")
+        shared = len(self.shared & set(self.vcpu_seconds))
         line = (f"EC2: {', '.join(parts)}: {usd} at AWS's prices{disks}"
                 + (f"; the jobs used {used / available:.0%} of these instances' vCPU-time" if available else "")
+                + (f"; {shared} of them also ran other work, so only this run's vCPU-time on "
+                   f"{'it' if shared == 1 else 'them'} is counted" if shared else "")
                 + (f" ({running} still running, counted until now)" if running else "") + ".")
         return dict(per_rule), line
