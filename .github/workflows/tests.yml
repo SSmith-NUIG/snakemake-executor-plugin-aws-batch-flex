@@ -6,23 +6,41 @@ on:
   pull_request:
     paths-ignore: ["**.md", "docs/**", "terraform/**", "LICENSE"]
   workflow_dispatch:
+  workflow_call:  # publish.yml runs the tests before it uploads anything
+    inputs:
+      full:
+        description: "every Python version and the newest Snakemake too"
+        type: boolean
+        default: true
   schedule:
     - cron: "0 6 * * 1"   # weekly, to catch new Snakemake releases
 
 jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff && ruff check src tests
+
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # pushes test the version baked into the AMI; the weekly/manual runs also test the newest
-        snakemake: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["9.27.0", "latest"]' || '["9.27.0"]') }}
+        # Pushes: Python 3.12 and the Snakemake baked into the AMI. Weekly, manual and
+        # before publishing: every Python version the plugin supports, and the newest Snakemake.
+        python: ${{ fromJSON((inputs.full || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["3.11", "3.12", "3.13"]' || '["3.12"]') }}
+        snakemake: ${{ fromJSON((inputs.full || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["9.27.0", "latest"]' || '["9.27.0"]') }}
+    name: test (Python ${{ matrix.python }}, Snakemake ${{ matrix.snakemake }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Install R (for the R script test)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends r-base-core
       - name: Install

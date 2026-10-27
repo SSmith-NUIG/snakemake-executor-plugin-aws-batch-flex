@@ -127,7 +127,7 @@ def test_instance_shared_with_other_work_is_charged_by_this_runs_vcpu_time():
     class ECSBusy(ECS):
         def describe_container_instances(self, containerInstances, cluster=None):
             r = super().describe_container_instances(containerInstances, cluster)
-            for ci, arn in zip(r["containerInstances"], containerInstances):
+            for ci, arn in zip(r["containerInstances"], containerInstances, strict=True):
                 ci.update(containerInstanceArn=arn, runningTasksCount=3)  # 1 of ours + 2 others
             return r
 
@@ -146,7 +146,7 @@ def test_instance_running_only_this_runs_jobs_is_not_shared():
     class ECSOurs(ECS):
         def describe_container_instances(self, containerInstances, cluster=None):
             r = super().describe_container_instances(containerInstances, cluster)
-            for ci, arn in zip(r["containerInstances"], containerInstances):
+            for ci, arn in zip(r["containerInstances"], containerInstances, strict=True):
                 ci.update(containerInstanceArn=arn, runningTasksCount=2)
             return r
 

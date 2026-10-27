@@ -274,9 +274,9 @@ def _git(*args, cwd=None):
     try:
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
     except FileNotFoundError:
-        raise Fail("git isn't installed here; it's needed for --git")
+        raise Fail("git isn't installed here; it's needed for --git") from None
     except subprocess.CalledProcessError as e:
-        raise Fail(f"git {' '.join(args[:2])} failed: {(e.stderr or e.stdout).strip()}")
+        raise Fail(f"git {' '.join(args[:2])} failed: {(e.stderr or e.stdout).strip()}") from None
 
 
 def clone(url, rev, dest):
@@ -293,7 +293,7 @@ def clone(url, rev, dest):
         try:
             _git("checkout", "--quiet", rev, cwd=dest)
         except Fail:
-            raise Fail(f"{url} has no branch, tag or commit '{rev}'")
+            raise Fail(f"{url} has no branch, tag or commit '{rev}'") from None
         _git("submodule", "update", "--quiet", "--init", "--recursive", cwd=dest)
     return _git("rev-parse", "HEAD", cwd=dest)
 

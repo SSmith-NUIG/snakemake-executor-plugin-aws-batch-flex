@@ -2,6 +2,7 @@ name: publish
 
 # Manual run (Actions tab > publish > Run workflow): build and upload to TestPyPI.
 # Pushing a tag like v0.1.0: build and upload to PyPI.
+# Either way the lint and tests (tests.yml) run first, and nothing is uploaded unless they pass.
 # Both use PyPI trusted publishing (no tokens): register this workflow as a trusted publisher on
 # pypi.org and test.pypi.org, with environments "pypi" and "testpypi".
 on:
@@ -10,7 +11,11 @@ on:
     tags: ["v*"]
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   build:
+    needs: tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

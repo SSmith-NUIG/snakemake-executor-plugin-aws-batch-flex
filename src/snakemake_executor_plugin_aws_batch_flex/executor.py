@@ -274,7 +274,7 @@ class Executor(RemoteExecutor):
             if not low <= n <= high:
                 raise ValueError
         except (TypeError, ValueError):
-            raise WorkflowError(f"{job.name}: {name} must be a whole number from {low} to {high}, got {value!r}.")
+            raise WorkflowError(f"{job.name}: {name} must be a whole number from {low} to {high}, got {value!r}.") from None
         return n
 
     def _spot_retries_for(self, job: JobExecutorInterface) -> int:
@@ -312,7 +312,7 @@ class Executor(RemoteExecutor):
             if shm <= 0:
                 raise ValueError
         except (TypeError, ValueError):
-            raise WorkflowError(f"{job.name}: batch_shm_mb must be a positive number of MiB, got {value!r}.")
+            raise WorkflowError(f"{job.name}: batch_shm_mb must be a positive number of MiB, got {value!r}.") from None
         if platform == "fargate":
             if not self._warned_fargate_shm:
                 self._warned_fargate_shm = True
@@ -352,7 +352,7 @@ class Executor(RemoteExecutor):
         try:
             gib = math.ceil(int(job.resources.get("disk_mib") or value) / 1024)
         except (TypeError, ValueError):
-            raise WorkflowError(f"{job.name}: disk_mb must be a number of MB, got {value!r}.")
+            raise WorkflowError(f"{job.name}: disk_mb must be a number of MB, got {value!r}.") from None
         if gib <= 20:  # Fargate's default; 21 is the smallest size that can be set
             return None
         if gib > FARGATE_MAX_DISK_GIB:
@@ -531,7 +531,7 @@ class Executor(RemoteExecutor):
             resp = self.batch.submit_job(**kwargs)
         except (ClientError, BotoCoreError) as e:
             hint = f"\n{SUBMIT_HINT}" if "AccessDenied" in str(e) or "not authorized" in str(e) else ""
-            raise WorkflowError(f"AWS Batch submit_job failed: {e}{hint}")
+            raise WorkflowError(f"AWS Batch submit_job failed: {e}{hint}") from e
 
         self.logger.info(
             f"Submitted {job.name} as AWS Batch job {resp['jobId']} "

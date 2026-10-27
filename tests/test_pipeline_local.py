@@ -1,7 +1,6 @@
 """pipeline.smk through the plugin + fake Batch (container: ignored locally, tools from the machine).
 Skipped unless bwa/samtools/bcftools/fastp are installed."""
 import shutil
-from pathlib import Path
 import pytest
 from test_conformance import run_conf
 

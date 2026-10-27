@@ -1,5 +1,5 @@
 """script: rules run with the image's python when it is new enough (see bootstrap._LAUNCHER)."""
-import os, shutil, subprocess, sys, textwrap
+import os, subprocess, sys, textwrap
 from pathlib import Path
 import pytest
 from snakemake_executor_plugin_aws_batch_flex.bootstrap import image_python_snippet

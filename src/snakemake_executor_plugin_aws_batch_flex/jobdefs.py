@@ -157,7 +157,7 @@ class JobDefinitions:
                 kwargs["tags"] = {**self.tags, **MANAGED_BY}
                 self.batch.register_job_definition(**kwargs)
         except ClientError as e:
-            raise WorkflowError(f"Could not register AWS Batch job definition: {e}")
+            raise WorkflowError(f"Could not register AWS Batch job definition: {e}") from e
         self._cache[key] = name
         return name
 
@@ -189,7 +189,7 @@ def describe_existing(batch, ref: str) -> ExistingJobDefinition:
                 if not token:
                     break
     except ClientError as e:
-        raise WorkflowError(f"Could not look up AWS Batch job definition '{ref}': {e}")
+        raise WorkflowError(f"Could not look up AWS Batch job definition '{ref}': {e}") from e
     found = [d for d in found if d.get("status", "ACTIVE") == "ACTIVE"]
     if not found:
         raise WorkflowError(f"AWS Batch job definition '{ref}' not found (or not ACTIVE).")
