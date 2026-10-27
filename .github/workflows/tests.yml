@@ -49,4 +49,4 @@ jobs:
           if [ "${{ matrix.snakemake }}" != latest ]; then pip install "snakemake==${{ matrix.snakemake }}"; else pip install -U snakemake; fi
           snakemake --version
       - name: Test
-        run: python -m pytest -q -ra
+        run: python -m pytest -q -ra -n auto  # in parallel, one test per CPU

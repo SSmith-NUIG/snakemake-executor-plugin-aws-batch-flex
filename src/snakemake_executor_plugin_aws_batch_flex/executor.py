@@ -26,7 +26,7 @@ from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
 from .patches import keep_unneeded_temp, recheck_s3_directories
 from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, describe_queue, queue_uses_spot, version_note
-from .settings import ExecutorSettings, host_mounts, normalized
+from .settings import TEST_STATUS_SECONDS, ExecutorSettings, host_mounts, normalized
 from .sizing import fargate_size, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
 
@@ -47,6 +47,8 @@ def _out_of_memory(d: dict) -> bool:
 class Executor(RemoteExecutor):
     def __post_init__(self):
         s: ExecutorSettings = normalized(self.workflow.executor_settings)
+        if TEST_STATUS_SECONDS:
+            self.next_seconds_between_status_checks = int(TEST_STATUS_SECONDS)
         if s.platform not in (None, "ec2", "fargate"):
             raise WorkflowError("--aws-batch-flex-platform must be 'ec2' or 'fargate'.")
         if s.script_python not in (None, "image", "host"):
