@@ -32,6 +32,7 @@ dependencies = [
 Homepage = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex"
 Documentation = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex#getting-started"
 Issues = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/issues"
+Changelog = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/blob/main/CHANGELOG.md"
 
 [project.scripts]
 snakemake-batch-flex-host-env = "snakemake_executor_plugin_aws_batch_flex.hostenv:main"
