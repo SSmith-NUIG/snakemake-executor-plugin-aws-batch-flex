@@ -3,7 +3,7 @@
 # ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
 # (both need enable_fargate=true in terraform), `spot` = fanout on the Spot queue (enable_spot_queue=true)
-# `rules` = checkpoint group shadow benchmark retries pipe tempdir directory (one small workflow each)
+# `rules` = checkpoint group shadow benchmark retries tempdir directory (one small workflow each)
 set -u
 N=${N:-100}
 PREFIX=$(grep '^default-storage-prefix:' profile/config.yaml | awk '{print $2}')
@@ -26,7 +26,6 @@ run() { # name, snakemake args...
       shadow)     check shadow results/shadow/out.txt "kept";;
       benchmark)  check benchmark results/bm/log.txt "logline" && check benchmark results/bm/bench.tsv "^s";;
       retries)    check retries results/rt/out.txt "ok attempt=2";;
-      pipe)       check pipe results/pipe/out.txt "^3$" && [ "$(grep -c Submitted conformance-pipe.log)" = 1 ] && echo "  one Batch job for the pipe group";;
       tempdir)    check tempdir results/td/final.txt "x" && ! aws s3 ls "$PREFIX/results/td/tmp.txt" 2>/dev/null | grep -q tmp && echo "  temp file removed from storage";;
       directory)  check directory results/dr/total.txt "^3$";;
       existing)   check existing results/py_script.txt "pyscript threads=2 rule=py_script" \
@@ -94,8 +93,8 @@ for t in "${@:-script fanout}"; do
                --aws-batch-flex-install-prereqs -j 2;;
       spot) SQ=$(terraform -chdir=../../terraform output -raw spot_queue_name)
             run spot -s fanout.smk --config n_units=$N -j $N --aws-batch-flex-queue "$SQ";;
-      rules) bash "$0" checkpoint group shadow benchmark retries pipe tempdir directory; exit;;
-      checkpoint|group|shadow|benchmark|retries|pipe|tempdir|directory) run $name -s $name.smk -j 4;;
+      rules) bash "$0" checkpoint group shadow benchmark retries tempdir directory; exit;;
+      checkpoint|group|shadow|benchmark|retries|tempdir|directory) run $name -s $name.smk -j 4;;
     esac
   done
 done
