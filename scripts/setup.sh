@@ -127,12 +127,12 @@ if [ "$(cd "$TF_DIR" && pwd)" != "$HERE/terraform" ]; then
 fi
 if [ -f "$TFV" ]; then
   # keep what's there, but record the image and the switches given now
-  sed -i "s/^ami_id *=.*/ami_id = \"$AMI\"/" "$TFV"
+  sed -i.bak "s/^ami_id *=.*/ami_id = \"$AMI\"/" "$TFV" && rm -f "$TFV.bak"  # -i.bak: GNU and macOS sed
   grep -q '^ami_id' "$TFV" || echo "ami_id = \"$AMI\"" >> "$TFV"
   for kv in "enable_fargate=$FARGATE" "enable_spot_queue=$SPOT"; do
     k=${kv%%=*}; v=${kv#*=}
     if [ "$v" = true ]; then
-      if grep -q "^$k" "$TFV"; then sed -i "s/^$k *=.*/$k = true/" "$TFV"; else echo "$k = true" >> "$TFV"; fi
+      if grep -q "^$k" "$TFV"; then sed -i.bak "s/^$k *=.*/$k = true/" "$TFV" && rm -f "$TFV.bak"; else echo "$k = true" >> "$TFV"; fi
     fi
   done
 else

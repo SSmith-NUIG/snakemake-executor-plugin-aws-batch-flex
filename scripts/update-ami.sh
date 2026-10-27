@@ -12,7 +12,7 @@ OUT=$(bash scripts/bake-ami.sh --base-ami "$CUR" "$@" | tee /dev/stderr)
 NEW=$(echo "$OUT" | sed -n 's/^DONE\. New standalone AMI: \(ami-[^ ]*\).*/\1/p')
 [ -n "$NEW" ] || { echo "bake did not finish; tfvars unchanged" >&2; exit 1; }
 cp "$TF" "$TF.bak-$(date +%s)"
-sed -i "s/^ami_id *=.*/ami_id = \"$NEW\"/" "$TF"
+sed -i.bak "s/^ami_id *=.*/ami_id = \"$NEW\"/" "$TF" && rm -f "$TF.bak"  # -i.bak: GNU and macOS sed
 echo; echo "ami_id is now $NEW (backup kept). Plan:"
 (cd terraform && terraform plan -no-color | grep -E '^  # |^Plan:|^No changes' || true)
 echo; echo "If it only changes the compute environment and launch template: cd terraform && terraform apply"
