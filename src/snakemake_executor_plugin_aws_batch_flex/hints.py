@@ -41,6 +41,14 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
             "volume, a queue with bigger disks for this rule (batch_queue), or fewer jobs per "
             "instance. On Fargate, raise the rule's disk_mb (up to 200 GiB)."
         )
+    if re.search(r"SyntaxError: .*in file /bin/sh\b", text):
+        hints.append(
+            "  hint: the image has a Python ENTRYPOINT (such as [\"python3\"]), so the job's command "
+            "(/bin/sh -c ...) was handed to Python as a script to run. Batch can't override an "
+            "image's entrypoint: use an image without one. Remove the ENTRYPOINT line from its "
+            "Dockerfile, or build one on top that clears it (FROM <image> then ENTRYPOINT []); "
+            "CMD [\"python3\"] keeps `docker run <image>` starting Python."
+        )
     if not plugins and "unrecognized arguments" in text:
         hints.append(
             "  hint: the job's Snakemake didn't understand an option from this machine's "

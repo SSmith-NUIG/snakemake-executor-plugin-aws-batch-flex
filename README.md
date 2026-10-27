@@ -652,6 +652,12 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
 - **A job fails with "403" or "Forbidden" from S3.** Jobs use the job role, not your login, and
   the Terraform setup only lets it use `s3://BUCKET/snakemake/`. Keep the project's folder inside
   it (which `smkflex init` does).
+- **Every job of a rule fails at once with "SyntaxError: ... in file /bin/sh".** The rule's image
+  has a Python `ENTRYPOINT` (such as `["python3"]`), so Python is handed the job's command as a
+  script to run. Batch can't override an image's entrypoint, so use an image without one: remove
+  the `ENTRYPOINT` line from its Dockerfile, or build one on top that clears it
+  (`FROM <image>` then `ENTRYPOINT []`). `CMD ["python3"]` instead keeps `docker run <image>`
+  starting Python, and doesn't get in the way.
 - **"Ignoring source file ../workflow/...".** Snakemake only sends the jobs code that's inside the
   folder you start it from, so start it from the top of the pipeline (not with `--directory`
   pointing at a subfolder). Published pipelines' tests often use `--directory .test`; copy the
@@ -995,7 +1001,8 @@ Not tested yet: `notebook:`, Julia, GPU.
   why. Build the AMI on the same CPU architecture as your instances.
 - `pipe()` doesn't work. `--sdm apptainer` isn't supported, and Singularity images (`.sif`) can't
   be used.
-- Images with an ENTRYPOINT that doesn't pass the command through will break.
+- Images with an ENTRYPOINT that doesn't pass the command through (such as `["python3"]`) will
+  break; see [Troubleshooting](#troubleshooting).
 - All rules in a group must use the same image.
 - On EC2, all jobs on an instance share its disk (`root_volume_gib` in Terraform, 100 GiB in the
   example), and `disk_mb` is not enforced: Batch only places jobs by CPU and memory. Several jobs

@@ -59,6 +59,8 @@ def test_known_problem_hints():
     h = hints(["botocore.exceptions.ClientError: An error occurred (403) when calling the HeadObject operation: Forbidden"])
     assert len(h) == 1 and "job role" in h[0] and "s3_prefix" in h[0]
     assert "ran out of disk" in hints(["cp: error writing 'x': No space left on device"])[0]
+    h = hints(["SyntaxError: Non-UTF-8 code starting with '\\xbc' in file /bin/sh on line 2, but no encoding declared"])
+    assert len(h) == 1 and "ENTRYPOINT []" in h[0]
     assert hints(["all fine"]) == []
 
 
