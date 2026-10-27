@@ -51,6 +51,11 @@ path = "README.md"
 pattern = '\]\(#'
 replacement = '](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex#'
 
+# and the other pages of the documentation
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\(docs/'
+replacement = '](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/blob/main/docs/'
+
 [tool.ruff]
 line-length = 120
 target-version = "py311"

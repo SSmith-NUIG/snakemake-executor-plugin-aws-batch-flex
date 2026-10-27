@@ -81,4 +81,5 @@ machine; `smkflex logs`, `status` and `cancel` follow and stop it.
 - All rules in a group must use the same image.
 
 The [README](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex) has the
-full list of options, what has been tested on AWS, and the IAM permissions needed.
+setup, and the [Reference](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/blob/main/docs/reference.md)
+the full list of options, what has been tested on AWS, and the IAM permissions needed.
