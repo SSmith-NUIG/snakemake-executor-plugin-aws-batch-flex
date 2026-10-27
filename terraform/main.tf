@@ -269,9 +269,14 @@ data "aws_iam_policy_document" "launcher" {
     resources = ["${local.batch_arn}:job-definition/snakemake-*"]
   }
   statement {
-    # tags given when submitting a job or registering a job definition
-    actions   = ["batch:TagResource"]
-    resources = ["${local.batch_arn}:job/*", "${local.batch_arn}:job-definition/snakemake-*"]
+    # tags given when submitting a job (AWS checks them against the queue) or registering a
+    # job definition
+    actions = ["batch:TagResource"]
+    resources = concat(
+      [aws_batch_job_queue.this.arn, "${local.batch_arn}:job/*", "${local.batch_arn}:job-definition/snakemake-*"],
+      aws_batch_job_queue.fargate[*].arn,
+      aws_batch_job_queue.spot[*].arn,
+    )
   }
   statement {
     actions   = ["batch:TerminateJob"]
