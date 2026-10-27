@@ -970,7 +970,9 @@ images), a different image per rule, a 6-image variant-calling pipeline, EC2 and
 (separately and mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`,
 `directory()`, resources and tags, OOM and timeout reporting, cancelling with Ctrl-C, startup
 checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
-from an interrupted run, pricing a run by the EC2 instances it used, `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating the
+from an interrupted run, pricing a run by the EC2 instances it used (with their disks, and only this run's share of an
+instance that also ran other work), the CPU and disk figures in the usage table, stopping jobs
+under the Terraform IAM policy (which only allows jobs tagged `ManagedBy=snakemake-batch-flex`), `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating the
 AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
 Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from a
 folder and with `--git`) and cancelling one, jobs on the Spot queue, the usage table (with each
@@ -981,7 +983,7 @@ rna-seq-star-deseq2 pipeline on its test data (with `snakemake`, as a `smkflex` 
 up with `snakedeploy`), and the conda env cache on it (per machine: 12 builds instead of 52, 11
 instead of 18-21 minutes; from S3 on a second run: no builds, 7.5 minutes).
 
-Only tested against a fake Batch: the CPU and disk figures and disk cost, private registry
+Only tested against a fake Batch: private registry
 credentials (outside AWS), `--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being
 taken back mid-job.
 
