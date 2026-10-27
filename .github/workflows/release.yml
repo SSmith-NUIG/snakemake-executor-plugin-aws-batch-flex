@@ -1,0 +1,97 @@
+name: release
+
+# Releases are made by release-please from the commit messages (feat: ..., fix: ..., docs: ...):
+# on every push to main it keeps a "release" pull request up to date, with the next version in
+# pyproject.toml and the new CHANGELOG.md entries. Merging that pull request creates the GitHub
+# release and tag, and then this workflow runs the tests and publishes to PyPI.
+#
+# Also: pushing a tag like v0.1.0 by hand publishes that version (used for 0.1.0, which
+# release-please didn't make), and a manual run (Actions tab > release > Run workflow) publishes
+# to TestPyPI. The tests (tests.yml) always run first, and nothing is uploaded unless they pass.
+# Publishing uses PyPI trusted publishing (no tokens): register this workflow, release.yml, as a
+# trusted publisher on pypi.org and test.pypi.org, with environments "pypi" and "testpypi".
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+
+  tests:
+    needs: release-please
+    # a release was just created, or a tag was pushed by hand, or a manual run
+    if: >-
+      !cancelled() && (needs.release-please.outputs.release_created == 'true'
+      || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    needs: [release-please, tests]
+    if: ${{ !cancelled() && needs.tests.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the release's tag (release-please), else what triggered the run
+          ref: ${{ needs.release-please.outputs.tag_name || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the version in pyproject.toml
+        if: needs.release-please.outputs.tag_name != '' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${{ needs.release-please.outputs.tag_name || github.ref_name }}"
+          v=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          [ "v$v" = "$tag" ] || { echo "tag $tag but pyproject says $v"; exit 1; }
+      - run: pip install build twine && python -m build && twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
