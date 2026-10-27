@@ -158,6 +158,21 @@ taken back mid-job.
 
 Not tested yet: `notebook:`, Julia, GPU.
 
+To run the AWS tests yourself, after `scripts/setup.sh`:
+
+```bash
+cd examples/conformance
+bash run.sh script fanout conda pipeline rules     # about 15 minutes, a few cents
+```
+
+Each name is one small workflow (`bash run.sh` alone runs `script` and `fanout`; the comment at
+the top of `run.sh` lists the rest, some of which need the Spot or Fargate queue). It prints
+PASS or FAIL for each, and keeps Snakemake's output in `conformance-NAME.log`. It uses the
+`smkflex` profile (`SMKFLEX_PROFILE=name` for another), or a `profile/config.yaml` in that
+folder if there is one. `bash orphan-test.sh` tests what happens when Snakemake is killed
+mid-run. The tests in `tests/` need no AWS: `pip install -e ".[test]"`, then
+`python -m pytest -n auto`.
+
 ## Limits
 
 - Host mode needs a glibc image with `/bin/sh` and bash. Alpine/musl images exit with 127 and say

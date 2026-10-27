@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Real-AWS conformance run. From this directory, with profile/config.yaml in place (see
-# ../smoke-test/README.md). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
+# Real-AWS conformance run, from this directory, with the profile setup.sh installed (or
+# profile/config.yaml here, see find-profile.sh). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
 # (both need enable_fargate=true in terraform), `spot` = fanout on the Spot queue (enable_spot_queue=true)
 # `rules` = checkpoint group shadow benchmark retries tempdir directory (one small workflow each)
 set -u
+. ./find-profile.sh
 N=${N:-100}
-PREFIX=$(grep '^default-storage-prefix:' profile/config.yaml | awk '{print $2}')
+PREFIX=$(grep '^default-storage-prefix:' "$CFG" | awk '{print $2}')
 pass=(); fail=()
 check() { # name, S3 key, expected-substring
   got=$(aws s3 cp "$PREFIX/$2" - 2>/dev/null)
@@ -14,7 +15,7 @@ check() { # name, S3 key, expected-substring
 }
 run() { # name, snakemake args...
   name=$1; shift; echo "=== $name"; rm -rf .snakemake
-  if snakemake --profile profile --forceall "$@" > "conformance-$name.log" 2>&1; then
+  if snakemake --profile "$PROFILE" "${TEST_ARGS[@]}" --forceall "$@" > "conformance-$name.log" 2>&1; then
     case $name in
       script) check script results/py_script.txt "pyscript threads=2 rule=py_script" && check script results/sh_script.txt "shscript threads=1";;
       fanout) check fanout results/total.txt "$(( N * (N - 1) / 2 ))";;
@@ -60,7 +61,7 @@ for t in "${@:-script fanout}"; do
            if [ -n "${ECR_IMAGE:-}" ]; then
              run ecr -s ecr.smk --config ecr_image=docker://$ECR_IMAGE
            else
-             REGION=$(grep '^aws-batch-flex-region:' profile/config.yaml | awk '{print $2}')
+             REGION=$(grep '^aws-batch-flex-region:' "$CFG" | awk '{print $2}')
              ACCT=$(aws sts get-caller-identity --query Account --output text)
              REG=$ACCT.dkr.ecr.$REGION.amazonaws.com; IMG=$REG/smkflex-ecr-test:debian12
              if aws ecr create-repository --repository-name smkflex-ecr-test --region $REGION \
@@ -75,7 +76,7 @@ for t in "${@:-script fanout}"; do
                --query repository.repositoryName --output text 2>/dev/null && echo "  deleted ECR repo"
            fi;;
       existing) # a job definition made outside the plugin (with the host-env mount), removed again after
-             ROLE=$(grep '^aws-batch-flex-job-role-arn:' profile/config.yaml | awk '{print $2}')
+             ROLE=$(grep '^aws-batch-flex-job-role-arn:' "$CFG" | awk '{print $2}')
              ARN=$(aws batch register-job-definition --job-definition-name smkflex-existing-test --type container \
                --platform-capabilities EC2 --tags ManagedBy=snakemake-batch-flex --query jobDefinitionArn --output text \
                --container-properties "{\"image\":\"debian:12\",\"jobRoleArn\":\"$ROLE\",\"resourceRequirements\":[{\"type\":\"VCPU\",\"value\":\"1\"},{\"type\":\"MEMORY\",\"value\":\"512\"}],\"volumes\":[{\"name\":\"smkenv\",\"host\":{\"sourcePath\":\"/opt/snakemake-env\"}}],\"mountPoints\":[{\"sourceVolume\":\"smkenv\",\"containerPath\":\"/opt/snakemake-env\",\"readOnly\":true}]}")
