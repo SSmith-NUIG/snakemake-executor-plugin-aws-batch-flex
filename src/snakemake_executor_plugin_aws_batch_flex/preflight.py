@@ -12,19 +12,42 @@ def _denied(e: ClientError) -> bool:
     return "AccessDenied" in code or "UnauthorizedOperation" in code or code == "AccessDeniedException"
 
 
+def describe_queue(batch, queue: str):
+    """(queue, its compute environments) as Batch describes them, looked up once per client:
+    the startup checks, Spot and priority all need them. (None, None) if there's no such
+    queue; the environments are None if they couldn't be described. Batch's errors for the
+    queue itself are raised."""
+    cache = batch.__dict__.setdefault("_smkflex_queues", {})
+    if queue in cache:
+        return cache[queue]
+    found = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
+    if not found:
+        return None, None
+    q = found[0]
+    ces = [o["computeEnvironment"] for o in q.get("computeEnvironmentOrder", [])]
+    envs = []
+    if ces:
+        try:
+            envs = batch.describe_compute_environments(computeEnvironments=ces)["computeEnvironments"]
+        except (ClientError, BotoCoreError):
+            envs = None
+    cache[queue] = (q, envs)
+    return q, envs
+
+
 def check_queue(batch, queue: str, platform: Optional[str] = None):
     """Returns (errors, warnings, detected platform or None) for the job queue and the compute
     environments behind it. A mismatch with `platform` is only an error when `platform` is given."""
     errors, warnings, detected = [], [], None
     try:
-        queues = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
+        q, envs = describe_queue(batch, queue)
     except ClientError as e:
         if _denied(e):
             return [], [f"cannot verify queue '{queue}' (no batch:DescribeJobQueues permission); continuing"], None
         return [f"AWS Batch refused the queue lookup: {e}"], [], None
     except BotoCoreError as e:
         return [], [f"cannot verify queue '{queue}': {e}; continuing"], None
-    if not queues:
+    if q is None:
         hint = ""
         try:
             names = sorted(q["jobQueueName"] for q in batch.describe_job_queues()["jobQueues"])
@@ -32,17 +55,13 @@ def check_queue(batch, queue: str, platform: Optional[str] = None):
         except (ClientError, BotoCoreError):
             pass
         return [f"Job queue '{queue}' not found in this region (check the queue name and the region)." + hint], [], None
-    q = queues[0]
     if q.get("state") != "ENABLED":
         errors.append(f"Job queue '{queue}' is {q.get('state')}, not ENABLED.")
     if q.get("status") != "VALID":
         errors.append(f"Job queue '{queue}' has status {q.get('status')}: {q.get('statusReason', 'no reason given')}")
-    ces = [o["computeEnvironment"] for o in q.get("computeEnvironmentOrder", [])]
-    if not ces:
+    if not q.get("computeEnvironmentOrder"):
         return errors + [f"Job queue '{queue}' has no compute environment attached."], warnings, None
-    try:
-        envs = batch.describe_compute_environments(computeEnvironments=ces)["computeEnvironments"]
-    except (ClientError, BotoCoreError):
+    if envs is None:
         return errors, warnings + [f"cannot inspect the compute environments of '{queue}'; continuing"], None
     for ce in envs:
         name, kind = ce.get("computeEnvironmentName"), ce.get("computeResources", {}).get("type", "")
@@ -63,12 +82,10 @@ def check_queue(batch, queue: str, platform: Optional[str] = None):
 def queue_uses_spot(batch, queue: str) -> bool:
     """Best effort: is any compute environment behind the queue Spot (EC2 or Fargate)?"""
     try:
-        q = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
-        ces = [o["computeEnvironment"] for o in (q[0].get("computeEnvironmentOrder", []) if q else [])]
-        envs = batch.describe_compute_environments(computeEnvironments=ces)["computeEnvironments"] if ces else []
+        _q, envs = describe_queue(batch, queue)
     except (ClientError, BotoCoreError):
         return False
-    return any(ce.get("computeResources", {}).get("type", "").endswith("SPOT") for ce in envs)
+    return any(ce.get("computeResources", {}).get("type", "").endswith("SPOT") for ce in envs or [])
 
 
 def check_role(iam, role_arn: str, label: str):
@@ -96,12 +113,9 @@ def ami_snakemake_version(batch, ec2, queue: str) -> Optional[str]:
     """The SnakemakeVersion tag (set by bake-ami.sh) of the AMI the queue's instances start from.
     None when it can't be found out: no tag (older AMIs), no permission, or several AMIs."""
     try:
-        queues = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
-        ces = [o["computeEnvironment"] for o in (queues[0].get("computeEnvironmentOrder", []) if queues else [])]
-        if not ces:
-            return None
+        _q, envs = describe_queue(batch, queue)
         images = set()
-        for ce in batch.describe_compute_environments(computeEnvironments=ces)["computeEnvironments"]:
+        for ce in envs or []:
             cr = ce.get("computeResources") or {}
             # Batch uses an image override first, then imageId, then the launch template's image
             found = {c.get("imageIdOverride") for c in cr.get("ec2Configuration") or []} - {None}

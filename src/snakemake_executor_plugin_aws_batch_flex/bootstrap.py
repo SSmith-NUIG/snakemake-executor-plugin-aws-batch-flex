@@ -5,9 +5,10 @@ venv under $TMPDIR with uv. Either way Snakemake is only reachable through a she
 called `python`, so the rule's own commands still see the image's python and PATH."""
 
 import base64
+import importlib.metadata as md
 import shlex
 import zlib
-from typing import Iterable
+from typing import Iterable, List, Optional
 
 MODES = ("auto", "always", "never", "host")
 
@@ -15,7 +16,7 @@ _TEMPLATE = r"""
 set -eu
 @@WORKDIR@@
 SMK_BOOT="${TMPDIR:-/tmp}/.snakemake-batch-bootstrap"
-SMK_NEED=@@NEED@@
+SMK_NEED=1
 @@CHECK@@
 # the image's own matching Snakemake: still run it through the launcher (cache, usage figures)
 if [ "$SMK_NEED" = 0 ]; then SMK_PY=$(command -v python); fi
@@ -216,10 +217,8 @@ def build_prelude(
         return f"set -eu\n{WORKDIR}"
 
     names = [r.split("==")[0] for r in requirements]
-    if mode == "always":
-        need, check = "1", ""
-    else:
-        need = "1"
+    check = ""
+    if mode == "auto":  # use the image's own Snakemake if it's this version
         check = (
             "if command -v python >/dev/null 2>&1 && "
             f"python -c {_py_check(snakemake_version, names)} >/dev/null 2>&1; "
@@ -228,7 +227,6 @@ def build_prelude(
     reqs = " ".join(shlex.quote(r) for r in requirements)
     return _compact(
         _TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
-        .replace("@@NEED@@", need)
         .replace("@@CHECK@@", check)
         .replace("@@PYVER@@", shlex.quote(python_version))
         .replace("@@PREREQ@@", "1" if install_prereqs else "0")
@@ -255,3 +253,38 @@ def conda_snippet(conda_path: str) -> str:
         'export CONDA_PKGS_DIRS="$SMK_WORK/conda-pkgs"\n'
         '[ -w "${HOME:-/nonexistent}" ] || export HOME="$SMK_WORK"\n'
     )
+
+
+def pinned(package: str) -> str:
+    """A pip requirement for the version installed here (unpinned if it isn't installed)."""
+    try:
+        return f"{package}=={md.version(package)}"
+    except md.PackageNotFoundError:
+        return package
+
+
+def storage_requirements(default_provider: Optional[str] = None) -> List[str]:
+    """pip requirements for the storage plugins installed here, pinned to these versions."""
+    packages = set()
+    try:
+        from snakemake_interface_storage_plugins.registry import StoragePluginRegistry
+
+        reg = StoragePluginRegistry()
+        packages = {reg.get_plugin_package_name(n) for n in reg.get_registered_plugins()}
+    except Exception:  # registry API drift: fall back to the default provider
+        if default_provider:
+            packages = {f"snakemake-storage-plugin-{default_provider}"}
+    return [pinned(p) for p in sorted(packages)]
+
+
+def snakemake_prelude(s, mode: str, default_storage_provider: Optional[str] = None) -> str:
+    """The prelude that gives a job Snakemake, for settings `s` (settings.ExecutorSettings):
+    from the host env (mode "host") or installed at start, the same version as here."""
+    if mode == "host":
+        return build_host_prelude(s.host_env_path, s.host_env_wait_seconds)
+    import sys
+
+    version = md.version("snakemake")
+    reqs = [f"snakemake=={version}"] + storage_requirements(default_storage_provider) + list(s.extra_packages or [])
+    pyver = str(s.python_version or f"{sys.version_info[0]}.{sys.version_info[1]}")
+    return build_prelude(mode, version, reqs, pyver, s.install_prereqs)

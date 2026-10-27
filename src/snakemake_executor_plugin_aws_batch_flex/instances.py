@@ -111,33 +111,29 @@ class Instances:
         return known
 
     # -- prices --------------------------------------------------------------------------
-    def _on_demand(self, pricing, itype):
-        """(USD per hour, vCPUs) from AWS's price list."""
-        filters = [{"Type": "TERM_MATCH", "Field": k, "Value": v} for k, v in (
-            ("regionCode", self.region), ("instanceType", itype), ("operatingSystem", "Linux"),
-            ("tenancy", "Shared"), ("preInstalledSw", "NA"), ("capacitystatus", "Used"))]
+    def _price(self, pricing, what, **match):
+        """(on-demand USD per unit, product) of the first product in AWS's EC2 price list
+        that matches, in this region."""
+        filters = [{"Type": "TERM_MATCH", "Field": k, "Value": v}
+                   for k, v in {"regionCode": self.region, **match}.items()]
         for item in pricing.get_products(ServiceCode="AmazonEC2", Filters=filters, MaxResults=10)["PriceList"]:
             p = json.loads(item) if isinstance(item, str) else item
-            vcpu = int(p.get("product", {}).get("attributes", {}).get("vcpu", 0) or 0)
             for term in p.get("terms", {}).get("OnDemand", {}).values():
                 for dim in term.get("priceDimensions", {}).values():
                     usd = float(dim.get("pricePerUnit", {}).get("USD", 0) or 0)
                     if usd > 0:
-                        return usd, vcpu
-        raise LookupError(f"no on-demand price for {itype} in {self.region}")
+                        return usd, p.get("product", {})
+        raise LookupError(f"no price for {what} in {self.region}")
+
+    def _on_demand(self, pricing, itype):
+        """(USD per hour, vCPUs)."""
+        usd, product = self._price(pricing, itype, instanceType=itype, operatingSystem="Linux", tenancy="Shared",
+                                   preInstalledSw="NA", capacitystatus="Used")
+        return usd, int(product.get("attributes", {}).get("vcpu", 0) or 0)
 
     def _volume_price(self, pricing, vtype):
-        """USD per GB-month for an EBS volume type, from AWS's price list."""
-        filters = [{"Type": "TERM_MATCH", "Field": k, "Value": v} for k, v in (
-            ("regionCode", self.region), ("productFamily", "Storage"), ("volumeApiName", vtype))]
-        for item in pricing.get_products(ServiceCode="AmazonEC2", Filters=filters, MaxResults=10)["PriceList"]:
-            p = json.loads(item) if isinstance(item, str) else item
-            for term in p.get("terms", {}).get("OnDemand", {}).values():
-                for dim in term.get("priceDimensions", {}).values():
-                    usd = float(dim.get("pricePerUnit", {}).get("USD", 0) or 0)
-                    if usd > 0:
-                        return usd
-        raise LookupError(f"no price for {vtype} volumes in {self.region}")
+        """USD per GB-month for an EBS volume type."""
+        return self._price(pricing, f"{vtype} volumes", productFamily="Storage", volumeApiName=vtype)[0]
 
     def _spot(self, itype, az, start, end):
         """Average Spot price (USD per hour) of the type in the zone over the instance's time."""

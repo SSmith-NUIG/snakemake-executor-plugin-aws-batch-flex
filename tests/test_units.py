@@ -3,7 +3,7 @@ import pytest
 from snakemake_interface_common.exceptions import WorkflowError
 from snakemake_executor_plugin_aws_batch_flex.sizing import fargate_size, job_requirements
 from snakemake_executor_plugin_aws_batch_flex.bootstrap import build_prelude
-from snakemake_executor_plugin_aws_batch_flex import _normalize_image
+from snakemake_executor_plugin_aws_batch_flex.jobdefs import normalize_image as _normalize_image
 
 
 def test_fargate_rounding():
@@ -50,7 +50,7 @@ def test_image_registry():
 
 
 def test_known_problem_hints():
-    from snakemake_executor_plugin_aws_batch_flex import _known_problem_hints as hints
+    from snakemake_executor_plugin_aws_batch_flex.hints import known_problem_hints as hints
     two = hints(["snakemake: error: unrecognized arguments: --storage-gcs-project x --storage-http-retries 5"])
     assert len(two) == 2 and "snakemake-storage-plugin-gcs" in two[0] and "plugin-http" in two[1]
     assert "versions are probably too far apart" in hints(["error: unrecognized arguments: --new-flag"])[0]
@@ -132,7 +132,7 @@ def test_usage_hints_at_grouping_many_short_jobs():
 
 
 def test_keep_unneeded_temp():
-    from snakemake_executor_plugin_aws_batch_flex import _keep_unneeded_temp as k
+    from snakemake_executor_plugin_aws_batch_flex.patches import keep_unneeded_temp as k
     cmd = "python -m snakemake --target-jobs a: --unneeded-temp-files x.db 'y z.db' --force --cores all"
     assert k(cmd) == "python -m snakemake --target-jobs a: --force --cores all"
     assert k("python -m snakemake --unneeded-temp-files a.db") == "python -m snakemake"
@@ -142,7 +142,7 @@ def test_keep_unneeded_temp():
 def test_s3_directory_is_looked_up_again():
     import pytest
     s3 = pytest.importorskip("snakemake_storage_plugin_s3")
-    from snakemake_executor_plugin_aws_batch_flex import _recheck_s3_directories
+    from snakemake_executor_plugin_aws_batch_flex.patches import recheck_s3_directories as _recheck_s3_directories
     _recheck_s3_directories()
     _recheck_s3_directories()  # patching twice is harmless
 
@@ -186,9 +186,9 @@ def test_sources_patch_leaves_other_executors_alone(tmp_path, monkeypatch):
     import snakemake.api  # noqa: F401  (loads Snakemake in the order its CLI does)
     from snakemake.dag import DAG
 
-    import snakemake_executor_plugin_aws_batch_flex as plugin
+    from snakemake_executor_plugin_aws_batch_flex import patches
 
-    plugin._skip_remote_module_scripts()  # in case the plugin was imported before Snakemake
+    patches.skip_remote_module_scripts()  # in case the plugin was imported before Snakemake
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()

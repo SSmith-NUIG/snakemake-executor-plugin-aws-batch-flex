@@ -27,15 +27,15 @@ from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 from . import headjob
-from .bootstrap import build_host_prelude, build_prelude, conda_snippet
-from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
+from .bootstrap import conda_snippet, snakemake_prelude
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
 from .naming import batch_job_name
-from .tags import MANAGED_BY
+from .orphans import active_jobs
 from .preflight import ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
+from .settings import from_profile, host_mounts
 from .sizing import fargate_size
+from .tags import MANAGED_BY
 
-ACTIVE = ("SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING")
 HEAD_IMAGE = "buildpack-deps:bookworm-scm"
 SKIP_DIRS = {".snakemake", ".smkflex", ".git", "__pycache__"}
 
@@ -141,10 +141,6 @@ def _load_profile(path):
         with open(wp) as f:
             settings.update(yaml.safe_load(f) or {})
     return str(folder), settings
-
-
-def _flag(value):
-    return str(value).lower() in ("true", "1", "yes")
 
 
 def _clients(profile):
@@ -254,46 +250,15 @@ def make_bundle(root, profile_dir, max_mb, extra=None):
 
 
 def _active_heads(batch, queue, state_key):
-    ids = []
-    for status in ACTIVE:
-        token = None
-        while True:
-            kw = dict(jobQueue=queue, jobStatus=status, maxResults=1000)
-            if token:
-                kw["nextToken"] = token
-            resp = batch.list_jobs(**kw)
-            ids += [j["jobId"] for j in resp.get("jobSummaryList", [])]
-            token = resp.get("nextToken")
-            if not token:
-                break
-    found = []
-    for i in range(0, len(ids), 100):
-        for d in batch.describe_jobs(jobs=ids[i:i + 100])["jobs"]:
-            if (d.get("tags") or {}).get("smkflex-state") == state_key:
-                found.append(d["jobId"])
-    return found
+    return [d["jobId"] for d in active_jobs(batch, queue) if (d.get("tags") or {}).get("smkflex-state") == state_key]
 
 
 def head_command(profile, platform, bundle_url, state_url, snakemake_args):
-    mode = profile.get("aws-batch-flex-bootstrap", "auto")
-    if mode == "host" and platform == "fargate":
-        mode = "auto"
-    if mode == "host":
-        prelude = build_host_prelude(profile.get("aws-batch-flex-host-env-path", DEFAULT_HOST_ENV),
-                                     int(profile.get("aws-batch-flex-host-env-wait-seconds", 120)))
-    else:
-        import importlib.metadata as md
-        from . import storage_requirements
-
-        default = profile.get("default-storage-provider")
-        reqs = [f"snakemake=={md.version('snakemake')}"] + storage_requirements(default)
-        reqs += list(profile.get("aws-batch-flex-extra-packages") or [])
-        pyver = str(profile.get("aws-batch-flex-python-version") or f"{sys.version_info[0]}.{sys.version_info[1]}")
-        prelude = build_prelude(mode, md.version("snakemake"), reqs, pyver,
-                                _flag(profile.get("aws-batch-flex-install-prereqs", False)))
-    conda = profile.get("aws-batch-flex-conda-path")
-    if conda and platform == "ec2":
-        prelude += "\n" + conda_snippet(conda)
+    s = from_profile(profile)
+    mode = "auto" if s.bootstrap == "host" and platform == "fargate" else s.bootstrap
+    prelude = snakemake_prelude(s, mode, profile.get("default-storage-provider"))
+    if s.conda_path and platform == "ec2":
+        prelude += "\n" + conda_snippet(s.conda_path)
     args = " ".join(shlex.quote(a) for a in snakemake_args)
     return (
         f"{prelude}\n"
@@ -399,9 +364,10 @@ def cmd_run(a, snakemake_args):
 
 def _run(a, snakemake_args, root, source, default_name, extra=None):
     profile_dir, profile = _load_profile(a.profile)
-    queue = a.queue or profile.get("aws-batch-flex-queue")
+    s = from_profile(profile)
+    queue = a.queue or s.queue
     prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
-    role = a.role or profile.get("aws-batch-flex-head-role-arn")
+    role = a.role or s.head_role_arn
     if not queue:
         raise Fail("no queue: set aws-batch-flex-queue in the profile or pass --queue")
     if not prefix or profile.get("default-storage-provider") in (None, "local"):
@@ -415,12 +381,12 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
     state_key = hashlib.sha256(state_url.encode()).hexdigest()[:16]
     batch, _logs, region = _clients(profile)
 
-    errors, warnings, detected = check_queue(batch, queue, profile.get("aws-batch-flex-platform"))
+    errors, warnings, detected = check_queue(batch, queue, s.platform)
     for w in warnings:
         print(f"warning: {w}", file=sys.stderr)
     if errors:
         raise Fail("; ".join(errors))
-    platform = profile.get("aws-batch-flex-platform") or detected or "ec2"
+    platform = s.platform or detected or "ec2"
     if queue_uses_spot(batch, queue):
         print(f"warning: queue {queue} uses Spot instances; if AWS takes the head job's instance back, "
               "the whole run stops. Use an on-demand queue for it (--queue).", file=sys.stderr)
@@ -436,24 +402,17 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
     headjob.put(bundle_url, bundle)
     print(f"Uploaded the workflow ({len(bundle) // 1024} KiB) to {bundle_url}", file=sys.stderr)
 
-    mounts = []
-    if profile.get("aws-batch-flex-bootstrap") == "host" and platform == "ec2":
-        env = profile.get("aws-batch-flex-host-env-path", DEFAULT_HOST_ENV)
-        mounts.append((env, env, True))
-    if profile.get("aws-batch-flex-conda-path") and platform == "ec2":
-        conda = profile["aws-batch-flex-conda-path"]
-        mounts.append((conda, conda, True))
     jobdefs = JobDefinitions(
         batch, _Log(),
-        prefix=profile.get("aws-batch-flex-job-definition-prefix", "snakemake"),
+        prefix=s.job_definition_prefix,
         platform=platform,
         job_role_arn=role,
-        execution_role_arn=profile.get("aws-batch-flex-execution-role-arn"),
-        log_group=profile.get("aws-batch-flex-log-group", DEFAULT_LOG_GROUP),
-        assign_public_ip=profile.get("aws-batch-flex-assign-public-ip", "ENABLED"),
+        execution_role_arn=s.execution_role_arn,
+        log_group=s.log_group,
+        assign_public_ip=s.assign_public_ip,
         ephemeral_storage_gib=None,
         tags={},
-        mounts=mounts,
+        mounts=host_mounts(s) if platform == "ec2" else [],
     )
     # Debian 12 with git: Snakemake needs git for pipelines loaded from GitHub (snakedeploy's)
     image = a.image or HEAD_IMAGE
@@ -636,6 +595,13 @@ def _remote_files(prefix, path, s3):
     return sorted(out)
 
 
+def _bucket_key(prefix, rel):
+    """(bucket, key) of the file at `rel` under an s3:// prefix."""
+    bucket, _, base = prefix[len("s3://"):].partition("/")
+    base = base.strip("/")
+    return bucket, f"{base}/{rel}" if base else rel
+
+
 TRANSFER_THREADS = 16  # files at once; big files are also split into parallel parts by boto3
 
 
@@ -703,9 +669,7 @@ def cmd_pull(a):
         rel, dest, _size = item
         os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
         if s3:
-            bucket, _, base = prefix[len("s3://"):].partition("/")
-            key = f"{base.strip('/')}/{rel}" if base.strip("/") else rel
-            s3.download_file(bucket, key, dest)
+            s3.download_file(*_bucket_key(prefix, rel), dest)
         else:
             shutil.copyfile(os.path.join(prefix, rel), dest)
 
@@ -808,8 +772,7 @@ def cmd_push(a):
     def put(item):
         rel, local, _size = item
         if s3:
-            bucket, _, base = prefix[len("s3://"):].partition("/")
-            s3.upload_file(local, bucket, f"{base}/{rel}" if base else rel)
+            s3.upload_file(local, *_bucket_key(prefix, rel))
         else:
             os.makedirs(os.path.dirname(os.path.join(prefix, rel)), exist_ok=True)
             shutil.copyfile(local, os.path.join(prefix, rel))

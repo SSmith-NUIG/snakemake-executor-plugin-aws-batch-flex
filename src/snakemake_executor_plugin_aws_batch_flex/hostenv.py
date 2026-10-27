@@ -6,7 +6,6 @@ wait for it."""
 
 import argparse
 import email
-import importlib.metadata as md
 import os
 import re
 import shlex
@@ -54,14 +53,10 @@ echo "snakemake host env ready at $ENV"
 
 
 def default_requirements(storage_plugins: list[str], extra: list[str]) -> list[str]:
-    def pin(pkg):
-        try:
-            return f"{pkg}=={md.version(pkg)}"
-        except md.PackageNotFoundError:
-            return pkg
+    from .bootstrap import pinned
 
-    reqs = [pin("snakemake")]
-    reqs += [pin(f"snakemake-storage-plugin-{p}") for p in storage_plugins]
+    reqs = [pinned("snakemake")]
+    reqs += [pinned(f"snakemake-storage-plugin-{p}") for p in storage_plugins]
     return reqs + list(extra)
 
 

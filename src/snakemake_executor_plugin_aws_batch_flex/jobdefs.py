@@ -16,6 +16,19 @@ from .tags import MANAGED_BY
 DEFAULT_LOG_GROUP = "/aws/batch/job"
 
 
+def normalize_image(url: str) -> str:
+    if url.startswith("docker://"):
+        return url[len("docker://") :]
+    if re.match(r"^[a-z]+://", url):
+        raise WorkflowError(
+            f"Unsupported container URL '{url}': AWS Batch only runs Docker/OCI images from a "
+            "registry such as Docker Hub, quay.io, ghcr.io or ECR (e.g. "
+            "'docker://quay.io/biocontainers/samtools:1.21--h50ea8bc_0'). Singularity/Apptainer "
+            "images (.sif, oras://, shub://) can't be used."
+        )
+    return url
+
+
 def image_registry(image: str) -> str:
     """Registry host of an image reference; Docker Hub images (no host part) give docker.io."""
     first, _, rest = image.partition("/")

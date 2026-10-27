@@ -10,6 +10,7 @@ import re
 import statistics
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Optional
 
 # USD, on-demand list prices in eu-west-1 / us-east-1 (they're within ~10% of each other).
@@ -48,9 +49,18 @@ def estimate(platform: str, spot: bool, vcpu_hours: float, gib_hours: float) -> 
     return vcpu_hours * EC2_PER_VCPU_HOUR * (SPOT_FACTOR if spot else 1)
 
 
+@dataclass
+class Row:
+    """One rule's jobs; usd is what's priced per job (Fargate, estimated EC2), not instances."""
+    jobs: int = 0
+    vcpu_h: float = 0.0
+    gib_h: float = 0.0
+    usd: float = 0.0
+
+
 class Usage:
     def __init__(self):
-        self.rows = defaultdict(lambda: [0, 0.0, 0.0, 0.0])  # rule -> jobs, vCPU-h, GiB-h, USD (not EC2 instances)
+        self.rows = defaultdict(Row)  # rule -> Row
         self.seconds = defaultdict(list)  # rule -> run time of each job that ran
         self.asked = defaultdict(int)  # rule -> most memory a job asked for (MiB)
         self.logs = defaultdict(list)  # rule -> [(log group, stream)] of jobs that succeeded
@@ -74,12 +84,12 @@ class Usage:
         self.threads[rule] = max(self.threads[rule], vcpu)
         self.platform[rule] = platform
         row = self.rows[rule]
-        row[0] += 1
-        row[1] += vcpu * hours
-        row[2] += mem_mib / 1024 * hours
+        row.jobs += 1
+        row.vcpu_h += vcpu * hours
+        row.gib_h += mem_mib / 1024 * hours
         rough = estimate(platform, spot, vcpu * hours, mem_mib / 1024 * hours)
         if platform == "fargate" or not on_known_instance:
-            row[3] += rough
+            row.usd += rough
             if platform != "fargate":
                 self.estimated = True
         else:
@@ -165,23 +175,24 @@ class Usage:
         def usd(c):
             return "<0.01" if 0 < c < 0.005 else f"{c:.2f}"
 
-        total = [0, 0.0, 0.0, 0.0]
         def cost(rule):
-            if instance_costs is None:
-                return self.rows[rule][3] + self.rough.get(rule, 0.0)
-            return self.rows[rule][3] + instance_costs.get(rule, 0.0)
+            extra = self.rough if instance_costs is None else instance_costs
+            return self.rows[rule].usd + extra.get(rule, 0.0)
 
-        for rule, (n, v, g, _c) in sorted(self.rows.items(), key=lambda kv: -cost(kv[0])):
-            c = cost(rule)
+        total = Row()
+        for rule in sorted(self.rows, key=lambda r: -cost(r)):
+            row, c = self.rows[rule], cost(rule)
+            n, v, g = row.jobs, row.vcpu_h, row.gib_h
             peak = f"{max(self.peaks[rule]):.0f}" if self.peaks.get(rule) else "-"
             busy = f"{max(self.busy[rule]):.1f}" if self.busy.get(rule) else "-"
             disk = f"{max(self.disk[rule]):.1f}" if self.disk.get(rule) else "-"
             vcpus = f"{self.threads.get(rule, 0):g}"
             lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}  {usd(c):>8}"
                          f"  {vcpus:>5}  {busy:>5}  {self.asked.get(rule, 0):>8}  {peak:>6}  {disk:>8}")
-            total = [total[0] + n, total[1] + v, total[2] + g, total[3] + c]
+            total = Row(total.jobs + n, total.vcpu_h + v, total.gib_h + g, total.usd + c)
         if len(self.rows) > 1:
-            lines.append(f"  {'total':<{width}}  {total[0]:>5}  {total[1]:>8.2f}  {total[2]:>8.2f}  {usd(total[3]):>8}")
+            lines.append(f"  {'total':<{width}}  {total.jobs:>5}  {total.vcpu_h:>8.2f}  {total.gib_h:>8.2f}"
+                         f"  {usd(total.usd):>8}")
         if instance_line:
             lines.append(instance_line)
         if self.peaks:

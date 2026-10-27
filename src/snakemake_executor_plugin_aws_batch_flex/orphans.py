@@ -12,8 +12,8 @@ def workflow_id(workdir: str, snakefile: str, storage_prefix: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
-def find_orphans(batch, queue: str, jobdef_prefix: str, wf_id: str, run_id: str) -> list:
-    """[(job id, job name, status)] of active jobs in `queue` from this workflow but another run."""
+def active_jobs(batch, queue: str) -> list:
+    """Every active job in `queue`, described (with its tags and job definition)."""
     ids = []
     for status in ACTIVE:
         token = None
@@ -28,13 +28,20 @@ def find_orphans(batch, queue: str, jobdef_prefix: str, wf_id: str, run_id: str)
             token = resp.get("nextToken")
             if not token:
                 break
+    jobs = []
+    for i in range(0, len(ids), 100):  # describe_jobs takes at most 100
+        jobs += batch.describe_jobs(jobs=ids[i : i + 100])["jobs"]
+    return jobs
+
+
+def find_orphans(batch, queue: str, jobdef_prefix: str, wf_id: str, run_id: str) -> list:
+    """[(job id, job name, status)] of active jobs in `queue` from this workflow but another run."""
     found = []
-    for i in range(0, len(ids), 100):
-        for d in batch.describe_jobs(jobs=ids[i : i + 100])["jobs"]:
-            tags = d.get("tags") or {}
-            jobdef = d.get("jobDefinition", "").rsplit("/", 1)[-1].split(":")[0]
-            if (jobdef.startswith(jobdef_prefix + "-")
-                    and tags.get("snakemake-workflow") == wf_id
-                    and tags.get("snakemake-run-id") != run_id):
-                found.append((d["jobId"], d.get("jobName", ""), d.get("status", "")))
+    for d in active_jobs(batch, queue):
+        tags = d.get("tags") or {}
+        jobdef = d.get("jobDefinition", "").rsplit("/", 1)[-1].split(":")[0]
+        if (jobdef.startswith(jobdef_prefix + "-")
+                and tags.get("snakemake-workflow") == wf_id
+                and tags.get("snakemake-run-id") != run_id):
+            found.append((d["jobId"], d.get("jobName", ""), d.get("status", "")))
     return found
