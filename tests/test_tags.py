@@ -90,3 +90,11 @@ def test_job_definitions_are_tagged_managed_by(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     regs = [c for c in calls if c["call"] == "register_job_definition"]
     assert regs and all(c["tags"] == {"project": "x", "ManagedBy": "snakemake-batch-flex"} for c in regs)
+
+
+def test_managed_by_is_on_every_job_even_without_the_automatic_tags():
+    """The IAM policy lets users stop only jobs with this tag."""
+    for auto in (True, False):
+        t = job_tags(run_id="r", rule_names=["a"], jobid=1, global_tags={"ManagedBy": "me"},
+                     rule_tags={}, auto=auto)
+        assert t["ManagedBy"] == "snakemake-batch-flex"

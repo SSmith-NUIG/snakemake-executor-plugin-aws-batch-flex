@@ -247,7 +247,13 @@ resource "aws_iam_role_policy" "job_s3" {
   policy = data.aws_iam_policy_document.s3_access.json
 }
 
-# policy for whoever runs snakemake, scoped to this queue
+# policy for whoever runs snakemake: submits to these queues, and changes or stops only what
+# the plugin made (its job definitions, and jobs tagged ManagedBy=snakemake-batch-flex), so it
+# can't touch other Batch work in the account
+locals {
+  batch_arn = "arn:aws:batch:${var.region}:${data.aws_caller_identity.me.account_id}"
+}
+
 data "aws_iam_policy_document" "launcher" {
   statement {
     actions = ["batch:SubmitJob"]
@@ -255,20 +261,38 @@ data "aws_iam_policy_document" "launcher" {
       [aws_batch_job_queue.this.arn],
       aws_batch_job_queue.fargate[*].arn,
       aws_batch_job_queue.spot[*].arn,
-      ["arn:aws:batch:${var.region}:${data.aws_caller_identity.me.account_id}:job-definition/snakemake-*"],
+      ["${local.batch_arn}:job-definition/snakemake-*"],
     )
   }
   statement {
+    actions   = ["batch:RegisterJobDefinition"]
+    resources = ["${local.batch_arn}:job-definition/snakemake-*"]
+  }
+  statement {
+    # tags given when submitting a job or registering a job definition
+    actions   = ["batch:TagResource"]
+    resources = ["${local.batch_arn}:job/*", "${local.batch_arn}:job-definition/snakemake-*"]
+  }
+  statement {
+    actions   = ["batch:TerminateJob"]
+    resources = ["${local.batch_arn}:job/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/ManagedBy"
+      values   = ["snakemake-batch-flex"]
+    }
+  }
+  statement {
+    # these can't be limited to resources
     actions = [
-      "batch:DescribeJobs", "batch:TerminateJob", "batch:RegisterJobDefinition",
-      "batch:DescribeJobDefinitions", "batch:DescribeJobQueues", "batch:DescribeComputeEnvironments",
-      "batch:ListJobs", "batch:TagResource",
+      "batch:DescribeJobs", "batch:DescribeJobDefinitions", "batch:DescribeJobQueues",
+      "batch:DescribeComputeEnvironments", "batch:ListJobs",
     ]
     resources = ["*"]
   }
   statement {
     actions   = ["logs:GetLogEvents"]
-    resources = ["*"]
+    resources = ["arn:aws:logs:${var.region}:${data.aws_caller_identity.me.account_id}:log-group:${coalesce(local.log_group, "/aws/batch/job")}:log-stream:*"]
   }
   statement {
     # optional: lets the plugin compare the AMI's Snakemake version with yours at startup

@@ -14,6 +14,9 @@ from snakemake_interface_common.exceptions import WorkflowError
 
 _BAD = re.compile(r"[^A-Za-z0-9 _.:/=+\-@]")
 MAX_TAGS = 50
+# On every job, even without the automatic tags: the IAM policy in terraform/ lets users stop
+# only jobs that have it
+MANAGED_BY = {"ManagedBy": "snakemake-batch-flex"}
 
 
 def _clean(text: str, limit: int) -> str:
@@ -65,6 +68,7 @@ def job_tags(
         tags["snakemake-job-id"] = _clean(str(jobid), 256)
     tags.update(global_tags)
     tags.update(rule_tags)
+    tags.update(MANAGED_BY)
     if len(tags) > MAX_TAGS:
         raise WorkflowError(
             f"{len(tags)} tags exceed the AWS Batch limit of {MAX_TAGS}: {sorted(tags)}"

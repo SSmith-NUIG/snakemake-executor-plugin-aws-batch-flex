@@ -750,7 +750,9 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | `job-definition-prefix` | `snakemake` | How the job definitions the plugin makes are named. |
 
 Every job is also tagged with `snakemake-run-id`, `snakemake-workflow`, `snakemake-rule` and
-`snakemake-job-id`, so you can find a run's jobs, or a rule's, in the Batch console and in billing.
+`snakemake-job-id`, so you can find a run's jobs, or a rule's, in the Batch console and in billing,
+and always with `ManagedBy=snakemake-batch-flex` (even with `no-auto-tags`), which the IAM policy
+needs to let you stop them.
 
 ### The smkflex command
 
@@ -953,7 +955,10 @@ job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` an
 far from yours, and `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
 `ec2:DescribeVolumes`, `ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price
 the instances (and their disks) a run used. `terraform output launcher_policy_json` prints a
-policy with all of this. The job role needs read/write on the prefix. For `smkflex`, the head
+policy with all of this, limited to what the plugin makes, so it can't touch other Batch work in
+the account: it registers only `snakemake-*` job definitions, stops only jobs tagged
+`ManagedBy=snakemake-batch-flex` (the plugin and `smkflex` tag every job with it), and reads only
+the plugin's log group. The job role needs read/write on the prefix. For `smkflex`, the head
 job's role needs the same as the identity running `snakemake`, and that identity also needs
 `iam:PassRole` on the head role (both are in the Terraform setup).
 

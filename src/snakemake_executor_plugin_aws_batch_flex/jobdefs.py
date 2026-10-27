@@ -11,6 +11,8 @@ from typing import Optional
 from botocore.exceptions import ClientError
 from snakemake_interface_common.exceptions import WorkflowError
 
+from .tags import MANAGED_BY
+
 DEFAULT_LOG_GROUP = "/aws/batch/job"
 
 
@@ -139,7 +141,7 @@ class JobDefinitions:
                     platformCapabilities=[platform.upper()],
                 )
                 # ManagedBy lets scripts/cleanup-jobdefs.sh tell the plugin's definitions apart
-                kwargs["tags"] = {**self.tags, "ManagedBy": "snakemake-batch-flex"}
+                kwargs["tags"] = {**self.tags, **MANAGED_BY}
                 self.batch.register_job_definition(**kwargs)
         except ClientError as e:
             raise WorkflowError(f"Could not register AWS Batch job definition: {e}")
