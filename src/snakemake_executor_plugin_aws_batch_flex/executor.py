@@ -24,7 +24,15 @@ from .jobdefs import JobDefinitions, describe_existing, log_group_of, mutable_ta
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
 from .patches import keep_unneeded_temp, recheck_s3_directories
-from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, describe_queue, version_note
+from .preflight import (
+    SUBMIT_HINT,
+    access_denied,
+    ami_snakemake_version,
+    check_queue,
+    check_role,
+    describe_queue,
+    version_note,
+)
 from .settings import (
     TEST_STATUS_SECONDS,
     ExecutorSettings,
@@ -50,6 +58,13 @@ def _out_of_memory(d: dict) -> bool:
     """Batch/ECS says why a container stopped; out of memory is OutOfMemoryError."""
     c = d.get("container") or {}
     return "OutOfMemory" in (c.get("reason") or "") or "OutOfMemory" in (d.get("statusReason") or "")
+
+
+def _not_allowed(e) -> bool:
+    """Was a Batch call refused for want of a permission? Batch reports a missing iam:PassRole
+    as a plain ClientException that says "not authorized"."""
+    return isinstance(e, ClientError) and (
+        access_denied(e) or "not authorized" in e.response.get("Error", {}).get("Message", ""))
 
 
 class Executor(RemoteExecutor):
@@ -164,7 +179,7 @@ class Executor(RemoteExecutor):
         try:
             if headjob.get(url) != data:
                 headjob.put(url, data)
-        except Exception as e:
+        except (ClientError, BotoCoreError, OSError) as e:
             self.logger.warning(f"jobs run without the conda env cache and usage figures: could not "
                                 f"upload their code to {url} ({e})")
             return None
@@ -523,7 +538,7 @@ class Executor(RemoteExecutor):
         try:
             resp = self.batch.submit_job(**kwargs)
         except (ClientError, BotoCoreError) as e:
-            hint = f"\n{SUBMIT_HINT}" if "AccessDenied" in str(e) or "not authorized" in str(e) else ""
+            hint = f"\n{SUBMIT_HINT}" if _not_allowed(e) else ""
             raise WorkflowError(f"AWS Batch submit_job failed: {e}{hint}") from e
 
         self.logger.info(

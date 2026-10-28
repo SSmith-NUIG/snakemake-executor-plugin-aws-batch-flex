@@ -359,3 +359,25 @@ def test_settings_are_checked_before_anything_reaches_aws():
               execution_role_arn=ex)
     assert volume_mounts(s) == [("/scratch", "/scratch", False), ("/ref", "/ref", True)]
     assert registry_secrets(s) == {"docker.io": secret}
+
+
+def test_aws_errors_are_told_apart_by_their_codes(monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+    from snakemake_executor_plugin_aws_batch_flex import condacache
+    from snakemake_executor_plugin_aws_batch_flex.executor import _not_allowed
+
+    def err(code, msg=""):
+        return ClientError({"Error": {"Code": code, "Message": msg}}, "Op")
+
+    raised = []
+    s3 = types.SimpleNamespace(download_file=lambda b, k, d: (_ for _ in ()).throw(raised[-1]))
+    monkeypatch.setattr(condacache, "_s3", lambda url: (s3, "b", "k"))
+    raised.append(err("404"))
+    assert condacache._fetch("s3://b/k", str(tmp_path / "x")) is False  # not cached yet: build
+    raised.append(err("403", "Forbidden"))
+    with pytest.raises(ClientError):  # not allowed: say so, don't pretend it isn't cached
+        condacache._fetch("s3://b/k", str(tmp_path / "x"))
+
+    assert _not_allowed(err("AccessDeniedException"))
+    assert _not_allowed(err("ClientException", "User: x is not authorized to perform: iam:PassRole"))
+    assert not _not_allowed(err("ClientException", "Job queue q does not exist"))

@@ -19,7 +19,7 @@ def skip_remote_module_scripts():
     try:
         from snakemake.dag import DAG
         from snakemake.sourcecache import LocalSourceFile, SourceFile
-    except Exception:
+    except ImportError:  # not in this version
         return
     orig = getattr(DAG, "get_sources", None)
     if orig is None or getattr(orig, "_skips_remote", False):
@@ -84,7 +84,7 @@ def explain_local_only_inputs():
     storage. Say so, with the smkflex push command that uploads it."""
     try:
         from snakemake.exceptions import MissingInputException
-    except Exception:
+    except ImportError:  # not in this version
         return
     orig = MissingInputException.__init__
     if getattr(orig, "_smkflex", False):
@@ -94,7 +94,7 @@ def explain_local_only_inputs():
         orig(self, job, files, *args, **kwargs)
         try:
             hint = local_only_hint(job.rule.workflow, files)
-        except Exception:
+        except Exception:  # only an extra line: never let it break Snakemake's own error
             hint = None
         if hint and self.args:
             self.args = (self.args[0] + hint, *self.args[1:])
@@ -137,7 +137,7 @@ def recheck_s3_directories():
     ask is_dir() too, and keep the remembered answer, as without the patch."""
     try:
         from snakemake_storage_plugin_s3 import StorageObject
-    except Exception:
+    except ImportError:  # not in this version
         return
     orig = getattr(StorageObject, "exists", None)
     if orig is None or getattr(orig, "_rechecks", False):

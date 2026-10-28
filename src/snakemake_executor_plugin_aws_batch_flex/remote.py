@@ -195,8 +195,8 @@ def follow(batch, logs, jid, follow_logs):
                 try:
                     resp = logs.get_log_events(**kw)
                 except ClientError as e:
-                    if "ResourceNotFound" in str(e):
-                        break
+                    if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                        break  # no log stream yet
                     raise
                 for e in resp.get("events", []):
                     print(e["message"].rstrip())

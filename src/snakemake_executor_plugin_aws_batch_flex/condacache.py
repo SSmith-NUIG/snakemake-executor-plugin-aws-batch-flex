@@ -52,10 +52,12 @@ def _fetch(url, dest):
     """Copy the cached archive at url (s3:// or a folder path) to dest; False if there's none."""
     if url.startswith("s3://"):
         s3, bucket, key = _s3(url)
+        from botocore.exceptions import ClientError
+
         try:
             s3.download_file(bucket, key, dest)
-        except Exception as e:
-            if "404" in str(e) or "Not Found" in str(e) or "NoSuchKey" in str(e):
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
                 return False
             raise
         return True

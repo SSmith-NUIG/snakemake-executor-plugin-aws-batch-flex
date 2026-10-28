@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
 
+from botocore.exceptions import BotoCoreError, ClientError
+
 # A Batch job costs roughly 30-60 s on top of its command (scheduling, starting the container,
 # copying files from and to storage), so many short jobs of one rule are better grouped.
 SHORT_JOB_SECONDS = 60
@@ -90,7 +92,7 @@ class Usage:
                 events = logs_client.get_log_events(
                     logGroupName=group, logStreamName=stream, limit=20, startFromHead=False
                 )["events"]
-            except Exception:
+            except (ClientError, BotoCoreError):
                 return rule, None
             for e in reversed(events):
                 m = USAGE_RE.search(e.get("message", ""))

@@ -7,7 +7,7 @@ from typing import Optional
 from botocore.exceptions import BotoCoreError, ClientError
 
 
-def _denied(e: ClientError) -> bool:
+def access_denied(e: ClientError) -> bool:
     code = e.response.get("Error", {}).get("Code", "")
     return "AccessDenied" in code or "UnauthorizedOperation" in code or code == "AccessDeniedException"
 
@@ -42,7 +42,7 @@ def check_queue(batch, queue: str, platform: Optional[str] = None):
     try:
         q, envs = describe_queue(batch, queue)
     except ClientError as e:
-        if _denied(e):
+        if access_denied(e):
             return [], [f"cannot verify queue '{queue}' (no batch:DescribeJobQueues permission); continuing"], None
         return [f"AWS Batch refused the queue lookup: {e}"], [], None
     except BotoCoreError as e:
