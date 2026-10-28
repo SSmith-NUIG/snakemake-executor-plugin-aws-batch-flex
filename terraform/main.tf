@@ -269,6 +269,18 @@ data "aws_iam_policy_document" "launcher" {
     resources = ["${local.batch_arn}:job-definition/snakemake-*"]
   }
   statement {
+    # a privileged container is root on the instance, with the other jobs' files and the
+    # instance role; the plugin never asks for one
+    effect    = "Deny"
+    actions   = ["batch:RegisterJobDefinition"]
+    resources = ["*"]
+    condition {
+      test     = "Bool"
+      variable = "batch:Privileged"
+      values   = ["true"]
+    }
+  }
+  statement {
     # tags given when submitting a job (AWS checks them against the queue) or registering a
     # job definition
     actions = ["batch:TagResource"]

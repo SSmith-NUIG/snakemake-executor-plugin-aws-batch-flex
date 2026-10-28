@@ -125,7 +125,7 @@ far from yours, and `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
 `ec2:DescribeVolumes`, `ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price
 the instances (and their disks) a run used. `terraform output launcher_policy_json` prints a
 policy with all of this, limited to what the plugin makes, so it can't touch other Batch work in
-the account: it registers only `snakemake-*` job definitions, stops only jobs tagged
+the account: it registers only `snakemake-*` job definitions, and never privileged ones (root on the instance), stops only jobs tagged
 `ManagedBy=snakemake-batch-flex` (the plugin and `smkflex` tag every job with it), and reads only
 the plugin's log group. The job role needs read/write on the prefix. For `smkflex`, the head
 job's role needs the same as the identity running `snakemake`, and that identity also needs
