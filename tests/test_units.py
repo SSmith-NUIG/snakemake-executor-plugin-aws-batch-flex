@@ -395,3 +395,13 @@ def test_a_workaround_for_changed_code_is_not_applied_but_noted():
         assert "W2" in patches.NOT_APPLIED and "W1" not in patches.NOT_APPLIED
     finally:
         patches.NOT_APPLIED.remove("W2")
+
+
+def test_extra_packages_are_pinned_too():
+    import importlib.metadata as md
+    from snakemake_executor_plugin_aws_batch_flex import hostenv
+    here = md.version("pytest")  # any package installed here with dependencies of its own
+    pins = hostenv.default_constraints([], ["pytest"])
+    assert f"pytest=={here}" in pins and any(p.startswith("pluggy==") for p in pins)
+    # asked for a version this machine doesn't have: not pinned, so the install doesn't fail
+    assert not any(p.startswith("pytest==") for p in hostenv.default_constraints([], ["pytest<1"]))

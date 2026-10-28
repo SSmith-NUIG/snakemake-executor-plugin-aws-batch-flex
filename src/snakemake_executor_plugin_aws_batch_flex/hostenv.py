@@ -52,10 +52,27 @@ def default_requirements(storage_plugins: list[str], extra: list[str]) -> list[s
     return [pinned(p) for p in _packages(storage_plugins)] + list(extra)
 
 
-def default_constraints(storage_plugins: list[str]) -> list[str]:
+def default_constraints(storage_plugins: list[str], extra: list[str] = ()) -> list[str]:
+    """Pins for the env: this machine's versions of Snakemake, the storage plugins and the extra
+    packages (e.g. pandas), and of everything they need."""
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+
     from .bootstrap import locked
 
-    pins, skipped = locked(_packages(storage_plugins))
+    asked = {}
+    for r in extra:
+        try:
+            req = Requirement(r)
+        except InvalidRequirement:  # a URL or a path: installed as given, not pinned
+            continue
+        asked[canonicalize_name(req.name)] = req.specifier
+    pins, skipped = locked(_packages(storage_plugins) + list(asked))
+    # a version here that doesn't fit what's asked for (pandas<3 with pandas 3 here) isn't pinned
+    fits = [p for p in pins if asked.get(p.split("==")[0], None) is None
+            or asked[p.split("==")[0]].contains(p.split("==")[1], prereleases=True)]
+    skipped += [p for p in pins if p not in fits]
+    pins = fits
     if skipped:
         print(f"note: not pinned, since this machine's version doesn't fit what the packages ask for: "
               f"{', '.join(skipped)}", file=sys.stderr)
@@ -193,7 +210,7 @@ def main(argv=None):
             ap.error(f"cannot read --include {f}: {e} (user-data must be plain ASCII)")
     script = install_script(
         a.path, a.python_version, default_requirements(a.storage_plugin, a.extra_package),
-        default_constraints(a.storage_plugin),
+        default_constraints(a.storage_plugin, a.extra_package),
     )
     sys.stdout.write(
         launch_template_userdata(script, tuple(includes)) if a.what == "userdata" else script
