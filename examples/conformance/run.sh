@@ -36,7 +36,7 @@ run() { # name, snakemake args...
       shm)        check shm results/shm/big.txt "^1024$" && check shm results/shm/default.txt "^64$";;
       pyimage)    check pyimage results/pyimg/out.txt "sum=6 pandas=2.2.1";;
       pyrule)     check pyrule results/pyrule/image.txt "python=/usr/local/bin/python pandas=yes" \
-                    && check pyrule results/pyrule/host.txt "python=/opt/snakemake-env/.* pandas=no";;
+                    && check pyrule results/pyrule/host.txt "python=/opt/snakemake-env/";;  # the AMI's (pandas or not)
       rscript)    check rscript results/r/out.txt "rscript threads=2 rule=r_script R=4";;
       wrapper)    check wrapper results/wr/ref.fa.fai "^chr2	8	";;
       mixed)      check mixed results/mixed/both.txt "AWS_ECS_EC2" && check mixed results/mixed/both.txt "AWS_ECS_FARGATE";;
