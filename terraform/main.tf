@@ -109,6 +109,7 @@ resource "aws_iam_role_policy_attachment" "instance_extra" {
 
 # fallback credentials for jobs that run without a job role
 resource "aws_iam_role_policy" "instance_s3" {
+  count  = var.jobs_use_instance_role ? 1 : 0
   name   = "s3-work-prefix"
   role   = aws_iam_role.instance.id
   policy = data.aws_iam_policy_document.s3_access.json
@@ -142,11 +143,12 @@ resource "aws_launch_template" "this" {
   user_data              = local.userdata_b64
   update_default_version = true
 
-  # hop limit 2 lets containers reach the instance role through IMDS
+  # hop limit 1 keeps containers away from IMDS, i.e. the instance role (jobs have their own);
+  # 2 lets them reach it
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+    http_put_response_hop_limit = var.jobs_use_instance_role ? 2 : 1
   }
 
   dynamic "block_device_mappings" {

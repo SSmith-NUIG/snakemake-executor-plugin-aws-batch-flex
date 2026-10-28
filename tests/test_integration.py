@@ -463,6 +463,7 @@ def test_conda_cache_is_set_up_for_jobs(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     sub = next(c for c in calls if c["call"] == "submit_job")
     assert sub["env"]["SMK_FLEX_CONDA_CACHE"] == "instance"
+    assert sub["env"]["AWS_REGION"] == sub["env"]["AWS_DEFAULT_REGION"] == "eu-west-1"
     code = sub["env"]["SMK_FLEX_JOB_CODE"]
     assert code.startswith(str(tmp_path / "store" / ".smkflex" / "code" / "jobtools-"))
     # (the launcher that turns it on in the job is tested in test_condacache.py: these fake jobs

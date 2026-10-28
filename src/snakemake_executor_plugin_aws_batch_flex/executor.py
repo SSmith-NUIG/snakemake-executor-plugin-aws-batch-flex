@@ -117,6 +117,7 @@ class Executor(RemoteExecutor):
         )
         self.batch = boto3.client("batch", config=cfg)
         self.cwlogs = boto3.client("logs", config=cfg)
+        self.region = getattr(getattr(self.batch, "meta", None), "region_name", None) or s.region
         self._cfg = cfg
         # which EC2 instances the jobs run on, for the cost at the end
         self.instances = Instances(boto3.client("ecs", config=cfg), boto3.client("ec2", config=cfg),
@@ -521,6 +522,8 @@ class Executor(RemoteExecutor):
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()
                 ]
                 + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}]
+                # the region, which jobs can't look up on the instance (IMDS) when it's closed to them
+                + [{"name": n, "value": self.region} for n in ("AWS_REGION", "AWS_DEFAULT_REGION") if self.region]
                 + ([{"name": "SMK_FLEX_JOB_CODE", "value": self.job_code}] if self.job_code else [])
                 + ([{"name": "SMK_FLEX_CONDA_CACHE", "value": self.conda_cache}]
                    if self.job_code and self.conda_cache != "none" else []),

@@ -47,7 +47,8 @@ class ExecutorSettings(ExecutorSettingsBase):
         metadata={
             "help": "IAM role assumed by the job container (needs access to the "
             "storage bucket). If omitted, the compute environment's instance role "
-            "is used (EC2 only).",
+            "is used (EC2 only, and only if the instances let containers reach it: "
+            "jobs_use_instance_role in the Terraform setup).",
             "env_var": False,
             "required": False,
         },

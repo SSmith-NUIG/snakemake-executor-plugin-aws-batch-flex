@@ -73,6 +73,16 @@ variable "job_role_arn" {
   default     = null
 }
 
+variable "jobs_use_instance_role" {
+  description = <<-EOT
+    Let jobs reach the instance role (IMDS hop limit 2) and give that role the S3 prefix, for
+    jobs without a job role. Off: the jobs use only their job role, and a job can't take the
+    instances' own credentials.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "batch_service_role_arn" {
   description = "Null uses the AWS Batch service-linked role (shared account-level role)."
   type        = string
