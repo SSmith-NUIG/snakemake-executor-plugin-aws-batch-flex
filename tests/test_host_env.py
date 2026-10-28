@@ -40,7 +40,7 @@ def test_host_prelude_fails_fast_with_clear_message(tmp_path):
 
 @pytest.mark.skipif(not os.environ.get("RUN_NETWORK_TESTS"), reason="needs network")
 def test_snakemake_runs_from_the_mounted_host_env(tmp_path):
-    env = tmp_path / "host-env"
+    env = tmp_path.parent / f"{tmp_path.name}-host-env"  # outside the workflow folder, as on an instance
     script = hostenv.install_script(str(env), f"{sys.version_info[0]}.{sys.version_info[1]}",
                                     hostenv.default_requirements(["fs", "s3"], []), hostenv.default_constraints(["fs", "s3"]))
     sp = tmp_path / "install.sh"; sp.write_text(script)
