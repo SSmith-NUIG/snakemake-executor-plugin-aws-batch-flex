@@ -189,6 +189,12 @@ def test_pull(tmp_path):
     assert not (wf / "results2").exists()
     r, _ = smkflex(wf, "pull", "results")
     assert "0 downloaded, 2 already here" in r.stdout
+    # made again in storage, at the same size: downloaded again
+    (store / "results/a.txt").write_text("Z")
+    later = (wf / "results/a.txt").stat().st_mtime + 10
+    os.utime(store / "results/a.txt", (later, later))
+    r, _ = smkflex(wf, "pull", "results")
+    assert "1 downloaded" in r.stdout and "1 already here" in r.stdout and (wf / "results/a.txt").read_text() == "Z"
     r, _ = smkflex(wf, "pull", "results2/c.txt", "--to", str(tmp_path / "out"), "--dry-run")
     assert "would download results2/c.txt" in r.stdout and not (tmp_path / "out").exists()
 
@@ -319,6 +325,13 @@ def test_push(tmp_path):
     assert (tmp_path / "store" / "data" / "sub" / "b.fq").read_text() == "BB"
     r, _ = smkflex(wf, "push", "data")
     assert "0 uploaded" in r.stdout and "2 already there" in r.stdout
+    # edited since, to the same size: sent again
+    (wf / "data" / "a.fq").write_text("CCC")
+    later = (tmp_path / "store" / "data" / "a.fq").stat().st_mtime + 10
+    os.utime(wf / "data" / "a.fq", (later, later))
+    r, _ = smkflex(wf, "push", "data")
+    assert "1 uploaded" in r.stdout and "1 already there" in r.stdout
+    assert (tmp_path / "store" / "data" / "a.fq").read_text() == "CCC"
     r, _ = smkflex(wf, "push", "../x")
     assert r.returncode == 2 and "outside the workflow folder" in r.stderr
 

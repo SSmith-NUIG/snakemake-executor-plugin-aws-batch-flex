@@ -530,7 +530,7 @@ def cmd_status(a):
 
 
 def _remote_files(prefix, path, s3):
-    """(relative path, size) of the files under prefix/path, in storage."""
+    """(relative path, size, modification time) of the files under prefix/path, in storage."""
     path = path.strip("/")
     if prefix.startswith("s3://"):
         bucket, _, base = prefix[len("s3://"):].partition("/")
@@ -542,17 +542,23 @@ def _remote_files(prefix, path, s3):
                 rel = o["Key"][len(base) + 1:] if base else o["Key"]
                 # "results" must not also match "results2/..."
                 if rel == path or rel.startswith(path + "/") or not path:
-                    out.append((rel, o["Size"]))
+                    out.append((rel, o["Size"], o["LastModified"].timestamp()))
         return out
     root = os.path.join(prefix, path)
     if os.path.isfile(root):
-        return [(path, os.path.getsize(root))]
+        return [(path, os.path.getsize(root), os.path.getmtime(root))]
     out = []
     for d, _dirs, names in os.walk(root):
         for n in names:
             full = os.path.join(d, n)
-            out.append((os.path.relpath(full, prefix), os.path.getsize(full)))
+            out.append((os.path.relpath(full, prefix), os.path.getsize(full), os.path.getmtime(full)))
     return sorted(out)
+
+
+def _same(size, mtime, other_size, other_mtime):
+    """A copy is up to date if it has the same size and was made after the original last
+    changed, as `aws s3 sync` decides (a copy's time is when it was copied)."""
+    return other_size == size and other_mtime >= mtime
 
 
 def _bucket_key(prefix, rel):
@@ -607,7 +613,7 @@ def cmd_pull(a):
     s3 = boto3.client("s3", config=BotoConfig(region_name=region, max_pool_connections=TRANSFER_THREADS * 2)) \
         if prefix.startswith("s3://") else None
     if not a.paths:
-        tops = sorted({rel.split("/")[0] for rel, _ in _remote_files(prefix, "", s3)
+        tops = sorted({rel.split("/")[0] for rel, *_ in _remote_files(prefix, "", s3)
                        if not rel.startswith((".smkflex/", "snakemake-workflow-sources."))})
         raise Fail("say what to download, e.g. `smkflex pull results`. In storage: " + (", ".join(tops) or "nothing"))
     todo, skipped = [], 0
@@ -615,9 +621,9 @@ def cmd_pull(a):
         files = _remote_files(prefix, _storage_path(path), s3)
         if not files:
             print(f"nothing in storage under {path}", file=sys.stderr)
-        for rel, size in files:
+        for rel, size, mtime in files:
             dest = os.path.join(a.to, rel)
-            if not a.force and os.path.isfile(dest) and os.path.getsize(dest) == size:
+            if not a.force and os.path.isfile(dest) and _same(size, mtime, os.path.getsize(dest), os.path.getmtime(dest)):
                 skipped += 1
                 continue
             if a.dry_run:
@@ -637,7 +643,7 @@ def cmd_pull(a):
         got, total, secs = _transfer(todo, get, "downloaded")
         rate = _rate(total, secs)
         print(f"{got} downloaded" + (f" ({rate})" if rate else "")
-              + (f", {skipped} already here (same size; --force downloads them again)" if skipped else ""))
+              + (f", {skipped} already here (unchanged; --force downloads them again)" if skipped else ""))
     return 0
 
 
@@ -717,11 +723,11 @@ def cmd_push(a):
         if prefix.startswith("s3://") else None
     there = {}
     for top in {f.split("/")[0] for f in files}:
-        there.update(dict(_remote_files(prefix, top, s3)))
+        there.update({rel: (size, mtime) for rel, size, mtime in _remote_files(prefix, top, s3)})
     todo, skipped = [], 0
     for rel, local in sorted(files.items()):
         size = os.path.getsize(local)
-        if not a.force and there.get(rel) == size:
+        if not a.force and rel in there and _same(size, os.path.getmtime(local), *there[rel]):
             skipped += 1
             continue
         if a.dry_run:
@@ -741,7 +747,7 @@ def cmd_push(a):
         sent, total, secs = _transfer(todo, put, "uploaded")
         rate = _rate(total, secs)
         print(f"{sent} uploaded to {prefix}" + (f" ({rate})" if rate else "")
-              + (f", {skipped} already there (same size; --force sends them again)" if skipped else ""))
+              + (f", {skipped} already there (unchanged; --force sends them again)" if skipped else ""))
         _hint_gitignore([p for p in a.paths if not os.path.isabs(p)])
     return 0
 

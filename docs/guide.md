@@ -90,7 +90,8 @@ smkflex push /shared/refs     # an absolute one (your own), e.g. run on the clus
 ```
 
 It sends 16 files at a time (and big files in parallel parts), as fast as `aws s3 sync`, and
-skips files that are already there with the same size, so an interrupted upload just continues.
+skips files that are already there and unchanged since (same size, not edited after they were
+uploaded, as `aws s3 sync` decides), so an interrupted upload just continues.
 
 Data that's already in S3, e.g. from a sequencing provider, doesn't need copying: in the rule,
 refer to it as `storage("s3://their-bucket/run1/S1.fq")`. The job role then needs read access to
