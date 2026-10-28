@@ -444,3 +444,30 @@ def test_numpy_gets_the_amis_conda_libstdcxx_first(tmp_path, monkeypatch):
     loaded.clear()
     jobfixes.make_numpy_loadable()  # no conda mounted: nothing to load
     assert loaded == []
+
+
+def test_each_library_the_image_lacks_comes_from_the_amis_conda(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import job_tools_source
+    root = tmp_path / "miniforge3"
+    (root / "condabin").mkdir(parents=True)
+    (root / "lib").mkdir()
+    for lib in ("libgcc_s.so.1", "libstdc++.so.6", "libz.so.1"):
+        (root / "lib" / lib).write_text("")
+    # as the AMI's numpy behaves in samtools' bioconda image: libz missing, until it's loaded
+    (tmp_path / "pkgs" / "numpy").mkdir(parents=True)
+    (tmp_path / "pkgs" / "numpy" / "__init__.py").write_text(
+        "import builtins\n"
+        "if 'libz.so.1' not in getattr(builtins, 'loaded', []):\n"
+        "    raise ImportError('Original error was: libz.so.1: cannot open shared object file')\n")
+    (tmp_path / "tools.py").write_text(job_tools_source())
+    code = ("import builtins, ctypes, os\n"
+            "builtins.loaded = []\n"
+            "ctypes.CDLL = lambda path, mode=0: builtins.loaded.append(os.path.basename(path))\n"
+            "ns = {}; exec(open('tools.py').read(), ns); ns['make_numpy_loadable']()\n"
+            "import numpy\n"
+            "print('loaded', builtins.loaded)\n")
+    env = dict(os.environ, PYTHONPATH=str(tmp_path / "pkgs"), PATH=f"/usr/bin:/bin:{root / 'condabin'}")
+    r = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "loaded ['libgcc_s.so.1', 'libstdc++.so.6', 'libz.so.1']" in r.stdout
+    assert "can't load in this image" not in r.stderr

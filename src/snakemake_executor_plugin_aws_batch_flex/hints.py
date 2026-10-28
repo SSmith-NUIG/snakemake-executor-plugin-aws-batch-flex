@@ -20,10 +20,10 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
         )
     if "pandas of Snakemake's env can't load in this image" in text and "pandas" in text.split("can't load in this image", 1)[1]:
         hints.append(
-            "  hint: the image lacks the C++ runtime (libstdc++.so.6) where Linux looks for it, which the "
-            "numpy and pandas of the AMI's Snakemake need; many bioconda images keep theirs inside their own "
-            "environment. If the Snakefile imports pandas, use an image that has it in /usr/lib (e.g. a "
-            "Debian- or Ubuntu-based one) for this rule; otherwise this is only a note."
+            "  hint: the image lacks a system library (named above) that the numpy and pandas of the AMI's "
+            "Snakemake need, and no conda from the AMI was there to lend one (aws-batch-flex-conda-path, EC2). "
+            "Many bioconda images keep theirs inside their own environment. If the Snakefile imports pandas, "
+            "set aws-batch-flex-conda-path, or use a Debian- or Ubuntu-based image for this rule."
         )
     missing = sorted(set(re.findall(r"ModuleNotFoundError: No module named '([A-Za-z0-9_.]+)'", text)))
     for mod in missing:
