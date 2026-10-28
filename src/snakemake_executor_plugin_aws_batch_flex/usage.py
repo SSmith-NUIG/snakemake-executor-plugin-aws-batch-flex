@@ -1,9 +1,9 @@
 """What a run used on Batch, per rule, from Batch's own start and stop times of every attempt
-(Spot retries included). Printed when the run ends.
+(Spot retries included) and the figures each job logs (jobmonitor.py): vCPU- and GiB-hours,
+memory, CPUs and disk, with the resources to paste into the profile. Printed when the run ends.
 
-Cost: on EC2, the instances the jobs ran on, at AWS's prices, shared out by vCPU-time
-(instances.py); on Fargate, what Fargate charges per job. When the instances can't be looked
-up, a rough per-vCPU estimate instead. Storage, data transfer and logs aren't in it."""
+What it cost is AWS's to say: every job carries the tags snakemake-run-id and snakemake-rule,
+which AWS Billing (with split cost allocation data) breaks costs down by."""
 
 import math
 import re
@@ -12,13 +12,6 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
-
-# USD, on-demand list prices in eu-west-1 / us-east-1 (they're within ~10% of each other).
-EC2_PER_VCPU_HOUR = 0.05  # general-purpose instances, memory included
-SPOT_FACTOR = 0.35  # Spot is typically 60-70% below on-demand
-FARGATE_PER_VCPU_HOUR = 0.0405
-FARGATE_PER_GB_HOUR = 0.0045
-FARGATE_SPOT_FACTOR = 0.3
 
 # A Batch job costs roughly 30-60 s on top of its command (scheduling, starting the container,
 # copying files from and to storage), so many short jobs of one rule are better grouped.
@@ -42,20 +35,12 @@ def _seconds(d: dict) -> float:
     return sum(max(0, stop - start) / 1000 for start, stop in spans if start is not None and stop is not None)
 
 
-def estimate(platform: str, spot: bool, vcpu_hours: float, gib_hours: float) -> float:
-    if platform == "fargate":
-        cost = vcpu_hours * FARGATE_PER_VCPU_HOUR + gib_hours * FARGATE_PER_GB_HOUR
-        return cost * (1 - FARGATE_SPOT_FACTOR if spot else 1)
-    return vcpu_hours * EC2_PER_VCPU_HOUR * (SPOT_FACTOR if spot else 1)
-
-
 @dataclass
 class Row:
-    """One rule's jobs; usd is what's priced per job (Fargate, estimated EC2), not instances."""
+    """One rule's jobs."""
     jobs: int = 0
     vcpu_h: float = 0.0
     gib_h: float = 0.0
-    usd: float = 0.0
 
 
 class Usage:
@@ -71,12 +56,8 @@ class Usage:
         self.oom_kills = defaultdict(int)  # rule -> its jobs' processes killed for lack of memory
         self.platform = {}  # rule -> ec2 | fargate
         self.sampled = False
-        self.estimated = False  # some EC2 cost is the rough per-vCPU estimate
-        self.rough = defaultdict(float)  # rule -> rough estimate for jobs on known instances
 
-    def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str, spot: bool,
-            on_known_instance: bool = False):
-        """on_known_instance: an EC2 job whose instances are known, so its cost comes from them."""
+    def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str):
         secs = _seconds(d)
         if secs:
             self.seconds[rule].append(secs)
@@ -88,13 +69,6 @@ class Usage:
         row.jobs += 1
         row.vcpu_h += vcpu * hours
         row.gib_h += mem_mib / 1024 * hours
-        rough = estimate(platform, spot, vcpu * hours, mem_mib / 1024 * hours)
-        if platform == "fargate" or not on_known_instance:
-            row.usd += rough
-            if platform != "fargate":
-                self.estimated = True
-        else:
-            self.rough[rule] += rough  # used only if the instances can't be priced
 
     def add_log(self, rule: str, group: str, stream: str):
         self.logs[rule].append((group, stream))
@@ -161,45 +135,30 @@ class Usage:
                 out[rule] = max(1, min(int(asked) - 1, math.ceil(most * THREAD_HEADROOM)))
         return out
 
-    def table(self, overhead_mib: int = 256, instance_costs: Optional[dict] = None,
-              instance_line: Optional[str] = None) -> Optional[str]:
+    def table(self, overhead_mib: int = 256) -> Optional[str]:
         if not self.rows:
             return None
         width = max(10, *(len(r) for r in self.rows))
-        if instance_costs is not None:
-            how = ("cost: the EC2 instances at AWS's prices, shared out by vCPU-time"
-                   + (", partly estimated" if self.estimated else "") + "; without storage or data transfer")
-        else:
-            how = ("cost: rough estimate from the jobs' vCPUs at list prices, without instance idle "
-                   "time, storage or data transfer")
         lines = [
-            f"AWS Batch usage of this run ({how}):",
-            f"  {'rule':<{width}}  {'jobs':>5}  {'vCPU-h':>8}  {'GiB-h':>8}  {'~USD':>8}"
+            "AWS Batch usage of this run (costs: AWS Billing, by the jobs' tags snakemake-run-id and "
+            "snakemake-rule):",
+            f"  {'rule':<{width}}  {'jobs':>5}  {'vCPU-h':>8}  {'GiB-h':>8}"
             f"  {'vCPUs':>5}  {'busy':>5}  {'mem MiB':>8}  {'peak':>6}  {'disk GiB':>8}",
         ]
-        def usd(c):
-            return "<0.01" if 0 < c < 0.005 else f"{c:.2f}"
-
-        def cost(rule):
-            extra = self.rough if instance_costs is None else instance_costs
-            return self.rows[rule].usd + extra.get(rule, 0.0)
-
         total = Row()
-        for rule in sorted(self.rows, key=lambda r: -cost(r)):
-            row, c = self.rows[rule], cost(rule)
+        # the rules that took the most first
+        for rule in sorted(self.rows, key=lambda r: -self.rows[r].vcpu_h):
+            row = self.rows[rule]
             n, v, g = row.jobs, row.vcpu_h, row.gib_h
             peak = f"{max(self.peaks[rule]):.0f}" if self.peaks.get(rule) else "-"
             busy = f"{max(self.busy[rule]):.1f}" if self.busy.get(rule) else "-"
             disk = f"{max(self.disk[rule]):.1f}" if self.disk.get(rule) else "-"
             vcpus = f"{self.threads.get(rule, 0):g}"
-            lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}  {usd(c):>8}"
+            lines.append(f"  {rule:<{width}}  {n:>5}  {v:>8.2f}  {g:>8.2f}"
                          f"  {vcpus:>5}  {busy:>5}  {self.asked.get(rule, 0):>8}  {peak:>6}  {disk:>8}")
-            total = Row(total.jobs + n, total.vcpu_h + v, total.gib_h + g, total.usd + c)
+            total = Row(total.jobs + n, total.vcpu_h + v, total.gib_h + g)
         if len(self.rows) > 1:
-            lines.append(f"  {'total':<{width}}  {total.jobs:>5}  {total.vcpu_h:>8.2f}  {total.gib_h:>8.2f}"
-                         f"  {usd(total.usd):>8}")
-        if instance_line:
-            lines.append(instance_line)
+            lines.append(f"  {'total':<{width}}  {total.jobs:>5}  {total.vcpu_h:>8.2f}  {total.gib_h:>8.2f}")
         if self.peaks:
             note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
             lines.append(f"vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most "

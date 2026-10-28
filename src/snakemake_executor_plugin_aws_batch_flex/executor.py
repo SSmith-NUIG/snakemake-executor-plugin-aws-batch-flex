@@ -19,24 +19,22 @@ from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
 from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 
 from .bootstrap import MODES, conda_snippet, image_python_snippet, job_tools_source, snakemake_prelude
-from .costs import Usage
 from .hints import known_problem_hints
-from .instances import Instances
 from .jobdefs import JobDefinitions, describe_existing, is_ecr, mutable_tag, normalize_image
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
 from .patches import keep_unneeded_temp, recheck_s3_directories
-from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, describe_queue, queue_uses_spot, version_note
+from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, describe_queue, version_note
 from .settings import TEST_STATUS_SECONDS, ExecutorSettings, host_mounts, normalized
 from .sizing import fargate_size, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
+from .usage import Usage
 
 FARGATE_MAX_DISK_GIB = 200
 CONDA_CACHE_HOST_DIR = "/var/cache/smkflex-conda"
 CONDA_CACHE_JOB_DIR = "/tmp/smkflex-conda"  # condacache.ROOT
 FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
-SHARING_CHECK_SECONDS = 30  # how often to look for other work on this run's instances
 CANCEL_THREADS = 16  # terminate_job calls at once when the run is cancelled
 
 
@@ -119,9 +117,6 @@ class Executor(RemoteExecutor):
         self.cwlogs = boto3.client("logs", config=cfg)
         self.region = getattr(getattr(self.batch, "meta", None), "region_name", None) or s.region
         self._cfg = cfg
-        # which EC2 instances the jobs run on, for the cost at the end
-        self.instances = Instances(boto3.client("ecs", config=cfg), boto3.client("ec2", config=cfg),
-                                   getattr(getattr(self.batch, "meta", None), "region_name", None) or s.region)
         self.tags = tags
         self.jobdefs = JobDefinitions(
             self.batch,
@@ -158,8 +153,6 @@ class Executor(RemoteExecutor):
         self._warned_existing: set = set()
         self.usage = Usage()
         self._oom: dict = {}  # job id -> (times it ran out of memory, MiB its rule asked for then)
-        self._spot: dict = {}  # queue -> runs on Spot
-        self._sharing_checked = 0.0
         if not s.skip_preflight:
             errors, warnings, detected = check_queue(self.batch, s.queue, s.platform)
             self._platforms[s.queue] = s.platform or detected or "ec2"
@@ -597,7 +590,6 @@ class Executor(RemoteExecutor):
             for d in resp["jobs"]:
                 described[d["jobId"]] = d
 
-        ours = {}  # container instance -> this run's jobs running there
         for jid, info in by_id.items():
             d = described.get(jid)
             if d is None:
@@ -617,27 +609,14 @@ class Executor(RemoteExecutor):
                 msg = await asyncio.to_thread(self._failure_message, d, info)
                 self.report_job_error(info, msg=msg)
             elif status in ACTIVE:
-                arn = (d.get("container") or {}).get("containerInstanceArn")
-                if arn and arn not in self.instances.ids:
-                    await asyncio.to_thread(self.instances.note, arn)
-                if arn and status in ("STARTING", "RUNNING"):
-                    ours[arn] = ours.get(arn, 0) + 1
                 self._warn_if_stuck(d, info)
                 yield info
             else:
                 yield info
-        if ours and time.time() - self._sharing_checked >= SHARING_CHECK_SECONDS:
-            self._sharing_checked = time.time()
-            await asyncio.to_thread(self.instances.check_sharing, ours)
 
     def _record_usage(self, info: SubmittedJobInfo, d: dict):
-        queue = info.aux.get("queue")
-        if queue not in self._spot:
-            self._spot[queue] = not self.settings.skip_preflight and queue_uses_spot(self.batch, queue)
-        platform = info.aux.get("platform", "ec2")
-        known = platform == "ec2" and self.instances.add_job(info.job.name, d, info.aux.get("vcpu", 1.0))
         self.usage.add(info.job.name, d, info.aux.get("vcpu", 1.0), info.aux.get("mem", 0),
-                       platform, self._spot[queue], on_known_instance=known)
+                       info.aux.get("platform", "ec2"))
         c = d.get("container") or {}
         if c.get("logStreamName") and d.get("status") == "SUCCEEDED":
             group = (c.get("logConfiguration") or {}).get("options", {}).get("awslogs-group", self.settings.log_group)
@@ -645,20 +624,10 @@ class Executor(RemoteExecutor):
 
     def shutdown(self):
         super().shutdown()
-        per_rule, line = None, None
-        if not self.settings.no_cost_summary:
-            self.usage.fetch_peaks(self.cwlogs)
-            if self.instances.vcpu_seconds:
-                try:
-                    # the price list is served from us-east-1, for every region
-                    pricing = boto3.client("pricing", region_name="us-east-1")
-                    per_rule, line = self.instances.costs(pricing)
-                except Exception as e:
-                    per_rule, line = None, f"{type(e).__name__}"
-                if per_rule is None:
-                    line = (f"EC2 cost estimated from the jobs' vCPUs, not priced by instance: {line}"
-                            " (see IAM in the plugin's README).")
-        table = None if self.settings.no_cost_summary else self.usage.table(self.settings.mem_overhead_mib, per_rule, line)
+        if self.settings.no_usage_summary:
+            return
+        self.usage.fetch_peaks(self.cwlogs)
+        table = self.usage.table(self.settings.mem_overhead_mib)
         if table:
             self.logger.info(table)
 

@@ -103,17 +103,18 @@ def test_ami_snakemake_version_paths():
 
 
 def test_usage_summary():
-    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    from snakemake_executor_plugin_aws_batch_flex.usage import Usage
     u = Usage()
     hour = 3600 * 1000
     # a Spot job retried once: both attempts count
     u.add("align", {"attempts": [{"startedAt": 0, "stoppedAt": hour}, {"startedAt": hour, "stoppedAt": 2 * hour}]},
-          4, 8192, "ec2", True)
-    u.add("qc", {"startedAt": 0, "stoppedAt": hour}, 1, 2048, "fargate", False)
-    u.add("qc", {"status": "FAILED"}, 1, 2048, "fargate", False)  # never started
+          4, 8192, "ec2")
+    u.add("qc", {"startedAt": 0, "stoppedAt": hour}, 1, 2048, "fargate")
+    u.add("qc", {"status": "FAILED"}, 1, 2048, "fargate")  # never started
     t = u.table()
     align = next(l for l in t.splitlines() if l.strip().startswith("align")).split()
-    assert align[1:4] == ["1", "8.00", "16.00"] and float(align[4]) == round(8 * 0.05 * 0.35, 2)
+    assert align[1:5] == ["1", "8.00", "16.00", "4"]  # jobs, vCPU-h, GiB-h, vCPUs: no prices
+    assert "USD" not in t and "costs: AWS Billing, by the jobs' tags snakemake-run-id" in t
     qc = next(l for l in t.splitlines() if l.strip().startswith("qc")).split()
     assert qc[1:4] == ["2", "1.00", "2.00"]
     assert "total" in t
@@ -121,14 +122,14 @@ def test_usage_summary():
 
 
 def test_usage_hints_at_grouping_many_short_jobs():
-    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    from snakemake_executor_plugin_aws_batch_flex.usage import Usage
     u = Usage()
     for _ in range(25):
-        u.add("tiny", {"startedAt": 0, "stoppedAt": 5000}, 1, 1024, "ec2", False)
+        u.add("tiny", {"startedAt": 0, "stoppedAt": 5000}, 1, 1024, "ec2")
     for _ in range(25):
-        u.add("long", {"startedAt": 0, "stoppedAt": 600000}, 1, 1024, "ec2", False)
+        u.add("long", {"startedAt": 0, "stoppedAt": 600000}, 1, 1024, "ec2")
     for _ in range(5):
-        u.add("few", {"startedAt": 0, "stoppedAt": 5000}, 1, 1024, "ec2", False)
+        u.add("few", {"startedAt": 0, "stoppedAt": 5000}, 1, 1024, "ec2")
     t = u.table()
     assert "Hint: tiny ran 25 jobs of 5 s each" in t
     assert "Hint: long" not in t and "Hint: few" not in t
@@ -174,12 +175,12 @@ def test_s3_directory_is_looked_up_again():
 
 
 def test_memory_suggestions():
-    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    from snakemake_executor_plugin_aws_batch_flex.usage import Usage
     u = Usage()
     d = {"startedAt": 0, "stoppedAt": 1000}
-    u.add("big", d, 1, 8448, "ec2", False)     # asked 8 GiB + overhead, used 1 GiB: wasted
-    u.add("tight", d, 1, 4352, "ec2", False)   # asked 4 GiB + overhead, used 3.9 GiB: at risk
-    u.add("fine", d, 1, 4352, "ec2", False)    # used 2.5 GiB: leave it
+    u.add("big", d, 1, 8448, "ec2")     # asked 8 GiB + overhead, used 1 GiB: wasted
+    u.add("tight", d, 1, 4352, "ec2")   # asked 4 GiB + overhead, used 3.9 GiB: at risk
+    u.add("fine", d, 1, 4352, "ec2")    # used 2.5 GiB: leave it
     u.peaks.update({"big": [1024.0, 900.0], "tight": [3900.0], "fine": [2500.0]})
     tips = u.suggestions(256)
     # big: 1024 * 1.3 -> 1400 MiB container, minus 256 for Snakemake = 1144 MiB = 1200 MB
@@ -292,7 +293,7 @@ def test_versions_that_dont_fit_are_not_pinned(monkeypatch):
 
 def test_rules_whose_jobs_ran_out_get_no_memory_suggestion(tmp_path, monkeypatch):
     from snakemake_executor_plugin_aws_batch_flex import jobmonitor
-    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    from snakemake_executor_plugin_aws_batch_flex.usage import Usage
     (tmp_path / "memory.events").write_text("low 0\nhigh 0\nmax 3\noom 1\noom_kill 2\n")
     monkeypatch.setattr(jobmonitor, "CGROUP", str(tmp_path))
     assert jobmonitor._oom_kills() == 2
@@ -301,7 +302,7 @@ def test_rules_whose_jobs_ran_out_get_no_memory_suggestion(tmp_path, monkeypatch
 
     u = Usage()
     for rule in ("ok", "killed"):
-        u.add(rule, {"startedAt": 0, "stoppedAt": 1000}, 1, 4352, "ec2", False)
+        u.add(rule, {"startedAt": 0, "stoppedAt": 1000}, 1, 4352, "ec2")
         u.add_log(rule, "g", rule)
     logs = {"ok": "peak-memory-bytes=1073741824 peak-cpus=1.00 oom-kills=0",
             "killed": "peak-memory-bytes=4294967296 peak-cpus=1.00 oom-kills=2"}

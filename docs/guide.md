@@ -288,15 +288,14 @@ Envs can also be baked into the machine image and used by name (`conda: "rnaseq"
 ### What a run used
 
 At the end of a run the plugin prints what each rule used, from Batch's own start and stop times
-(Spot retries included), what it cost, and how much memory, CPU and disk its jobs really needed:
+(Spot retries included), and how much memory, CPU and disk its jobs really needed:
 
 ```
-AWS Batch usage of this run (cost: the EC2 instances at AWS's prices, shared out by vCPU-time; without storage or data transfer):
-  rule         jobs    vCPU-h     GiB-h      ~USD  vCPUs   busy   mem MiB    peak  disk GiB
-  star_align      4      0.96      0.32      0.21      8    7.6      4071    1840       3.2
-  fastp_pe        4      0.08      0.32      0.02      4    1.4      4071     310       0.4
-  total           8      1.04      0.64      0.23
-EC2: 1 × m6i.2xlarge (on-demand, 32 min in all): ~$0.23 at AWS's prices (disks included: $0.01); the jobs used 24% of these instances' vCPU-time.
+AWS Batch usage of this run (costs: AWS Billing, by the jobs' tags snakemake-run-id and snakemake-rule):
+  rule         jobs    vCPU-h     GiB-h  vCPUs   busy   mem MiB    peak  disk GiB
+  star_align      4      0.96      0.32      8    7.6      4071    1840       3.2
+  fastp_pe        4      0.08      0.32      4    1.4      4071     310       0.4
+  total           8      1.04      0.64
 vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most memory its processes used (without file cache); disk GiB: the most its working folder took. Each the highest of the rule's jobs; memory sampled every 0.5 s (a shorter spike isn't seen), CPUs every 2 s.
 Memory for each rule (its peak + 30%), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
 set-resources:
@@ -309,20 +308,12 @@ set-threads:
   fastp_pe: 2     # had 4, at most 1.4 busy
 ```
 
-- **Cost:** on EC2 you pay for whole instances, so that's what's counted: the plugin notes which
-  instances the jobs ran on, how long each ran during the run (idle time included) and its type,
-  and prices it, with its disk, at AWS's on-demand list price or the Spot price of its zone at
-  the time. Each
-  instance's cost is shared out to the rules by their jobs' vCPU-time on it. The `EC2:` line says
-  which instances they were and how much of them the jobs used: a low share means jobs left
-  instances half empty, often because one rule's memory needs a big instance. Fargate is priced
-  per job, which is how Fargate bills. Instances still running at the end (Batch keeps them a few
-  minutes) are counted until then. An instance that also ran other work (another run, or a
-  `smkflex` head job) is charged only for this run's share of its vCPU-time, and the `EC2:` line
-  says so. If the instances can't be looked up (see [IAM](reference.md#iam)), the table falls back to a
-  rough estimate from the jobs' vCPUs and says so. AWS Cost Explorer has the exact figures, a day
-  later: the instances are tagged `ManagedBy=snakemake-batch-flex`, which you can filter by once
-  it's switched on under **Billing** > **Cost allocation tags**.
+- **Cost** is AWS's to say, about a day later. Everything the plugin starts is tagged
+  `ManagedBy=snakemake-batch-flex`, which Cost Explorer can filter by once it's switched on under
+  **Billing** > **Cost allocation tags**. Per run and per rule: every job is tagged
+  `snakemake-run-id` (printed when the run starts) and `snakemake-rule`; with **split cost
+  allocation data** for ECS switched on (Billing preferences), the Cost and Usage Report shares
+  each instance's cost out to the jobs on it, by those tags.
 - **Memory, CPU and disk:** each job samples its container (memory every half second, CPUs every
   2 seconds) and logs the most it saw: its processes' memory (from Linux's cgroup statistics, without file cache, which Linux
   frees before it kills anything), how many vCPUs were busy at once, and how big its working
@@ -343,7 +334,7 @@ set-threads:
 - **Disk:** a rule whose jobs used more than 20 GiB gets a hint, since on EC2 the jobs on one
   instance share its disk, and on Fargate a job has 20 GiB unless `disk_mb` asks for more.
 
-Turn the table off with `no-cost-summary`.
+Turn the table off with `no-usage-summary`.
 
 ### Many small jobs
 

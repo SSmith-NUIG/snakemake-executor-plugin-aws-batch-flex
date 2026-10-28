@@ -170,45 +170,6 @@ class FakeEC2:
     def describe_launch_template_versions(self, **kw):
         return {"LaunchTemplateVersions": []}
 
-    def describe_instances(self, InstanceIds):
-        # both fake instances started 30 minutes before this process and still run
-        launch = _STARTED - __import__("datetime").timedelta(minutes=30)
-        return {"Reservations": [{"Instances": [
-            {"InstanceId": i, "InstanceType": "m6i.large", "LaunchTime": launch, "State": {"Name": "running"},
-             "BlockDeviceMappings": [{"Ebs": {"VolumeId": "vol-" + i}}],
-             "Placement": {"AvailabilityZone": "eu-west-1a"}, **({"InstanceLifecycle": "spot"} if i == "i-spot" else {})}
-            for i in InstanceIds]}]}
-
-    def describe_volumes(self, VolumeIds):
-        return {"Volumes": [{"VolumeId": v, "Size": 100, "VolumeType": "gp3"} for v in VolumeIds]}
-
-    def describe_spot_price_history(self, **kw):
-        return {"SpotPriceHistory": [{"SpotPrice": "0.0400"}, {"SpotPrice": "0.0300"}]}
-
-
-_STARTED = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-
-
-class FakeECS:
-    """Container instance .../od is EC2 instance i-od (on-demand), .../spot is i-spot."""
-    def describe_container_instances(self, containerInstances, cluster=None):
-        _rec("describe_container_instances", cluster=cluster)
-        return {"containerInstances": [{"containerInstanceArn": a, "ec2InstanceId": "i-" + a.rsplit("/", 1)[-1]}
-                                       for a in containerInstances]}
-
-
-class FakePricing:
-    """m6i.large: 2 vCPUs at $0.107 an hour."""
-    def get_products(self, ServiceCode, Filters, MaxResults):
-        f = {x["Field"]: x["Value"] for x in Filters}
-        if f.get("productFamily") == "Storage":
-            item = {"terms": {"OnDemand": {"x": {"priceDimensions": {"y": {"pricePerUnit": {"USD": "0.088"}}}}}}}
-            return {"PriceList": [json.dumps(item)]}
-        assert f["regionCode"] == "eu-west-1" and f["operatingSystem"] == "Linux"
-        item = {"product": {"attributes": {"vcpu": "2"}},
-                "terms": {"OnDemand": {"x": {"priceDimensions": {"y": {"pricePerUnit": {"USD": "0.1070000000"}}}}}}}
-        return {"PriceList": [json.dumps(item)]}
-
 
 class FakeSTS:
     def get_caller_identity(self):
@@ -231,8 +192,6 @@ def client(name, *a, **k):
     if name == "logs": return FakeLogs(_batch)
     if name == "ec2": return FakeEC2()
     if name == "sts": return FakeSTS()
-    if name == "ecs": return FakeECS()
-    if name == "pricing": return FakePricing()
     if name == "iam": return FakeIAM()
     return _real(name, *a, **k)
 boto3.client = client

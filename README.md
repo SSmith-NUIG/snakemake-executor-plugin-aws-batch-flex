@@ -23,14 +23,14 @@ storage plugin installed; the usual biocontainers and stock images can't be used
 This plugin brings Snakemake to the job instead, so each rule can use any image, and conda envs
 work in images without conda. It also sets up the AWS side in one command, mixes EC2, Spot and
 Fargate queues in one run, can run Snakemake itself on AWS (`smkflex run`), retries jobs that
-ran out of memory with more, and reports what each rule used and cost.
+ran out of memory with more, and reports what each rule used, with the memory and threads to give it.
 
 This page takes you from nothing to a finished test run ([Getting started](#getting-started)),
 then shows how to run your own workflow and what you can set on each rule. The rest is in three
 more pages:
 
 - [Guide](docs/guide.md): published pipelines, moving from a cluster, long runs with `smkflex`,
-  conda, the cost and usage table, Spot and Fargate, private images, and troubleshooting;
+  conda, the usage table, Spot and Fargate, private images, and troubleshooting;
 - [Reference](docs/reference.md): every profile setting and `smkflex` command, IAM, what has been
   tested, and the limits;
 - [Setup and upkeep](docs/setup.md): university and company accounts, updating the machine image,
@@ -135,7 +135,7 @@ snakemake --profile smkflex
 What happens: Snakemake uploads the workflow to S3 and submits two jobs. The first time, AWS has
 to start a machine, so the jobs show as waiting for a few minutes. Then each job runs in its own
 container (`debian:12`, which has no Python) and writes its result to S3. When it's finished
-you'll see `3 of 3 steps (100%) done`, followed by a table of what the run used and cost.
+you'll see `3 of 3 steps (100%) done`, followed by a table of what the run used.
 
 Download the results from the bucket and look at them:
 

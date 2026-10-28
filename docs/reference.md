@@ -76,7 +76,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | Setting (`aws-batch-flex-...`) | Default | What it's for |
 |---|---|---|
 | `log-group` | `/aws/batch/job` | The CloudWatch log group for job logs. It must already exist. Terraform creates one that deletes logs after 30 days and puts it in the profile; Batch's default group keeps them forever. |
-| `no-cost-summary` | `false` | Don't print the table of what the run used and cost at the end (see [What a run used](guide.md#what-a-run-used)). |
+| `no-usage-summary` | `false` | Don't print the table of what the run used at the end (see [What a run used](guide.md#what-a-run-used)). |
 | `max-sources-mb` | `100` | Every job gets the workflow folder (what git would track, or everything `.gitignore` doesn't exclude, plus `config/`; never `data/`, `results/`, `logs/` or `benchmarks/`, and no single file over 10 MB). Above this many MB the run stops with a message saying which folders to put in `.gitignore`: data belongs in storage. |
 | `runnable-warn-minutes` | `15` | Warn when a job has waited this long for a machine to run on. |
 | `skip-preflight` | `false` | Skip the checks of the queue and roles at the start of a run. |
@@ -122,9 +122,7 @@ The identity running `snakemake` needs `batch:SubmitJob`, `DescribeJobs`, `Termi
 `DescribeComputeEnvironments` and `TagResource`, plus `logs:GetLogEvents`, `iam:PassRole` on the
 job role(s), and read/write on the S3 prefix. Optionally `ec2:DescribeImages` and
 `ec2:DescribeLaunchTemplateVersions`, so the plugin can warn when the AMI's Snakemake version is
-far from yours, and `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
-`ec2:DescribeVolumes`, `ec2:DescribeSpotPriceHistory` and `pricing:GetProducts`, so it can price
-the instances (and their disks) a run used. `terraform output launcher_policy_json` prints a
+far from yours. `terraform output launcher_policy_json` prints a
 policy with all of this, limited to what the plugin makes, so it can't touch other Batch work in
 the account: it registers only `snakemake-*` job definitions, and never privileged ones (root on the instance), stops only jobs tagged
 `ManagedBy=snakemake-batch-flex` (the plugin and `smkflex` tag every job with it), and reads only
@@ -140,8 +138,7 @@ images), a different image per rule, a 6-image variant-calling pipeline, EC2 and
 (separately and mixed in one run), checkpoints, groups, shadow, benchmark/log, retries, `temp()`,
 `directory()`, resources and tags, OOM and timeout reporting, cancelling with Ctrl-C, startup
 checks, fan-out to 100 jobs, install-at-start on a bare `debian:12`, cancelling jobs left over
-from an interrupted run, pricing a run by the EC2 instances it used (with their disks, and only this run's share of an
-instance that also ran other work), the CPU and disk figures in the usage table, stopping jobs
+from an interrupted run, the CPU and disk figures in the usage table, stopping jobs
 under the Terraform IAM policy (which only allows jobs tagged `ManagedBy=snakemake-batch-flex`), `/dev/shm` size per rule, Fargate disk size from `disk_mb`, updating the
 AMI with `update-ami.sh`, using an existing job definition, a private ECR image, job logs in
 Terraform's own log group (EC2 and Fargate), a whole workflow run as a `smkflex` head job (from a

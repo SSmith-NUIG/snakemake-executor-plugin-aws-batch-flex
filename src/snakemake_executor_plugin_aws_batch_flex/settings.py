@@ -320,11 +320,11 @@ class ExecutorSettings(ExecutorSettingsBase):
             "required": False,
         },
     )
-    no_cost_summary: bool = field(
+    no_usage_summary: bool = field(
         default=False,
         metadata={
-            "help": "Don't print the per-rule summary of vCPU-hours, memory and estimated cost "
-            "at the end of the run.",
+            "help": "Don't print the per-rule summary of what the run used (vCPU-hours, memory, "
+            "CPUs, disk, and the resources to paste into the profile) at the end of the run.",
             "env_var": False,
             "required": False,
         },

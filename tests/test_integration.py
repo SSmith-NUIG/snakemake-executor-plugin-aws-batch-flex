@@ -51,8 +51,8 @@ def test_per_rule_images_queues_and_resources(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     summary = (r.stdout + r.stderr).split("AWS Batch usage of this run")[1]
     assert "make_a" in summary and "make_b" in summary and "total" in summary
-    # priced from the instance the jobs ran on (the fake's m6i.large), not from their vCPUs
-    assert "the EC2 instances at AWS's prices" in summary and "EC2: 1 × m6i.large (on-demand, " in summary
+    # what was used, not what it cost (that's AWS Billing's, by the jobs' tags)
+    assert "AWS Billing" in summary and "USD" not in summary
     assert (tmp_path / "store" / "b.txt").read_text() == "A\nB\n"
     images = {c["image"] for c in calls if c["call"] == "register_job_definition"}
     assert images == {"ubuntu:24.04", "quay.io/biocontainers/bwa:0.7.17"}
@@ -539,7 +539,7 @@ def test_peak_memory_in_the_table(tmp_path, monkeypatch):
     row = next(l for l in usage.splitlines() if l.strip().startswith("make_a "))
     cols = row.split()
     # vCPUs 4, busy (from the fake cpu.stat: unchanged, so 0), mem 8000 MB -> 7630 MiB + 256, peak 1 GiB
-    assert cols[5:9] == ["4", "0.0", "7886", "1024"], row
+    assert cols[4:8] == ["4", "0.0", "7886", "1024"], row
     assert "set-resources:\n  make_a:\n    mem_mb: 1200    # had 7886 MiB, peak 1024" in out
 
 

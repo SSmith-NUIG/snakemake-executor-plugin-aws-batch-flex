@@ -61,11 +61,10 @@ rule align:
 - Private images: ECR works through the IAM roles; other registries through Secrets Manager
   (`aws-batch-flex-registry-credentials`).
 
-At the end of a run the plugin prints what each rule used and cost. The cost comes from the EC2
-instances the run used (their type, on-demand or Spot price, and disks), shared out by each
-rule's vCPU-time. The table also shows each rule's peak memory, how many vCPUs were busy at once
-and how much disk its jobs took, with `set-resources:` and `set-threads:` blocks to paste into
-the project's settings.
+At the end of a run the plugin prints what each rule used: vCPU- and GiB-hours, each rule's peak
+memory, how many vCPUs were busy at once and how much disk its jobs took, with `set-resources:`
+and `set-threads:` blocks to paste into the project's settings. Costs come from AWS Billing, by
+the tags on every job (`snakemake-run-id`, `snakemake-rule`).
 
 # Published pipelines and long runs
 
