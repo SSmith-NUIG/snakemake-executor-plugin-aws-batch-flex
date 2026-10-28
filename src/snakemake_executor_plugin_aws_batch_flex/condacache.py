@@ -6,15 +6,17 @@ under one fixed folder, so Snakemake gives the same environment the same name in
 
 1. in that folder: on EC2 it's the instance's /var/cache/smkflex-conda, shared by the jobs
    on that machine (a lock makes the others wait while one builds);
-2. in S3, if a cache URL is set: <url>/<glibc>/<name>.tar.gz, uploaded by an earlier job.
+2. in S3, if a cache URL is set: <url>/<platform>/<name>.tar.gz, uploaded by an earlier job.
 
-The folder includes the image's glibc version, so environments are only shared between
-images that conda would have built the same packages for.
+The folder (<platform>) is the CPU type and the image's glibc version, e.g. x86_64-glibc-2.36,
+so environments are only shared between machines and images that conda would have built the
+same packages for: an x86 build doesn't run on Graviton (arm64).
 
 Only the standard library and boto3 (which comes with the S3 storage plugin) are used."""
 
 import fcntl
 import os
+import platform
 import shutil
 import sys
 import tarfile
@@ -23,16 +25,16 @@ import tempfile
 ROOT = os.environ.get("SMK_FLEX_CONDA_ROOT", "/tmp/smkflex-conda")
 
 
-def glibc():
+def platform_key():
     try:
         version = os.confstr("CS_GNU_LIBC_VERSION") or ""
     except (ValueError, OSError, AttributeError):
         version = ""
-    return version.replace(" ", "-") or "unknown"
+    return f"{platform.machine() or 'unknown'}-{version.replace(' ', '-') or 'unknown'}"
 
 
 def env_prefix(root=None):
-    return os.path.join(root or ROOT, glibc())
+    return os.path.join(root or ROOT, platform_key())
 
 
 def _say(msg):
@@ -125,7 +127,7 @@ def wrap_create(orig, cache_url=None):
             if os.path.isdir(path) and os.path.exists(done):
                 _say(f"conda env {name} was built by an earlier job on this machine")
                 return path
-            key = f"{cache_url.rstrip('/')}/{glibc()}/{name}.tar.gz" if cache_url else None
+            key = f"{cache_url.rstrip('/')}/{platform_key()}/{name}.tar.gz" if cache_url else None
             if key:
                 try:
                     if restore(key, prefix, name):

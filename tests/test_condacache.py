@@ -44,7 +44,7 @@ def test_cache_in_storage_reaches_other_machines(tmp_path):
     first, second = tmp_path / "machine1", tmp_path / "machine2"
     assert create(FakeEnv(str(first))) == str(first / "abc123_")
     assert FakeEnv.builds == 1
-    archive = tmp_path / "bucket" / "conda-cache" / condacache.glibc() / "abc123_.tar.gz"
+    archive = tmp_path / "bucket" / "conda-cache" / condacache.platform_key() / "abc123_.tar.gz"
     assert archive.exists()
     # another machine: restored, not built
     path = create(FakeEnv(str(second)))
@@ -55,8 +55,8 @@ def test_cache_in_storage_reaches_other_machines(tmp_path):
 def test_a_broken_archive_means_building(tmp_path):
     FakeEnv.builds = 0
     cache = tmp_path / "cache"
-    (cache / condacache.glibc()).mkdir(parents=True)
-    (cache / condacache.glibc() / "abc123_.tar.gz").write_bytes(b"not a tar file")
+    (cache / condacache.platform_key()).mkdir(parents=True)
+    (cache / condacache.platform_key() / "abc123_.tar.gz").write_bytes(b"not a tar file")
     path = condacache.wrap_create(fake_create, str(cache))(FakeEnv(str(tmp_path / "m")))
     assert FakeEnv.builds == 1 and os.path.exists(path + ".env_setup_done")
 
@@ -67,7 +67,7 @@ def test_install_sets_the_prefix_and_respects_one_given(tmp_path, monkeypatch):
     orig = smk_conda.Env.create
     try:
         argv = condacache.install(["--cores", "1"], "instance")
-        assert argv == ["--cores", "1", "--conda-prefix", str(tmp_path / "root" / condacache.glibc())]
+        assert argv == ["--cores", "1", "--conda-prefix", str(tmp_path / "root" / condacache.platform_key())]
         assert getattr(smk_conda.Env.create, "_smkflex", False)
         assert condacache.install(["--conda-prefix", "/x"], "instance") == ["--conda-prefix", "/x"]
         assert condacache.install(["--deploy-sources", "s3://b/src.tar.xz", "abc"], "instance") == \
@@ -113,7 +113,7 @@ def test_launcher_turns_the_job_tools_on(tmp_path):
     code.write_text(job_tools_source())
     r = _job(tmp_path, code)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert f"PREFIX {tmp_path / 'root' / condacache.glibc()}" in r.stdout + r.stderr
+    assert f"PREFIX {tmp_path / 'root' / condacache.platform_key()}" in r.stdout + r.stderr
     # and the usage figures, at the end
     assert re.search(r"\[snakemake-batch\] peak-memory-bytes=\d+ peak-cpus=[\d.]+ avg-cpus=[\d.]+ "
                      r"peak-disk-bytes=\d+", r.stderr), r.stderr
@@ -140,3 +140,10 @@ def test_install_in_many_jobs_at_once(tmp_path, monkeypatch):
         assert all(r and r[0] == "--conda-prefix" for r in results) and len(results) == 20
     finally:
         smk_conda.Env.create = orig
+
+
+def test_environments_are_kept_apart_by_cpu_type_and_glibc(monkeypatch):
+    import platform
+    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
+    assert condacache.platform_key().startswith("aarch64-")
+    assert condacache.env_prefix("/r") == "/r/" + condacache.platform_key()
