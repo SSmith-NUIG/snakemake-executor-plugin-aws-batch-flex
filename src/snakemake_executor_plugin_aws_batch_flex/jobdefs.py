@@ -14,6 +14,7 @@ from snakemake_interface_common.exceptions import WorkflowError
 from .tags import MANAGED_BY
 
 DEFAULT_LOG_GROUP = "/aws/batch/job"
+FARGATE_PLATFORM = "1.4.0"
 
 
 def normalize_image(url: str) -> str:
@@ -27,6 +28,14 @@ def normalize_image(url: str) -> str:
             "images (.sif, oras://, shub://) can't be used."
         )
     return url
+
+
+def mutable_tag(image: str) -> bool:
+    """True for an image without a version: no tag, or :latest, and no digest."""
+    if "@" in image:
+        return False
+    tag = image.rsplit("/", 1)[-1].partition(":")[2]
+    return tag in ("", "latest")
 
 
 def image_registry(image: str) -> str:
@@ -117,7 +126,8 @@ class JobDefinitions:
             props["linuxParameters"] = {"sharedMemorySize": int(shm_mb)}
         if platform == "fargate":
             props["networkConfiguration"] = {"assignPublicIp": self.assign_public_ip}
-            props["fargatePlatformConfiguration"] = {"platformVersion": "LATEST"}
+            # a fixed version, not LATEST, so jobs don't change platform from one run to the next
+            props["fargatePlatformConfiguration"] = {"platformVersion": FARGATE_PLATFORM}
             disk = max(disk_gib or 0, self.ephemeral_storage_gib or 0)
             if disk:
                 props["ephemeralStorage"] = {"sizeInGiB": disk}

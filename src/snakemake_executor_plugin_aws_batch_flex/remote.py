@@ -256,7 +256,8 @@ def _active_heads(batch, queue, state_key):
 def head_command(profile, platform, bundle_url, state_url, snakemake_args):
     s = from_profile(profile)
     mode = "auto" if s.bootstrap == "host" and platform == "fargate" else s.bootstrap
-    prelude = snakemake_prelude(s, mode, profile.get("default-storage-provider"))
+    resolved_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    prelude = snakemake_prelude(s, mode, profile.get("default-storage-provider"), resolved_at)
     if s.conda_path and platform == "ec2":
         prelude += "\n" + conda_snippet(s.conda_path)
     args = " ".join(shlex.quote(a) for a in snakemake_args)

@@ -198,6 +198,14 @@ to skip the check. If Snakemake then says "IncompleteFilesException", run again 
 Each rule runs in its own image, and Snakemake comes from the machine image, so images need
 nothing of their own (but see [Limits](reference.md#limits): a glibc-based image with `/bin/sh` and bash).
 
+**Same software in every job.** The machine image gets exactly the versions of Snakemake and
+its packages installed where you build it. Jobs that install Snakemake at start get the packages
+as they were when the run started, so all jobs of a run match. Give images a version tag
+(`samtools:1.21--h50ea8bc_0`, not `samtools` or `:latest`; the plugin warns otherwise): an
+instance reuses an image it already has, so a moving tag can mean different contents on
+different instances. Each job's log records the exact image it ran
+(`[snakemake-batch] image ... id=sha256:...`).
+
 **Python `script:` rules** run with the image's own `python` if it's 3.10 or newer, so they can
 use the image's packages. Otherwise (no Python in the image, or an older one) and for `run:`
 blocks, the code runs in Snakemake's own Python from the machine image, which only has

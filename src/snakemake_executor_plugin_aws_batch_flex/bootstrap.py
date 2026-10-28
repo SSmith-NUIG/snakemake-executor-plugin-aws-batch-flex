@@ -6,11 +6,15 @@ called `python`, so the rule's own commands still see the image's python and PAT
 
 import base64
 import importlib.metadata as md
+import re
 import shlex
 import zlib
 from typing import Iterable, List, Optional
 
 MODES = ("auto", "always", "never", "host")
+# uv for jobs that install Snakemake at start, and for the AMI's env; its installer checks the
+# download's sha256
+UV_VERSION = "0.13.0"
 
 _TEMPLATE = r"""
 set -eu
@@ -43,15 +47,15 @@ if [ "$SMK_NEED" = 1 ]; then
     UV=uv
   else
     if command -v curl >/dev/null 2>&1; then
-      curl -fsSL https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
+      curl -fsSL https://astral.sh/uv/@@UVVER@@/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
     elif command -v wget >/dev/null 2>&1; then
-      wget -qO- https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
+      wget -qO- https://astral.sh/uv/@@UVVER@@/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
     fi
     if [ -x "$SMK_BOOT/bin/uv" ]; then
       UV="$SMK_BOOT/bin/uv"
     else
       for p in python3 python; do
-        if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$SMK_BOOT/uvlib" uv >&2; then
+        if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$SMK_BOOT/uvlib" uv==@@UVVER@@ >&2; then
           UV="env PYTHONPATH=$SMK_BOOT/uvlib $p -m uv"
           break
         fi
@@ -63,7 +67,7 @@ if [ "$SMK_NEED" = 1 ]; then
     exit 127
   fi
   $UV venv --clear --quiet --python @@PYVER@@ --system-site-packages "$SMK_BOOT/venv" >&2
-  $UV pip install --quiet --python "$SMK_BOOT/venv/bin/python" @@REQS@@ >&2
+  $UV pip install --quiet --python "$SMK_BOOT/venv/bin/python" @@NEWER@@@@REQS@@ >&2
   SMK_PY="$SMK_BOOT/venv/bin/python"
   python() { "$SMK_PY" "$@"; }
 fi
@@ -209,8 +213,11 @@ def build_prelude(
     requirements: list[str],
     python_version: str,
     install_prereqs: bool = False,
+    resolved_at: Optional[str] = None,
 ) -> str:
-    """Return a POSIX-sh snippet; after it runs, `python -m snakemake` works."""
+    """Return a POSIX-sh snippet; after it runs, `python -m snakemake` works. With resolved_at
+    (an RFC 3339 time), packages are installed as they were then: the same versions in every
+    job of a run, however long it takes."""
     if mode not in MODES:
         raise ValueError(f"bootstrap mode must be one of {MODES}, got {mode!r}")
     if mode == "never":
@@ -231,6 +238,8 @@ def build_prelude(
         .replace("@@PYVER@@", shlex.quote(python_version))
         .replace("@@PREREQ@@", "1" if install_prereqs else "0")
         .replace("@@REQS@@", reqs)
+        .replace("@@NEWER@@", f"--exclude-newer {shlex.quote(resolved_at)} " if resolved_at else "")
+        .replace("@@UVVER@@", UV_VERSION)
     )
 
 
@@ -263,6 +272,40 @@ def pinned(package: str) -> str:
         return package
 
 
+def locked(packages: Iterable[str]):
+    """(pins, skipped): name==version of everything installed here that `packages` need, all
+    the way down, so the AMI's env has exactly this machine's versions; for a constraints file,
+    so pins the env's Python doesn't need are left alone. A version that doesn't fit what the
+    packages ask for (an environment mixed by hand) isn't pinned: it's in `skipped`."""
+    from packaging.requirements import Requirement
+    from packaging.specifiers import SpecifierSet
+
+    def key(name):
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    found, wanted, todo = {}, {}, list(packages)
+    while todo:
+        name = todo.pop()
+        if key(name) in found:
+            continue
+        try:
+            dist = md.distribution(name)
+        except md.PackageNotFoundError:
+            continue
+        found[key(name)] = dist.version
+        for line in dist.requires or []:
+            req = Requirement(line)
+            if req.marker is None or req.marker.evaluate({"extra": ""}):
+                wanted[key(req.name)] = wanted.get(key(req.name), SpecifierSet()) & req.specifier
+                todo.append(req.name)
+    pins, skipped = [], []
+    for k, v in sorted(found.items()):
+        # a local build ("+...") isn't on PyPI
+        fits = "+" not in v and wanted.get(k, SpecifierSet()).contains(v, prereleases=True)
+        (pins if fits else skipped).append(f"{k}=={v}")
+    return pins, skipped
+
+
 def storage_requirements(default_provider: Optional[str] = None) -> List[str]:
     """pip requirements for the storage plugins installed here, pinned to these versions."""
     packages = set()
@@ -277,9 +320,11 @@ def storage_requirements(default_provider: Optional[str] = None) -> List[str]:
     return [pinned(p) for p in sorted(packages)]
 
 
-def snakemake_prelude(s, mode: str, default_storage_provider: Optional[str] = None) -> str:
+def snakemake_prelude(s, mode: str, default_storage_provider: Optional[str] = None,
+                      resolved_at: Optional[str] = None) -> str:
     """The prelude that gives a job Snakemake, for settings `s` (settings.ExecutorSettings):
-    from the host env (mode "host") or installed at start, the same version as here."""
+    from the host env (mode "host") or installed at start, the same version as here, with the
+    other packages as they were at resolved_at."""
     if mode == "host":
         return build_host_prelude(s.host_env_path, s.host_env_wait_seconds)
     import sys
@@ -287,4 +332,4 @@ def snakemake_prelude(s, mode: str, default_storage_provider: Optional[str] = No
     version = md.version("snakemake")
     reqs = [f"snakemake=={version}"] + storage_requirements(default_storage_provider) + list(s.extra_packages or [])
     pyver = str(s.python_version or f"{sys.version_info[0]}.{sys.version_info[1]}")
-    return build_prelude(mode, version, reqs, pyver, s.install_prereqs)
+    return build_prelude(mode, version, reqs, pyver, s.install_prereqs, resolved_at)

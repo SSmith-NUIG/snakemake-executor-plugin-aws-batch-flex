@@ -227,3 +227,53 @@ def test_cancel_terminates_jobs_in_parallel_and_goes_on_after_errors():
     assert time.time() - start < 2  # one at a time would take 4 s
     assert sorted(done) == sorted(f"j{i}" for i in range(20) if i != 3)
     assert len(warnings) == 1 and "j3" in warnings[0]
+
+
+def test_reproducible_installs():
+    from snakemake_executor_plugin_aws_batch_flex import hostenv
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import UV_VERSION, locked
+    from snakemake_executor_plugin_aws_batch_flex.jobdefs import mutable_tag
+
+    # jobs that install Snakemake at start: a pinned uv, and packages as of the run's start
+    p = build_prelude("always", "9.27.0", ["snakemake==9.27.0"], "3.12", resolved_at="2026-10-28T09:00:00Z")
+    assert f"astral.sh/uv/{UV_VERSION}/install.sh" in p and f"uv=={UV_VERSION}" in p
+    assert "--exclude-newer 2026-10-28T09:00:00Z snakemake==9.27.0" in p
+    assert "--exclude-newer" not in build_prelude("always", "9.27.0", ["snakemake==9.27.0"], "3.12")
+    # the AMI's env: exactly this machine's versions, all the way down
+    pins, _skipped = locked(["snakemake"])
+    assert any(p.startswith("snakemake==") for p in pins) and any(p.startswith("pyyaml==") for p in pins)
+    script = hostenv.install_script("/opt/env", "3.12", ["snakemake==9.27.0"], pins)
+    assert '-c "$ENV/constraints.txt"' in script and "\npyyaml==" in script
+    assert f"astral.sh/uv/{UV_VERSION}/install.sh" in script and "astral.sh/uv/install.sh" not in script
+    conda = hostenv.conda_script("/opt/miniforge3", [])
+    assert hostenv.MINIFORGE in conda and "sha256sum -c" in conda and "latest" not in conda
+    # images whose contents can change under the same name
+    assert mutable_tag("debian") and mutable_tag("quay.io/x/y:latest") and mutable_tag("localhost:5000/img")
+    assert not mutable_tag("debian:12") and not mutable_tag("localhost:5000/img:1.0")
+    assert not mutable_tag("debian@sha256:" + "0" * 64)
+
+
+def test_jobs_log_their_image_id(tmp_path, monkeypatch, capsys):
+    import json
+    from snakemake_executor_plugin_aws_batch_flex import jobmonitor
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({"Image": "debian:12", "ImageID": "sha256:abc"}))
+    monkeypatch.setenv("ECS_CONTAINER_METADATA_URI_V4", meta.as_uri())
+    jobmonitor.log_image()
+    assert "[snakemake-batch] image debian:12 id=sha256:abc" in capsys.readouterr().err
+
+
+def test_versions_that_dont_fit_are_not_pinned(monkeypatch):
+    import types
+    from snakemake_executor_plugin_aws_batch_flex import bootstrap
+    dists = {"top": ("1.0", ["dep>=2,<3", "other; extra == 'x'"]), "dep": ("3.1", []),
+             "other": ("1.0", []), "local": ("1.0+cu12", [])}
+
+    def distribution(name):
+        if name not in dists:
+            raise bootstrap.md.PackageNotFoundError(name)
+        return types.SimpleNamespace(version=dists[name][0], requires=dists[name][1])
+
+    monkeypatch.setattr(bootstrap.md, "distribution", distribution)
+    # dep 3.1 breaks top's dep<3 (an environment mixed by hand); other is only for an extra
+    assert bootstrap.locked(["top", "local"]) == (["top==1.0"], ["dep==3.1", "local==1.0+cu12"])

@@ -13,9 +13,13 @@ the job's container every 2 seconds:
 When Snakemake exits, one line goes to the job's log:
 [snakemake-batch] peak-memory-bytes=... peak-cpus=... avg-cpus=... peak-disk-bytes=...
 
+At the start, the ID of the image the job runs in (what a tag pointed to at the time) goes there
+too, from ECS's container metadata: [snakemake-batch] image ... id=sha256:...
+
 Only the standard library is used."""
 
 import atexit
+import json
 import os
 import sys
 import threading
@@ -63,7 +67,22 @@ def _folder_size(path):
     return total
 
 
+def log_image():
+    url = os.environ.get("ECS_CONTAINER_METADATA_URI_V4")
+    if not url:
+        return
+    try:
+        from urllib.request import urlopen
+
+        with urlopen(url, timeout=2) as r:
+            c = json.load(r)
+        print(f"[snakemake-batch] image {c.get('Image')} id={c.get('ImageID')}", file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 def monitor(interval=2.0, disk_every=10):
+    log_image()
     work = os.environ.get("SMK_WORK") or os.getcwd()
     peak = {"mem": 0, "cpus": 0.0, "disk": 0}
     start_cpu, start_t = _cpu_microseconds(), time.monotonic()

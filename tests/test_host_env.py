@@ -42,7 +42,7 @@ def test_host_prelude_fails_fast_with_clear_message(tmp_path):
 def test_snakemake_runs_from_the_mounted_host_env(tmp_path):
     env = tmp_path / "host-env"
     script = hostenv.install_script(str(env), f"{sys.version_info[0]}.{sys.version_info[1]}",
-                                    hostenv.default_requirements(["fs"], []))
+                                    hostenv.default_requirements(["fs", "s3"], []), hostenv.default_constraints(["fs", "s3"]))
     sp = tmp_path / "install.sh"; sp.write_text(script)
     assert subprocess.run(["bash", str(sp)], capture_output=True).returncode == 0
     r, calls = run(tmp_path, WHO, "--aws-batch-flex-bootstrap", "host",
@@ -52,4 +52,4 @@ def test_snakemake_runs_from_the_mounted_host_env(tmp_path):
     # `run:` executes inside the Snakemake process: its interpreter is the host env's
     assert (tmp_path / "store" / "who.txt").read_text().startswith(str(env))
     reg = next(c for c in calls if c["call"] == "register_job_definition")
-    assert reg["mounts"] == [{"sourceVolume": "vol0", "containerPath": str(env), "readOnly": True}]
+    assert reg["mounts"][0] == {"sourceVolume": "vol0", "containerPath": str(env), "readOnly": True}

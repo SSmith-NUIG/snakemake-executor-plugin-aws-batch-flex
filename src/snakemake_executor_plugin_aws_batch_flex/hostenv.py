@@ -29,12 +29,12 @@ UV=""
 if command -v uv >/dev/null 2>&1; then UV=uv
 else
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL https://astral.sh/uv/install.sh | UV_UNMANAGED_INSTALL="$ENV/.uv" sh || true
+    curl -fsSL https://astral.sh/uv/@@UVVER@@/install.sh | UV_UNMANAGED_INSTALL="$ENV/.uv" sh || true
   fi
   if [ -x "$ENV/.uv/uv" ]; then UV="$ENV/.uv/uv"
   else
     for p in python3 python; do
-      if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$ENV/.uvlib" uv; then
+      if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$ENV/.uvlib" uv==@@UVVER@@; then
         UV="env PYTHONPATH=$ENV/.uvlib $p -m uv"; break
       fi
     done
@@ -43,7 +43,11 @@ fi
 [ -n "$UV" ] || { echo "need curl or python3+pip to install uv" >&2; exit 1; }
 $UV python install @@PYVER@@
 $UV venv --clear --python @@PYVER@@ "$ENV/venv"
-$UV pip install --python "$ENV/venv/bin/python" @@REQS@@
+# exactly the versions on the machine that made this script (see bootstrap.locked)
+cat > "$ENV/constraints.txt" <<'SMK_PINS_EOF'
+@@PINS@@
+SMK_PINS_EOF
+$UV pip install --python "$ENV/venv/bin/python" -c "$ENV/constraints.txt" @@REQS@@
 "$ENV/venv/bin/python" -c "import snakemake; print('snakemake', snakemake.__version__)"
 rm -rf "$ENV/.cache"
 chmod -R a+rX "$ENV"
@@ -52,21 +56,38 @@ echo "snakemake host env ready at $ENV"
 """
 
 
+def _packages(storage_plugins: list[str]) -> list[str]:
+    return ["snakemake"] + [f"snakemake-storage-plugin-{p}" for p in storage_plugins]
+
+
 def default_requirements(storage_plugins: list[str], extra: list[str]) -> list[str]:
     from .bootstrap import pinned
 
-    reqs = [pinned("snakemake")]
-    reqs += [pinned(f"snakemake-storage-plugin-{p}") for p in storage_plugins]
-    return reqs + list(extra)
+    return [pinned(p) for p in _packages(storage_plugins)] + list(extra)
 
 
-def install_script(env_path: str, python_version: str, requirements: list[str]) -> str:
-    stamp = shlex.quote("|".join([python_version, *sorted(requirements)]))
+def default_constraints(storage_plugins: list[str]) -> list[str]:
+    from .bootstrap import locked
+
+    pins, skipped = locked(_packages(storage_plugins))
+    if skipped:
+        print(f"note: not pinned, since this machine's version doesn't fit what the packages ask for: "
+              f"{', '.join(skipped)}", file=sys.stderr)
+    return pins
+
+
+def install_script(env_path: str, python_version: str, requirements: list[str],
+                   constraints: list[str] = ()) -> str:
+    from .bootstrap import UV_VERSION
+
+    stamp = shlex.quote("|".join([python_version, *sorted(requirements), *sorted(constraints)]))
     return (
         _SCRIPT.replace("@@ENV@@", shlex.quote(env_path))
         .replace("@@STAMP@@", stamp)
         .replace("@@PYVER@@", shlex.quote(python_version))
+        .replace("@@PINS@@", "\n".join(constraints))
         .replace("@@REQS@@", " ".join(shlex.quote(r) for r in requirements))
+        .replace("@@UVVER@@", UV_VERSION)
     )
 
 
@@ -75,7 +96,13 @@ set -euo pipefail
 ROOT=@ROOT@
 if [ ! -x "$ROOT/bin/conda" ]; then
   mkdir -p "$(dirname "$ROOT")"
-  curl -fsSL -o /tmp/miniforge.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-$(uname -m).sh"
+  case "$(uname -m)" in
+    x86_64) SUM=@X86_64@ ;;
+    aarch64) SUM=@AARCH64@ ;;
+    *) echo "no Miniforge checksum for $(uname -m)" >&2; exit 1 ;;
+  esac
+  curl -fsSL -o /tmp/miniforge.sh "https://github.com/conda-forge/miniforge/releases/download/@MINIFORGE@/Miniforge3-@MINIFORGE@-Linux-$(uname -m).sh"
+  echo "$SUM  /tmp/miniforge.sh" | sha256sum -c -
   bash /tmp/miniforge.sh -b -p "$ROOT"
   rm -f /tmp/miniforge.sh
 fi
@@ -92,6 +119,13 @@ chmod -R a+rX "$ROOT"
 echo "conda ready at $ROOT"
 """
 
+# Miniforge for the AMI, with the sha256 of its installers (from its GitHub release)
+MINIFORGE = "26.7.2-0"
+MINIFORGE_SHA256 = {
+    "X86_64": "281b0ac7d550802efc81af633225a5e6116d29ae72f3ab4eae7168c3931a4c05",
+    "AARCH64": "89b786c8d2c8b0fda7553914c1314ae4ddaa094503802f279377b19ac4463cb2",
+}
+
 _CONDA_ENV = r"""cat > /tmp/env-@NAME@.yaml <<'SMK_ENV_EOF'
 @YAML@
 SMK_ENV_EOF
@@ -107,7 +141,10 @@ def conda_script(conda_path: str, envs: list) -> str:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
             raise ValueError(f"invalid environment name {name!r}")
         blocks.append(_CONDA_ENV.replace("@NAME@", name).replace("@YAML@", yaml_text.rstrip()))
-    return _CONDA.replace("@ROOT@", shlex.quote(conda_path)).replace("@ENVS@", "\n".join(blocks))
+    script = _CONDA.replace("@ROOT@", shlex.quote(conda_path)).replace("@MINIFORGE@", MINIFORGE)
+    for arch, sha in MINIFORGE_SHA256.items():
+        script = script.replace(f"@{arch}@", sha)
+    return script.replace("@ENVS@", "\n".join(blocks))
 
 
 def launch_template_userdata(script: str, includes: tuple = ()) -> str:
@@ -169,7 +206,8 @@ def main(argv=None):
         except (OSError, UnicodeDecodeError) as e:
             ap.error(f"cannot read --include {f}: {e} (user-data must be plain ASCII)")
     script = install_script(
-        a.path, a.python_version, default_requirements(a.storage_plugin, a.extra_package)
+        a.path, a.python_version, default_requirements(a.storage_plugin, a.extra_package),
+        default_constraints(a.storage_plugin),
     )
     sys.stdout.write(
         launch_template_userdata(script, tuple(includes)) if a.what == "userdata" else script

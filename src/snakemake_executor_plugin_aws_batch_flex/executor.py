@@ -22,7 +22,7 @@ from .bootstrap import MODES, conda_snippet, image_python_snippet, job_tools_sou
 from .costs import Usage
 from .hints import known_problem_hints
 from .instances import Instances
-from .jobdefs import JobDefinitions, describe_existing, is_ecr, normalize_image
+from .jobdefs import JobDefinitions, describe_existing, is_ecr, mutable_tag, normalize_image
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
 from .patches import keep_unneeded_temp, recheck_s3_directories
@@ -109,6 +109,8 @@ class Executor(RemoteExecutor):
         self._orphans_checked: set = set()
         tags = parse_pairs(s.tags or [], "--aws-batch-flex-tags")
         self.run_id = uuid.uuid4().hex[:12]
+        # jobs that install Snakemake at start get the packages as they were now, all the same
+        self.resolved_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
         cfg = BotoConfig(
             region_name=s.region, retries={"max_attempts": 10, "mode": "adaptive"}
@@ -147,6 +149,8 @@ class Executor(RemoteExecutor):
         self._preludes: dict = {}  # platform -> job prelude
         self._warned_fargate_mounts = False
         self._warned_fargate_shm = False
+        self._said_resolved = False
+        self._warned_tags: set = set()
         self._warned_disk: set = set()
         self._existing_defs: dict = {}  # ref -> ExistingJobDefinition
         self._fair_share: dict = {}  # queue -> has a scheduling policy
@@ -396,7 +400,11 @@ class Executor(RemoteExecutor):
         key = (platform, host_mount, conda_mount)
         if key not in self._preludes:
             default = getattr(self.workflow.storage_settings, "default_storage_provider", None)
-            base = snakemake_prelude(self.settings, self._bootstrap_for(platform, host_mount), default)
+            mode = self._bootstrap_for(platform, host_mount)
+            base = snakemake_prelude(self.settings, mode, default, self.resolved_at)
+            if mode in ("auto", "always") and not self._said_resolved:
+                self._said_resolved = True
+                self.logger.info(f"Jobs that install Snakemake at start get the packages as of {self.resolved_at}.")
             if self.settings.conda_path and platform == "ec2" and conda_mount:
                 base += "\n" + conda_snippet(self.settings.conda_path)
             base += "\n" + image_python_snippet()  # SMK_FLEX_SCRIPT_PYTHON decides per job
@@ -450,7 +458,14 @@ class Executor(RemoteExecutor):
                 f"Group job {job.name} mixes container images {sorted(images)}; "
                 "all rules in a group must use the same image."
             )
-        return images.pop()
+        image = images.pop()
+        if mutable_tag(image) and image not in self._warned_tags:
+            self._warned_tags.add(image)
+            self.logger.warning(
+                f"Image {image} has no version tag (or :latest), so what it contains can change "
+                "between jobs and runs. Use a fixed tag (e.g. samtools:1.21--h50ea8bc_0) or a digest (@sha256:...)."
+            )
+        return image
 
     def _queue_for(self, job: JobExecutorInterface) -> str:
         return str(job.resources.get("batch_queue") or self.settings.queue)
