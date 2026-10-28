@@ -392,6 +392,11 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   environment in the AWS console (**Batch** > **Compute environments**) for an error, and that
   your subnets have internet access. New accounts sometimes have a low limit on machines;
   Snakemake also prints a warning when a job waits too long.
+- **"can't open file" / "No such file" for a script in a job.** Jobs don't get the whole
+  workflow folder: Snakemake sends the Snakefile, files named in `script:` and `conda:`, and what
+  git knows about. The plugin also always sends `scripts/`, `bin/`, `envs/` and `config/` (at
+  the top or in `workflow/`). A script that a `shell:` command runs from anywhere else needs a
+  `git add` (no commit needed), or the run started with `smkflex run`, which sends the folder.
 - **A job fails.** Snakemake prints the end of the job's log, and for causes the plugin recognises
   (out of memory, a full disk, a missing package or storage plugin, S3 permissions) a hint on what
   to do. Full logs are in the AWS console under **CloudWatch** > **Log groups** >

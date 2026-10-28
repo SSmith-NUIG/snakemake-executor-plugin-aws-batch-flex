@@ -401,6 +401,28 @@ def test_sample_sheet_in_config_reaches_jobs_without_git(tmp_path):
     assert (tmp_path / "store" / "s2.txt").read_text() == "s2\n"
 
 
+def test_scripts_folders_reach_jobs_without_git(tmp_path):
+    # a shell: command runs a script that git doesn't know about (no checkout here)
+    for d in ("scripts", "workflow/bin"):
+        (tmp_path / d).mkdir(parents=True)
+        (tmp_path / d / "hello.sh").write_text(f"echo from {d}\n")
+    (tmp_path / "scripts" / "__pycache__").mkdir()
+    snakefile = textwrap.dedent('''
+        rule all:
+            input: "a.txt", "b.txt"
+        rule a:
+            output: "a.txt"
+            shell: "sh scripts/hello.sh > {output}"
+        rule b:
+            output: "b.txt"
+            shell: "sh workflow/bin/hello.sh > {output}"
+    ''')
+    r, calls = run(tmp_path, snakefile)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "a.txt").read_text() == "from scripts\n"
+    assert (tmp_path / "store" / "b.txt").read_text() == "from workflow/bin\n"
+
+
 def test_module_from_github(tmp_path):
     # snakedeploy's layout: the pipeline's rules come from GitHub; packing the sources used to
     # crash on their scripts ("not GithubFile")

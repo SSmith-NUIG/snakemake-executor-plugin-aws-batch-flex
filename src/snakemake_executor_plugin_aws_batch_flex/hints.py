@@ -49,6 +49,18 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
             "Dockerfile, or build one on top that clears it (FROM <image> then ENTRYPOINT []); "
             "CMD [\"python3\"] keeps `docker run <image>` starting Python."
         )
+    # a script a shell: command runs that wasn't sent: python, Rscript, sh/bash
+    scripts = re.findall(r"can't open file '(?:/tmp/snakemake-job-\d+/)?([^']+)'", text)
+    scripts += re.findall(r"cannot open file '([^']+\.[Rr])': No such file", text)
+    scripts += re.findall(r"(?:^|\s)(\S+\.(?:sh|py|R|pl|rb|jl)): No such file", text, re.M)
+    scripts += re.findall(r"Can't open (\S+\.(?:sh|py|R|pl|rb|jl))", text)  # older dash
+    if scripts:
+        hints.append(
+            f"  hint: {', '.join(sorted(set(scripts)))} wasn't sent to the job. Snakemake sends jobs the "
+            "Snakefile, the files named in script:/conda:, and what git knows about; this plugin also "
+            "always sends scripts/, bin/, envs/ and config/ (at the top or in workflow/). Put it in one "
+            "of those, or `git add` it (no commit needed), or run with `smkflex run`, which sends the folder."
+        )
     if not plugins and "unrecognized arguments" in text:
         hints.append(
             "  hint: the job's Snakemake didn't understand an option from this machine's "

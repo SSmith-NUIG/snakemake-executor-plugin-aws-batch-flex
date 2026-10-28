@@ -300,3 +300,18 @@ def test_rules_whose_jobs_ran_out_get_no_memory_suggestion(tmp_path, monkeypatch
     u.fetch_peaks(client)
     assert set(u.suggestions(256)) == {"ok"}
     assert "Hint: in killed's jobs, Linux killed 2 process(es) for lack of memory" in u.table(256)
+
+
+def test_hint_for_a_script_that_wasnt_sent():
+    from snakemake_executor_plugin_aws_batch_flex.hints import known_problem_hints as hints
+    py = ["python: can't open file '/tmp/snakemake-job-7/scripts/synthetic/gen.py': [Errno 2] No such file or directory"]
+    r = ["Fatal error: cannot open file 'scripts/plot.R': No such file or directory"]
+    sh = ["bash: tools/run.sh: No such file or directory"]
+    dash = ["sh: 0: cannot open scripts/a.sh: No such file"]
+    old_dash = ["sh: 0: Can't open bin/b.sh"]
+    for lines, name in ((py, "scripts/synthetic/gen.py"), (r, "scripts/plot.R"), (sh, "tools/run.sh"),
+                        (dash, "scripts/a.sh"), (old_dash, "bin/b.sh")):
+        h = hints(lines)
+        assert len(h) == 1 and f"{name} wasn't sent to the job" in h[0] and "git add" in h[0], h
+    # a data file R can't read is something else
+    assert not hints(["Error in file(file, \"rt\") : cannot open file 'data/x.csv': No such file or directory"])
