@@ -1,3 +1,4 @@
+import re
 import subprocess
 import types
 import pytest
@@ -326,3 +327,35 @@ def test_hint_for_a_script_that_wasnt_sent():
         assert len(h) == 1 and f"{name} wasn't sent to the job" in h[0] and "git-ignored" in h[0], h
     # a data file R can't read is something else
     assert not hints(["Error in file(file, \"rt\") : cannot open file 'data/x.csv': No such file or directory"])
+
+
+def test_settings_are_checked_before_anything_reaches_aws():
+    from snakemake_executor_plugin_aws_batch_flex.settings import (ExecutorSettings, normalized, registry_secrets,
+                                                                   validate, volume_mounts)
+
+    def check(**kw):
+        return validate(normalized(ExecutorSettings(queue="q", **kw)))
+
+    check()  # the defaults are fine
+    secret, ex = "arn:aws:secretsmanager:eu-west-1:1:secret:hub", "arn:aws:iam::1:role/exec"
+    bad = [({"platform": "lambda"}, "platform must be 'ec2' or 'fargate'"),
+           ({"bootstrap": "sometimes"}, "bootstrap must be"),
+           ({"script_python": "mine"}, "script-python must be"),
+           ({"orphan_jobs": "kill"}, "orphan-jobs must be"),
+           ({"assign_public_ip": "yes"}, "assign-public-ip must be"),
+           ({"conda_cache": "somewhere"}, "must be none, instance or an s3:// URL"),
+           ({"oom_memory_factor": 0.5}, "oom-memory-factor must be a number from 1 or more"),
+           ({"spot_retries": 10}, "spot-retries must be a number from 0 to 9"),
+           ({"ephemeral_storage_gib": 500}, "ephemeral-storage-gib must be a number from 21 to 200"),
+           ({"volumes": ["/scratch"]}, "expected HOST:CONTAINER[:ro]"),
+           ({"registry_credentials": ["docker.io"]}, "expected REGISTRY=SECRET_ARN"),
+           ({"registry_credentials": [f"docker.io={secret}"]}, "needs --aws-batch-flex-execution-role-arn"),
+           ({"registry_credentials": [f"123456789012.dkr.ecr.eu-west-1.amazonaws.com={secret}"],
+             "execution_role_arn": ex}, "is ECR")]
+    for kw, msg in bad:
+        with pytest.raises(WorkflowError, match=re.escape(msg)):
+            check(**kw)
+    s = check(volumes=["/scratch:/scratch", "/ref:/ref:ro"], registry_credentials=[f"Index.Docker.io={secret}"],
+              execution_role_arn=ex)
+    assert volume_mounts(s) == [("/scratch", "/scratch", False), ("/ref", "/ref", True)]
+    assert registry_secrets(s) == {"docker.io": secret}

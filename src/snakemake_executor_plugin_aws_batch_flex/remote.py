@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 import yaml
 from botocore.exceptions import BotoCoreError, ClientError
+from snakemake_interface_common.exceptions import WorkflowError
 
 from . import headjob
 from .bundle import _tag, added_files, clone, head_command, local_commit, make_bundle
@@ -404,6 +405,9 @@ def main(argv=None):
         return 2
     except (ClientError, BotoCoreError) as e:
         print(f"smkflex: AWS error: {e}", file=sys.stderr)
+        return 2
+    except WorkflowError as e:  # a setting in the profile
+        print(f"smkflex: {e}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         return 130

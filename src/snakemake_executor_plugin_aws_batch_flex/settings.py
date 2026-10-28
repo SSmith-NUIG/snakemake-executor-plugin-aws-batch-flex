@@ -6,13 +6,15 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from snakemake_interface_common.exceptions import WorkflowError
 from snakemake_interface_executor_plugins.settings import (
     CommonSettings,
     ExecutorSettingsBase,
 )
 
+from .bootstrap import MODES
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
-from .jobdefs import DEFAULT_LOG_GROUP
+from .jobdefs import DEFAULT_LOG_GROUP, is_ecr
 from .sizing import DEFAULT_MEM_OVERHEAD_MIB
 
 PLUGIN_NAME = "aws-batch-flex"
@@ -386,6 +388,78 @@ def host_mounts(s: ExecutorSettings) -> list:
     return mounts
 
 
+def volume_mounts(s: ExecutorSettings) -> list:
+    """[(host path, container path, read-only)] from the volumes setting (HOST:CONTAINER[:ro])."""
+    mounts = []
+    for item in s.volumes or []:
+        parts = item.split(":")
+        if len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != "ro"):
+            raise WorkflowError(f"Invalid volume '{item}', expected HOST:CONTAINER[:ro].")
+        mounts.append((parts[0], parts[1], len(parts) == 3))
+    return mounts
+
+
+def registry_secrets(s: ExecutorSettings) -> dict:
+    """{registry: secret ARN} from the registry-credentials setting (REGISTRY=SECRET_ARN)."""
+    out = {}
+    for item in s.registry_credentials or []:
+        reg, sep, arn = item.partition("=")
+        reg, arn = reg.strip().lower(), arn.strip()
+        if not sep or not reg or not arn.startswith("arn:"):
+            raise WorkflowError(
+                f"Invalid --aws-batch-flex-registry-credentials entry '{item}', "
+                "expected REGISTRY=SECRET_ARN (e.g. docker.io=arn:aws:secretsmanager:...)."
+            )
+        if is_ecr(reg):
+            raise WorkflowError(f"{reg} is ECR: it needs no credentials, the instance/execution role pulls from it.")
+        out["docker.io" if reg in ("index.docker.io", "registry-1.docker.io") else reg] = arn
+    if out and not s.execution_role_arn:
+        raise WorkflowError(
+            "--aws-batch-flex-registry-credentials needs --aws-batch-flex-execution-role-arn: "
+            "ECS reads the registry secret with the execution role."
+        )
+    return out
+
+
+def _one_of(name, value, allowed):
+    if value is not None and value not in allowed:
+        raise WorkflowError(f"--aws-batch-flex-{name} must be {' or '.join(repr(a) for a in allowed)}, got {value!r}.")
+
+
+def _number(name, value, low, high=None, kind=int):
+    if value is None:
+        return
+    try:
+        ok = kind(value) >= low and (high is None or kind(value) <= high)
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        to = f" to {high}" if high is not None else " or more"
+        raise WorkflowError(f"--aws-batch-flex-{name} must be a number from {low}{to}, got {value!r}.")
+
+
+def validate(s: ExecutorSettings) -> ExecutorSettings:
+    """The settings, checked: what the executor and smkflex both rely on. Raises WorkflowError
+    with what's wrong, before anything reaches AWS."""
+    _one_of("platform", s.platform, ("ec2", "fargate"))
+    _one_of("bootstrap", s.bootstrap, MODES)
+    _one_of("script-python", s.script_python, ("image", "host"))
+    _one_of("orphan-jobs", s.orphan_jobs, ("cancel", "warn", "ignore"))
+    _one_of("assign-public-ip", s.assign_public_ip, ("ENABLED", "DISABLED"))
+    cache = str(s.conda_cache).strip()
+    if cache not in ("none", "instance") and not cache.startswith("s3://"):
+        raise WorkflowError(f"--aws-batch-flex-conda-cache must be none, instance or an s3:// URL, got '{cache}'.")
+    _number("oom-memory-factor", s.oom_memory_factor, 1, kind=float)
+    _number("spot-retries", s.spot_retries, 0, 9)
+    _number("scheduling-priority", s.scheduling_priority, 0, 9999)
+    _number("ephemeral-storage-gib", s.ephemeral_storage_gib, 21, 200)  # Fargate's limits
+    _number("mem-overhead-mib", s.mem_overhead_mib, 0)
+    _number("max-sources-mb", s.max_sources_mb, 1)
+    volume_mounts(s)
+    registry_secrets(s)
+    return s
+
+
 def normalized(s: ExecutorSettings) -> ExecutorSettings:
     """The settings with every None that has a default replaced by the default, so the rest of
     the code needn't check (Snakemake can hand over None for a setting that wasn't given)."""
@@ -408,4 +482,4 @@ def from_profile(profile: dict) -> ExecutorSettings:
         if f.type is bool and isinstance(value, str):
             value = value.lower() in ("true", "1", "yes")
         kw[f.name] = value
-    return normalized(ExecutorSettings(**kw))
+    return validate(normalized(ExecutorSettings(**kw)))

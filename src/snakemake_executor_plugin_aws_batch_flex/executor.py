@@ -18,14 +18,22 @@ from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
 from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
 from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 
-from .bootstrap import MODES, conda_snippet, image_python_snippet, job_tools_source, snakemake_prelude
+from .bootstrap import conda_snippet, image_python_snippet, job_tools_source, snakemake_prelude
 from .hints import known_problem_hints
-from .jobdefs import JobDefinitions, describe_existing, is_ecr, mutable_tag, normalize_image
+from .jobdefs import JobDefinitions, describe_existing, mutable_tag, normalize_image
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
 from .patches import keep_unneeded_temp, recheck_s3_directories
 from .preflight import SUBMIT_HINT, ami_snakemake_version, check_queue, check_role, describe_queue, version_note
-from .settings import TEST_STATUS_SECONDS, ExecutorSettings, host_mounts, normalized
+from .settings import (
+    TEST_STATUS_SECONDS,
+    ExecutorSettings,
+    host_mounts,
+    normalized,
+    registry_secrets,
+    validate,
+    volume_mounts,
+)
 from .sizing import fargate_size, job_requirements
 from .tags import job_tags, parse_pairs, parse_resource_string
 from .usage import Usage
@@ -46,59 +54,21 @@ def _out_of_memory(d: dict) -> bool:
 
 class Executor(RemoteExecutor):
     def __post_init__(self):
-        s: ExecutorSettings = normalized(self.workflow.executor_settings)
+        s: ExecutorSettings = validate(normalized(self.workflow.executor_settings))
         if TEST_STATUS_SECONDS:
             self.next_seconds_between_status_checks = int(TEST_STATUS_SECONDS)
-        if s.platform not in (None, "ec2", "fargate"):
-            raise WorkflowError("--aws-batch-flex-platform must be 'ec2' or 'fargate'.")
-        if s.script_python not in (None, "image", "host"):
-            raise WorkflowError("--aws-batch-flex-script-python must be 'image' or 'host'.")
         recheck_s3_directories()
-        if s.oom_memory_factor < 1:
-            raise WorkflowError("--aws-batch-flex-oom-memory-factor must be 1 or more.")
-        if s.bootstrap not in MODES:
-            raise WorkflowError(f"--aws-batch-flex-bootstrap must be one of {MODES}.")
-        mounts = []
-        for item in s.volumes or []:
-            parts = item.split(":")
-            if len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != "ro"):
-                raise WorkflowError(f"Invalid volume '{item}', expected HOST:CONTAINER[:ro].")
-            mounts.append((parts[0], parts[1], len(parts) == 3))
-        mounts += host_mounts(s)
+        mounts = volume_mounts(s) + host_mounts(s)
         cache = s.conda_cache.strip()
-        if cache not in ("none", "instance") and not cache.startswith("s3://"):
-            raise WorkflowError(
-                f"--aws-batch-flex-conda-cache must be none, instance or an s3:// URL, got '{cache}'."
-            )
         self.conda_cache = cache
         if cache != "none":
             # the instance's folder, shared by its jobs (EC2; Fargate jobs keep their own)
             mounts.append((CONDA_CACHE_HOST_DIR, CONDA_CACHE_JOB_DIR, False))
         self.mounts = mounts
-        registry_credentials = {}
-        for item in s.registry_credentials or []:
-            reg, sep, arn = item.partition("=")
-            reg, arn = reg.strip().lower(), arn.strip()
-            if not sep or not reg or not arn.startswith("arn:"):
-                raise WorkflowError(
-                    f"Invalid --aws-batch-flex-registry-credentials entry '{item}', "
-                    "expected REGISTRY=SECRET_ARN (e.g. docker.io=arn:aws:secretsmanager:...)."
-                )
-            if is_ecr(reg):
-                raise WorkflowError(
-                    f"{reg} is ECR: it needs no credentials, the instance/execution role pulls from it."
-                )
-            registry_credentials["docker.io" if reg in ("index.docker.io", "registry-1.docker.io") else reg] = arn
-        if registry_credentials and not s.execution_role_arn:
-            raise WorkflowError(
-                "--aws-batch-flex-registry-credentials needs --aws-batch-flex-execution-role-arn: "
-                "ECS reads the registry secret with the execution role."
-            )
+        registry_credentials = registry_secrets(s)
         self.settings = s
         lock = getattr(getattr(self.workflow, "execution_settings", None), "lock", True)
         self.orphan_mode = s.orphan_jobs or ("cancel" if lock else "warn")
-        if self.orphan_mode not in ("cancel", "warn", "ignore"):
-            raise WorkflowError("--aws-batch-flex-orphan-jobs must be 'cancel', 'warn' or 'ignore'.")
         self.workflow_id = workflow_id(
             os.getcwd(),
             getattr(self.workflow, "main_snakefile", "") or "",

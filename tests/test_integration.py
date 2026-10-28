@@ -179,19 +179,6 @@ def test_registry_credentials_only_for_matching_registry(tmp_path):
     assert quay["creds"] is None and quay["exec_role"] is None  # EC2, no secret: no execution role
 
 
-def test_registry_credentials_need_execution_role(tmp_path):
-    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-registry-credentials", f"docker.io={SECRET}")
-    assert r.returncode != 0 and "needs --aws-batch-flex-execution-role-arn" in r.stdout + r.stderr
-    assert not calls
-
-
-def test_registry_credentials_reject_ecr(tmp_path):
-    ecr = "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
-    r, _ = run(tmp_path, SNAKEFILE, "--aws-batch-flex-registry-credentials", f"{ecr}={SECRET}",
-               "--aws-batch-flex-execution-role-arn", EXEC)
-    assert r.returncode != 0 and "is ECR" in r.stdout + r.stderr
-
-
 def _orphan(jid, tmp_path, wf=None, jobdef="snakemake-0123abcd", queue="default-queue"):
     from snakemake_executor_plugin_aws_batch_flex.orphans import workflow_id
     wf = wf or workflow_id(str(tmp_path), str(tmp_path / "Snakefile"), str(tmp_path / "store"))
@@ -542,8 +529,6 @@ def test_conda_cache_is_set_up_for_jobs(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     sub = next(c for c in calls if c["call"] == "submit_job")
     assert "SMK_FLEX_CONDA_CACHE" not in sub["env"] and "SMK_FLEX_JOB_CODE" in sub["env"]
-    r, _ = run(tmp_path / "bad", SNAKEFILE, "--aws-batch-flex-conda-cache", "somewhere")
-    assert r.returncode != 0 and "must be none, instance or an s3:// URL" in r.stdout + r.stderr
 
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',

@@ -500,6 +500,13 @@ def test_status_reads_every_page_and_describes_100_at_a_time(tmp_path, monkeypat
     assert len(out) == 150 and out[0].startswith("j249 ") and "abc" in out[0]
 
 
+def test_a_bad_setting_in_the_profile_is_reported_not_a_traceback(tmp_path):
+    wf = setup(tmp_path, **{"aws-batch-flex-bootstrap": "sometimes"})
+    r, calls = smkflex(wf, "run")
+    assert r.returncode == 2 and "smkflex: --aws-batch-flex-bootstrap must be" in r.stderr, r.stderr
+    assert "Traceback" not in r.stderr and not any(c["call"] == "submit_job" for c in calls)
+
+
 def test_run_refuses_options_nobody_knows(tmp_path):
     wf = setup(tmp_path)
     r, calls = smkflex(wf, "run", "--wiat")
