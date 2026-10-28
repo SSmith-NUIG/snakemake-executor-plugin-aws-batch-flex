@@ -91,6 +91,30 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     assert "--forceall a.txt" in r.stdout + r.stderr
 
 
+def test_shell_referenced_files_reach_the_jobs(tmp_path):
+    """A `shell:` command can call files Snakemake doesn't know about (there is no `script:`
+    directive). The head job is not a git checkout, so without the bundle's file list those
+    files never reach the rule jobs and the command fails with "No such file"."""
+    wf = setup(tmp_path)
+    (wf / "Snakefile").write_text(textwrap.dedent('''
+        rule all:
+            input: "out.txt"
+        rule r:
+            output: "out.txt"
+            shell: "python3 scripts/hello.py > {output}; python3 bin/tool.py >> {output}"
+    '''))
+    (wf / "scripts").mkdir()
+    (wf / "scripts" / "hello.py").write_text('print("from scripts/")\n')
+    (wf / "bin").mkdir()
+    (wf / "bin" / "tool.py").write_text('print("from bin/")\n')
+    r, _ = smkflex(wf, "run", "--wait")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "out.txt").read_text().splitlines() == [
+        "from scripts/",
+        "from bin/",
+    ]
+
+
 def test_refuses_a_second_run_of_the_same_workflow(tmp_path):
     wf = setup(tmp_path)
     key = hashlib.sha256(f"{tmp_path / 'store'}/.smkflex/wf/state.tar.gz".encode()).hexdigest()[:16]

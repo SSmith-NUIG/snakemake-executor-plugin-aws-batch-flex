@@ -6,6 +6,7 @@ import importlib.metadata as md
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -26,7 +27,19 @@ from snakemake_interface_executor_plugins.settings import (
 
 from .bootstrap import MODES, build_host_prelude, build_prelude, conda_snippet, image_python_snippet, job_tools_source
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
-from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, describe_existing, is_ecr
+from .imageinfo import (
+    ENTRYPOINT_HINT,
+    MODES as ENTRYPOINT_MODES,
+    EntrypointLookupError,
+    UnsupportedEntrypoint,
+    command_for_image,
+)
+from .jobdefs import (
+    DEFAULT_LOG_GROUP,
+    JobDefinitions,
+    describe_existing,
+    parse_registry_credentials,
+)
 from .naming import batch_job_name
 from .orphans import find_orphans, workflow_id
 from .costs import Usage
@@ -290,6 +303,22 @@ class ExecutorSettings(ExecutorSettingsBase):
             "nargs": "+",
         },
     )
+    container_entrypoint: Optional[str] = field(
+        default="auto",
+        metadata={
+            "help": "How jobs are started in images whose ENTRYPOINT isn't a shell. AWS Batch "
+            "can't override an image's ENTRYPOINT, so with 'auto' (default) the plugin reads the "
+            "image config from its registry and adapts the command: a shell entrypoint gets "
+            "'-c <script>', a Python entrypoint runs the script through /bin/sh, and images "
+            "without one run /bin/sh directly. 'none' (no entrypoint), 'shell' (a shell without "
+            "-c), 'sh-c' (a shell already given -c), 'python', or the entrypoint as a JSON list "
+            "(e.g. '[\"/bin/sh\",\"-c\"]') skip the lookup. Per rule: the batch_entrypoint "
+            "resource. Images with entrypoints that can't be driven (e.g. java -jar) are "
+            "reported before submission; wrap them with ENTRYPOINT [] to run them.",
+            "env_var": False,
+            "required": False,
+        },
+    )
     orphan_jobs: Optional[str] = field(
         default=None,
         metadata={
@@ -444,12 +473,26 @@ def _known_problem_hints(log_lines: List[str]) -> List[str]:
     return hints
 
 
+def _in_git_worktree():
+    """Whether git would find files here, i.e. Snakemake's own source discovery works."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
 def _skip_remote_module_scripts():
-    """Two fixes to what Snakemake packs for the jobs. (1) Work around Snakemake (9.27): packing the workflow's sources for the jobs crashes with
-    "TypeError: ... not GithubFile" when a rule comes from a module fetched from GitHub (as
-    snakedeploy sets up), because it treats the rule's script as a local file. Those scripts
-    don't need packing: each job fetches them from GitHub itself. So they're hidden while the
-    sources are collected. (2) Everything in config/ is packed, see below."""
+    """Two fixes to what Snakemake packs for the jobs. (1) Work around Snakemake (9.27):
+    packing the workflow's sources for the jobs crashes with "TypeError: ... not GithubFile"
+    when a rule comes from a module fetched from GitHub (as snakedeploy sets up), because it
+    treats the rule's script as a local file. Those scripts don't need packing: each job fetches
+    them from GitHub itself. So they're hidden while the sources are collected. (2) Send the
+    files that Snakemake can't find by itself, see below."""
     try:
         from snakemake.dag import DAG
         from snakemake.sourcecache import LocalSourceFile, SourceFile
@@ -474,6 +517,32 @@ def _skip_remote_module_scripts():
         finally:
             for rule, attr, value in hidden:
                 setattr(rule, attr, value)
+        # `smkflex run` unpacks the workflow into a folder that isn't a git checkout, so
+        # Snakemake's `git ls-files` finds nothing beyond the Snakefile, config/ and `script:`
+        # files. The bundle's list says exactly what the user sent (scripts/, bin/, ...): pack
+        # that, or a `shell:` command that calls one of those files fails in the job.
+        manifest = os.path.join(".smkflex", "files.txt")
+        if isinstance(files, set):
+            if os.path.isfile(manifest):
+                with open(manifest) as f:
+                    for line in f:
+                        path = line.strip()
+                        parts = path.split("/")
+                        if (
+                            path
+                            and not os.path.isabs(path)
+                            and ".." not in parts
+                            and os.path.isfile(path)
+                        ):
+                            files.add(path)
+            elif not _in_git_worktree():
+                # A direct `snakemake --executor aws-batch-flex` run from a folder that isn't
+                # a git checkout (snakedeploy's layouts, plain folders): Snakemake's git-based
+                # discovery finds nothing, so send what `smkflex run` would have sent, which
+                # respects .gitignore. Git checkouts keep Snakemake's own selection.
+                from .remote import workflow_files
+
+                files.update(workflow_files("."))
         # Sample sheets etc. in config/ (the standard place) only reach the jobs through
         # `git ls-files`, i.e. not at all in a folder that isn't a git checkout, such as one
         # made by snakedeploy. Send them anyway.
@@ -553,6 +622,16 @@ class Executor(RemoteExecutor):
             raise WorkflowError("--aws-batch-flex-platform must be 'ec2' or 'fargate'.")
         if s.script_python not in (None, "image", "host"):
             raise WorkflowError("--aws-batch-flex-script-python must be 'image' or 'host'.")
+        entrypoint_mode = str(s.container_entrypoint or "auto").strip()
+        if (
+            entrypoint_mode != "auto"
+            and entrypoint_mode.lower() not in ENTRYPOINT_MODES
+            and not entrypoint_mode.startswith("[")
+        ):
+            raise WorkflowError(
+                "--aws-batch-flex-container-entrypoint must be auto, none, shell, sh-c, python "
+                f"or an entrypoint as a JSON list, got '{entrypoint_mode}'."
+            )
         _recheck_s3_directories()
         if s.oom_memory_factor is not None and s.oom_memory_factor < 1:
             raise WorkflowError("--aws-batch-flex-oom-memory-factor must be 1 or more.")
@@ -578,20 +657,11 @@ class Executor(RemoteExecutor):
             # the instance's folder, shared by its jobs (EC2; Fargate jobs keep their own)
             mounts.append((CONDA_CACHE_HOST_DIR, CONDA_CACHE_JOB_DIR, False))
         self.mounts = mounts
-        registry_credentials = {}
-        for item in s.registry_credentials or []:
-            reg, sep, arn = item.partition("=")
-            reg, arn = reg.strip().lower(), arn.strip()
-            if not sep or not reg or not arn.startswith("arn:"):
-                raise WorkflowError(
-                    f"Invalid --aws-batch-flex-registry-credentials entry '{item}', "
-                    "expected REGISTRY=SECRET_ARN (e.g. docker.io=arn:aws:secretsmanager:...)."
-                )
-            if is_ecr(reg):
-                raise WorkflowError(
-                    f"{reg} is ECR: it needs no credentials, the instance/execution role pulls from it."
-                )
-            registry_credentials["docker.io" if reg in ("index.docker.io", "registry-1.docker.io") else reg] = arn
+        try:
+            registry_credentials = parse_registry_credentials(s.registry_credentials)
+        except WorkflowError as e:
+            raise WorkflowError(f"--aws-batch-flex-registry-credentials: {e}")
+        self.registry_credentials = registry_credentials
         if registry_credentials and not s.execution_role_arn:
             raise WorkflowError(
                 "--aws-batch-flex-registry-credentials needs --aws-batch-flex-execution-role-arn: "
@@ -614,6 +684,7 @@ class Executor(RemoteExecutor):
         cfg = BotoConfig(
             region_name=s.region, retries={"max_attempts": 10, "mode": "adaptive"}
         )
+        self.session = boto3.session.Session(region_name=s.region)
         self.batch = boto3.client("batch", config=cfg)
         self.cwlogs = boto3.client("logs", config=cfg)
         self._cfg = cfg
@@ -968,6 +1039,36 @@ class Executor(RemoteExecutor):
     def _queue_for(self, job: JobExecutorInterface) -> str:
         return str(job.resources.get("batch_queue") or self.settings.queue)
 
+    def _submit_command(self, job: JobExecutorInterface, image: str, script: str) -> List[str]:
+        """The container command for this job, adapted to the image's ENTRYPOINT.
+
+        AWS Batch can't override an image's ENTRYPOINT, so a command of `/bin/sh -c ...` would be
+        appended to it (e.g. `python3 /bin/sh -c ...`). command_for_image() reads the image config
+        and builds a command the entrypoint can run."""
+        mode = str(
+            job.resources.get("batch_entrypoint")
+            or self.settings.container_entrypoint
+            or "auto"
+        )
+        try:
+            return command_for_image(
+                image,
+                script,
+                mode,
+                credentials=self.registry_credentials,
+                session=self.session,
+                warn=self.logger.warning,
+                info=self.logger.info,
+            )
+        except UnsupportedEntrypoint as e:
+            raise WorkflowError(
+                f"{job.name}: image '{image}' has ENTRYPOINT {e.entrypoint}, which AWS Batch "
+                f"cannot override (Batch only sets the container command, and Docker appends it "
+                f"to the entrypoint). {ENTRYPOINT_HINT}"
+            )
+        except (EntrypointLookupError, ValueError) as e:  # a bad entrypoint mode value
+            raise WorkflowError(f"{job.name}: cannot start jobs in image '{image}': {e}")
+
     def run_job(self, job: JobExecutorInterface):
         image = self._image_for(job)
         queue = self._queue_for(job)
@@ -998,6 +1099,7 @@ class Executor(RemoteExecutor):
             host_mount = conda_mount = True
 
         script = f"{self._prelude_for(platform, host_mount, conda_mount)}\n{_keep_unneeded_temp(self.format_job_exec(job))}"
+        command = self._submit_command(job, image, script)
         resource_reqs = [
             {"type": "VCPU", "value": req.vcpu},
             {"type": "MEMORY", "value": str(req.memory_mib)},
@@ -1010,7 +1112,7 @@ class Executor(RemoteExecutor):
             jobQueue=queue,
             jobDefinition=jobdef,
             containerOverrides={
-                "command": ["/bin/sh", "-c", script],
+                "command": command,
                 "resourceRequirements": resource_reqs,
                 "environment": [
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()

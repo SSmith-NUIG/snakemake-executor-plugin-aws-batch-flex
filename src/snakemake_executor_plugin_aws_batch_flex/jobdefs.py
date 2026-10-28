@@ -26,6 +26,26 @@ def is_ecr(registry: str) -> bool:
     return bool(re.match(r"^\d{12}\.dkr\.ecr(-fips)?\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$", registry))
 
 
+def parse_registry_credentials(items) -> dict:
+    """REGISTRY=SECRET_ARN entries to {registry: secret ARN}, validating them. Used by the
+    executor and by `smkflex` to pull private images and to read their config."""
+    out = {}
+    for item in items or []:
+        reg, sep, arn = str(item).partition("=")
+        reg, arn = reg.strip().lower(), arn.strip()
+        if not sep or not reg or not arn.startswith("arn:"):
+            raise WorkflowError(
+                f"Invalid registry credentials entry '{item}', expected REGISTRY=SECRET_ARN "
+                "(e.g. docker.io=arn:aws:secretsmanager:...)."
+            )
+        if is_ecr(reg):
+            raise WorkflowError(
+                f"{reg} is ECR: it needs no credentials, the instance/execution role pulls from it."
+            )
+        out["docker.io" if reg in ("index.docker.io", "registry-1.docker.io") else reg] = arn
+    return out
+
+
 class JobDefinitions:
     def __init__(
         self,

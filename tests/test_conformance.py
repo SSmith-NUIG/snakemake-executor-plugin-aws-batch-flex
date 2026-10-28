@@ -1,5 +1,5 @@
 """Workflows from examples/conformance, run against the fake Batch."""
-import json, os, shutil, subprocess, sys
+import json, os, shutil, subprocess, sys, textwrap
 import pytest
 from pathlib import Path
 
@@ -34,6 +34,32 @@ def test_script_rules_python_and_bash(tmp_path):
     vcpu = {c["jobName"].split("_")[1]: next(r["value"] for r in c["res"] if r["type"] == "VCPU")
             for c in calls if c["call"] == "submit_job"}
     assert vcpu["py"] == "2" and vcpu["sh"] == "1"
+
+
+def test_shell_referenced_files_in_a_plain_folder(tmp_path):
+    """Snakemake sends only what `git ls-files` finds; in a folder that isn't a git checkout
+    that is just the Snakefile, so a `shell:` command calling e.g. scripts/ fails in the job
+    ("can't open file") unless the executor sends the workflow folder itself."""
+    (tmp_path / "Snakefile").write_text(textwrap.dedent('''
+        rule all:
+            input: "out.txt"
+        rule r:
+            output: "out.txt"
+            shell: "python3 scripts/hello.py > {output}; python3 bin/tool.py >> {output}"
+    '''))
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/hello.py").write_text('print("from scripts/")\n')
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin/tool.py").write_text('print("from bin/")\n')
+    log = tmp_path / "calls.jsonl"
+    env = dict(os.environ, PYTHONPATH=FAKE, FAKEAWS_LOG=str(log))
+    cmd = [sys.executable, "-m", "snakemake", "-s", "Snakefile", "--executor", "aws-batch-flex",
+           "--aws-batch-flex-queue", "q", "--aws-batch-flex-default-image", "debian:12",
+           "--default-storage-provider", "fs", "--default-storage-prefix", str(tmp_path / "store"),
+           "--default-resources", "mem_mb=500", "--latency-wait", "10", "-j", "1"]
+    r = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=900)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert (tmp_path / "store/out.txt").read_text().splitlines() == ["from scripts/", "from bin/"]
 
 
 def test_fanout_many_jobs(tmp_path):

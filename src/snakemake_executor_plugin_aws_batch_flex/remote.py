@@ -25,11 +25,18 @@ import boto3
 import yaml
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
+from snakemake_interface_common.exceptions import WorkflowError
 
 from . import headjob
 from .bootstrap import build_host_prelude, build_prelude, conda_snippet
 from .hostenv import DEFAULT_PATH as DEFAULT_HOST_ENV
-from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
+from .imageinfo import (
+    ENTRYPOINT_HINT,
+    EntrypointLookupError,
+    UnsupportedEntrypoint,
+    command_for_image,
+)
+from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions, parse_registry_credentials
 from .naming import batch_job_name
 from .preflight import ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
 from .sizing import fargate_size
@@ -444,12 +451,31 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
         vcpu, mem = fargate_size(a.vcpus, a.mem_mb)
     env = [{"name": "AWS_REGION", "value": region}, {"name": "AWS_DEFAULT_REGION", "value": region}] if region else []
     env.append({"name": "SMKFLEX_BUNDLE_URL", "value": bundle_url})
+    if os.environ.get("SMKFLEX_IMAGE_ENTRYPOINTS"):
+        env.append({"name": "SMKFLEX_IMAGE_ENTRYPOINTS", "value": os.environ["SMKFLEX_IMAGE_ENTRYPOINTS"]})
+    script = head_command(profile, platform, bundle_url, state_url, snakemake_args)
+    mode = a.entrypoint or profile.get("aws-batch-flex-container-entrypoint", "auto")
+    try:
+        credentials = parse_registry_credentials(profile.get("aws-batch-flex-registry-credentials"))
+        command = command_for_image(
+            image, script, mode,
+            credentials=credentials,
+            session=boto3.session.Session(region_name=profile.get("aws-batch-flex-region")),
+            warn=lambda msg: print(f"warning: {msg}", file=sys.stderr),
+            info=lambda msg: print(msg, file=sys.stderr),
+        )
+    except UnsupportedEntrypoint as e:
+        raise Fail(f"image '{image}' has ENTRYPOINT {e.entrypoint}, which AWS Batch cannot "
+                   f"override (Batch only sets the container command, which Docker appends to the "
+                   f"entrypoint). {ENTRYPOINT_HINT}")
+    except (EntrypointLookupError, ValueError, WorkflowError) as e:
+        raise Fail(f"cannot start jobs in image '{image}': {e}")
     resp = batch.submit_job(
         jobName=batch_job_name(f"smkflex-{name}"),
         jobQueue=queue,
         jobDefinition=jobdef,
         containerOverrides={
-            "command": ["/bin/sh", "-c", head_command(profile, platform, bundle_url, state_url, snakemake_args)],
+            "command": command,
             "resourceRequirements": [{"type": "VCPU", "value": vcpu}, {"type": "MEMORY", "value": str(mem)}],
             "environment": env,
         },
@@ -934,6 +960,10 @@ def main(argv=None):
     r.add_argument("--queue", help="queue for the head job (default: the profile's)")
     r.add_argument("--role", help="IAM role for the head job (default: aws-batch-flex-head-role-arn)")
     r.add_argument("--image", help=f"image for the head job (default: {HEAD_IMAGE}, Debian 12 with git)")
+    r.add_argument("--entrypoint", metavar="MODE",
+                   help="how to start the head job's image when its ENTRYPOINT isn't a shell: "
+                        "auto (default), none, shell, sh-c, python, or the entrypoint as a JSON "
+                        "list (default: aws-batch-flex-container-entrypoint from the profile)")
     r.add_argument("--vcpus", type=int, default=1)
     r.add_argument("--mem-mb", type=int, default=2048)
     r.add_argument("--max-bundle-mb", type=int, default=100)

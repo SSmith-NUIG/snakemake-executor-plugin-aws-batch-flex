@@ -60,6 +60,11 @@ rule align:
 - If `snakemake` is killed, jobs it left running are cancelled when you restart it.
 - Private images: ECR works through the IAM roles; other registries through Secrets Manager
   (`aws-batch-flex-registry-credentials`).
+- Images with an `ENTRYPOINT` (e.g. `ENTRYPOINT ["python3"]`) work: the plugin reads the image
+  config and launches the job through the entrypoint. Override the guess with `batch_entrypoint`
+  or `aws-batch-flex-container-entrypoint` (`none`, `shell`, `sh-c`, `python`, or a JSON list).
+  Entrypoints that can't run `/bin/sh` are reported before submission; wrap the image with
+  `ENTRYPOINT []` to run it.
 
 At the end of a run the plugin prints what each rule used and cost. The cost comes from the EC2
 instances the run used (their type, on-demand or Spot price, and disks), shared out by each

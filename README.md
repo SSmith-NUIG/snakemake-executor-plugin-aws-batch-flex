@@ -335,7 +335,9 @@ or the `smkflex` head job.
 its connection stops the run (the jobs already on Batch carry on, and are cancelled when you
 restart). For long workflows, `smkflex run` runs Snakemake itself on Batch instead, in a "head
 job". It's optional: running `snakemake` from your own machine works as before, and both can be
-used on the same workflow.
+used on the same workflow. A direct run from a folder that isn't a git checkout sends the
+workflow folder to the jobs as well (minus what `.gitignore` excludes), so `shell:` commands can
+use `scripts/`, `bin/` and the like there too.
 
 ```bash
 cd my-workflow
@@ -350,7 +352,9 @@ smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
 workflow's files in the bucket (the head job removes the upload again when it's done), and
 submits the head job, which runs `snakemake` there. Your machine can be switched off once it
 returns. Anything after the options goes to Snakemake, e.g. `smkflex run -- --forceall all`;
-`--wait` stays attached and prints the log until the run ends.
+`--wait` stays attached and prints the log until the run ends. The packed files are also copied
+into each rule job (so `scripts/`, `bin/` and the like work in `shell:` commands); files your
+`.gitignore` excludes, such as `results/`, are neither uploaded nor sent to the jobs.
 
 - `smkflex run --git https://github.com/lab/rnaseq --rev v2.1` runs a workflow straight from a
   git repository instead of the current folder: `--rev` is a branch, tag or commit (default:
@@ -415,6 +419,7 @@ rule align:
         batch_spot_retries=3,                 # Spot queues
         batch_priority=500,                   # fair-share queues
         batch_script_python="host",           # script: rules only
+        # batch_entrypoint="python",          # the image's ENTRYPOINT, when it isn't auto-detected
         # batch_job_definition="my-jobdef",   # instead of the plugin's own; it then sets the image
     shell: "bwa mem -t {threads} ref.fa {input} > {output}"
 ```
@@ -435,6 +440,7 @@ rule align:
 | `batch_spot_retries=0` | How often Batch retries this rule's job if its Spot instance is taken away (0-9; default from the profile, 2). `aws_batch_spot_attempts` (retries + 1) also works. |
 | `batch_priority=500` | Scheduling priority, 0-9999, higher first. Only on queues with a fair-share policy. `aws_batch_scheduling_priority` also works. |
 | `batch_job_definition="name"` | Use an existing job definition for this rule (see the `job-definition` setting). |
+| `batch_entrypoint="python"` | How to launch the job when the image's ENTRYPOINT isn't a shell (see `container-entrypoint`). `auto` (the profile default) reads the image config and adapts. |
 | `batch_script_python="host"` | For Python `script:` rules: use Snakemake's own Python instead of the image's. |
 
 To change resources without editing the Snakefile (for a published pipeline, say), use
@@ -633,6 +639,31 @@ aws-batch-flex-execution-role-arn: arn:aws:iam::123456789012:role/my-exec-role
 Only images from that registry get the credentials. ECS reads the secret with the execution role,
 so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the secret.
 
+### Images with an ENTRYPOINT
+
+AWS Batch cannot clear or replace an image's ENTRYPOINT: `containerOverrides` only sets the
+command, which Docker appends to the entrypoint (so `ENTRYPOINT ["python3"]` would otherwise run
+`python3 /bin/sh -c ...`). The plugin reads the image config from its registry once per run and
+launches jobs through the entrypoint:
+
+- none (also `tini`, `dumb-init`, `env`, `timeout`...): `/bin/sh -c <script>`
+- a shell (`sh`, `bash`...): `<shell> -c <script>`
+- Python (`python3`, `python3.12`...): `python3 -c '<bootstrap that runs /bin/sh>'`
+
+Private images use the same credentials as the pull (`registry-credentials`, or ECR's roles). Set
+`aws-batch-flex-container-entrypoint` (or a rule's `batch_entrypoint`) when the lookup isn't
+possible, or when you know the entrypoint better. Images whose entrypoint cannot run the script
+(e.g. `java -jar app.jar`, or a custom `/entrypoint.sh`) are reported before submission: rebuild
+or wrap them with `ENTRYPOINT []`:
+
+```dockerfile
+FROM vergaju/evoflow:latest
+ENTRYPOINT []
+```
+
+If the machine running Snakemake can't reach the registry, set
+`SMKFLEX_IMAGE_ENTRYPOINTS='{"*": []}'` (or an explicit entrypoint mode) to skip the lookup.
+
 ## Troubleshooting
 
 - **Not sure what's wrong?** Run `smkflex check --profile smkflex` in your workflow folder. It
@@ -746,6 +777,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | `volumes` | *none* | Folders on the EC2 machine to make available in every job, as `MACHINE_PATH:JOB_PATH`, with `:ro` for read-only, e.g. `[/data/refs:/refs:ro]`. |
 | `scheduling-priority` | *none* | Priority for every job (0-9999), for queues with a fair-share scheduling policy. Other queues ignore it, with a warning. |
 | `registry-credentials` | *none* | `REGISTRY=SECRET_ARN` for private registries outside AWS (see [Private images](#private-images)). |
+| `container-entrypoint` | `auto` | How jobs are launched in images with an `ENTRYPOINT`. AWS Batch can't override it, so `auto` reads the image config from its registry and adapts the command: a shell entrypoint gets `-c <script>`, a Python one runs the script through `/bin/sh`, and wrappers such as `tini`/`env` pass through. `none`, `shell`, `sh-c`, `python`, or a JSON list such as `'["/bin/sh","-c"]'` skip the lookup. A rule can override it with `batch_entrypoint`. |
 | `job-definition` | *none* | Use an existing Batch job definition (name, `name:revision` or ARN) instead of the ones the plugin makes, e.g. where you aren't allowed to make them. It decides the image, job role, mounted folders and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the machine image's Snakemake, jobs install it when they start. |
 | `job-definition-prefix` | `snakemake` | How the job definitions the plugin makes are named. |
 
@@ -988,7 +1020,12 @@ Not tested yet: `notebook:`, Julia, GPU.
   why. Build the AMI on the same CPU architecture as your instances.
 - `pipe()` doesn't work. `--sdm apptainer` isn't supported, and Singularity images (`.sif`) can't
   be used.
-- Images with an ENTRYPOINT that doesn't pass the command through will break.
+- Images with an ENTRYPOINT work when it is a shell, Python, or a pass-through wrapper (`tini`,
+  `env`...): the plugin reads the image config and launches the job accordingly (see
+  [Images with an ENTRYPOINT](#images-with-an-entrypoint)). Entrypoints that cannot run
+  `/bin/sh` (e.g. `java -jar app.jar`) are reported before the job starts; wrap the image with
+  `ENTRYPOINT []` to run it. The registry is read once per image and run, so an offline machine
+  needs `container-entrypoint` or `SMKFLEX_IMAGE_ENTRYPOINTS`.
 - All rules in a group must use the same image.
 - On EC2, all jobs on an instance share its disk (`root_volume_gib` in Terraform, 100 GiB in the
   example), and `disk_mb` is not enforced: Batch only places jobs by CPU and memory. Several jobs
