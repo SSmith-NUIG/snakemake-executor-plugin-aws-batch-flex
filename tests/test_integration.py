@@ -50,6 +50,8 @@ def run(tmp_path, snakefile, *extra):
 def test_per_rule_images_queues_and_resources(tmp_path):
     r, calls = run(tmp_path, SNAKEFILE)
     assert r.returncode == 0, r.stdout + r.stderr
+    # every workaround fits this Snakemake (CI runs the newest weekly: this fails when one stops)
+    assert "workaround is off" not in r.stdout + r.stderr
     summary = (r.stdout + r.stderr).split("AWS Batch usage of this run")[1]
     assert "make_a" in summary and "make_b" in summary and "total" in summary
     # what was used, not what it cost (that's AWS Billing's, by the jobs' tags)

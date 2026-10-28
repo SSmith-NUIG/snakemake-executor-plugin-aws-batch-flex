@@ -166,8 +166,15 @@ def install(argv, setting):
         fd, probe = tempfile.mkstemp(dir=prefix, prefix=".write-test-")
         os.close(fd)
         os.remove(probe)
+        import inspect
+
         from snakemake.deployment import conda as smk_conda
 
+        env = smk_conda.Env
+        # what wrap_create was written for
+        if (list(inspect.signature(env.create).parameters)[:2] != ["self", "dryrun"]
+                or not all(hasattr(env, a) for a in ("address", "is_containerized"))):
+            raise RuntimeError("this Snakemake's conda Env changed")
         if not getattr(smk_conda.Env.create, "_smkflex", False):
             url = setting if setting.startswith("s3://") or setting.startswith("/") else None
             smk_conda.Env.create = wrap_create(smk_conda.Env.create, url)

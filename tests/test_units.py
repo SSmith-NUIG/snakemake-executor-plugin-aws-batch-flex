@@ -381,3 +381,17 @@ def test_aws_errors_are_told_apart_by_their_codes(monkeypatch, tmp_path):
     assert _not_allowed(err("AccessDeniedException"))
     assert _not_allowed(err("ClientException", "User: x is not authorized to perform: iam:PassRole"))
     assert not _not_allowed(err("ClientException", "Job queue q does not exist"))
+
+
+def test_a_workaround_for_changed_code_is_not_applied_but_noted():
+    from snakemake_executor_plugin_aws_batch_flex import patches
+
+    def changed(self, job, wildcards, files):  # say Snakemake added a parameter
+        pass
+
+    assert patches.fits(lambda self, job, files, include=None: 0, ["self", "job", "files"], "W1")
+    assert not patches.fits(changed, ["self", "job", "files"], "W2")
+    try:
+        assert "W2" in patches.NOT_APPLIED and "W1" not in patches.NOT_APPLIED
+    finally:
+        patches.NOT_APPLIED.remove("W2")

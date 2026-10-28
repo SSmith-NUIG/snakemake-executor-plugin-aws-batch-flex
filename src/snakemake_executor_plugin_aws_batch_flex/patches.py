@@ -1,6 +1,12 @@
 """Workarounds for bugs in Snakemake and the S3 storage plugin, each limited to what this
-plugin needs. They can go once the bugs are fixed upstream."""
+plugin needs. They can go once the bugs are fixed upstream.
 
+Each one first checks that the code it patches is still what it was written for (the
+parameters it takes); if a new version changed it, the workaround isn't applied and the
+executor says so at start (NOT_APPLIED), instead of failing quietly or calling it wrongly.
+tests/test_units.py fails as soon as one doesn't apply, and CI runs the newest Snakemake weekly."""
+
+import inspect
 import os
 import re
 
@@ -8,6 +14,27 @@ from snakemake_interface_common.exceptions import WorkflowError
 
 from .settings import MAX_SOURCES_MB, PLUGIN_NAME
 from .sources import too_big, workflow_files
+
+
+SOURCES = ("sending the workflow folder to the jobs (Snakemake's DAG.get_sources): jobs get only "
+           "what git knows about")
+MISSING = "the hint for inputs that are only on this machine (Snakemake's MissingInputException)"
+S3_DIRS = ("directory() outputs on S3 (the S3 storage plugin's StorageObject.exists): they can be "
+           "reported missing after the job made them")
+# Workarounds this Snakemake (or S3 plugin) doesn't let us apply; the executor warns about them
+NOT_APPLIED: list = []
+
+
+def fits(func, params, what) -> bool:
+    """Does func take these parameters first, as the code a workaround was written for did?
+    If not, `what` goes into NOT_APPLIED."""
+    try:
+        ok = list(inspect.signature(func).parameters)[: len(params)] == list(params)
+    except (TypeError, ValueError):
+        ok = False
+    if not ok and what not in NOT_APPLIED:
+        NOT_APPLIED.append(what)
+    return ok
 
 
 def skip_remote_module_scripts():
@@ -19,10 +46,11 @@ def skip_remote_module_scripts():
     try:
         from snakemake.dag import DAG
         from snakemake.sourcecache import LocalSourceFile, SourceFile
-    except ImportError:  # not in this version
+    except ImportError:
+        NOT_APPLIED.append(SOURCES)
         return
     orig = getattr(DAG, "get_sources", None)
-    if orig is None or getattr(orig, "_skips_remote", False):
+    if getattr(orig, "_skips_remote", False) or not fits(orig, ["self"], SOURCES):
         return
 
     def get_sources(self):
@@ -84,10 +112,11 @@ def explain_local_only_inputs():
     storage. Say so, with the smkflex push command that uploads it."""
     try:
         from snakemake.exceptions import MissingInputException
-    except ImportError:  # not in this version
+    except ImportError:
+        NOT_APPLIED.append(MISSING)
         return
     orig = MissingInputException.__init__
-    if getattr(orig, "_smkflex", False):
+    if getattr(orig, "_smkflex", False) or not fits(orig, ["self", "job", "files"], MISSING):
         return
 
     def __init__(self, job, files, *args, **kwargs):
@@ -137,10 +166,14 @@ def recheck_s3_directories():
     ask is_dir() too, and keep the remembered answer, as without the patch."""
     try:
         from snakemake_storage_plugin_s3 import StorageObject
-    except ImportError:  # not in this version
+    except ImportError:  # not installed: nothing to work around
         return
     orig = getattr(StorageObject, "exists", None)
-    if orig is None or getattr(orig, "_rechecks", False):
+    if getattr(orig, "_rechecks", False) or not fits(orig, ["self"], S3_DIRS):
+        return
+    # what it works around: the remembered is_dir() answer, in _is_dir
+    if "_is_dir" not in inspect.getsource(StorageObject):
+        NOT_APPLIED.append(S3_DIRS)
         return
 
     def exists(self):

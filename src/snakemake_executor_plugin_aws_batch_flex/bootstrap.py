@@ -167,8 +167,11 @@ def own_packages():
                 os.symlink(os.path.join(site, n), os.path.join(d, n))
     return d
 try:
+    import inspect
     from snakemake import script as sm_script
     orig = sm_script.PythonScript.execute_script
+    if list(inspect.signature(orig).parameters) != ["self", "fname", "edit"]:
+        raise RuntimeError("this Snakemake's PythonScript.execute_script changed")
     def execute_script(self, fname, edit=False):
         if self.container_img is None and self.conda_env is None and self.env_modules is None and image_python():
             return self._execute_cmd(

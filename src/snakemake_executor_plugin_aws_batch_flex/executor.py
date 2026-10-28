@@ -24,7 +24,7 @@ from .hints import known_problem_hints
 from .jobdefs import JobDefinitions, describe_existing, log_group_of, mutable_tag, normalize_image
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
-from .patches import keep_unneeded_temp, recheck_s3_directories
+from .patches import NOT_APPLIED, keep_unneeded_temp, recheck_s3_directories
 from .preflight import (
     SUBMIT_HINT,
     access_denied,
@@ -87,6 +87,11 @@ class Executor(RemoteExecutor):
     def __post_init__(self):
         s: ExecutorSettings = validate(normalized(self.workflow.executor_settings))
         recheck_s3_directories()
+        for what in NOT_APPLIED:
+            self.logger.warning(
+                f"This Snakemake ({md.version('snakemake')}) changed code the plugin works around, so "
+                f"this workaround is off: {what}. Please report it to the plugin."
+            )
         mounts = volume_mounts(s) + host_mounts(s)
         cache = s.conda_cache.strip()
         self.conda_cache = cache
