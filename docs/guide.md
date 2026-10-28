@@ -338,8 +338,10 @@ Turn the table off with `no-usage-summary`.
 
 ### Many small jobs
 
-Every Batch job costs about 30-60 seconds on top of its command: Batch has to schedule it, start
-its container and copy its files from and to the bucket. For a rule with thousands of jobs that
+Every Batch job costs time on top of its command: Batch has to schedule it, start its container
+and copy its files from and to the bucket. Measured on real runs, that's about 25 seconds on an
+instance that's already running (15 to start, 10 for Snakemake in the job), and a minute or more
+when a new instance has to start first. For a rule with thousands of jobs that
 take a few seconds each, that overhead is most of the run. Snakemake can put many of them into
 one Batch job:
 

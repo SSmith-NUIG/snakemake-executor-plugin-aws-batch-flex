@@ -15,8 +15,9 @@ from typing import Optional
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-# A Batch job costs roughly 30-60 s on top of its command (scheduling, starting the container,
-# copying files from and to storage), so many short jobs of one rule are better grouped.
+# A Batch job costs time on top of its command: measured on real runs, about 15 s from submitted to
+# running on an instance that's already up (a minute or more when one has to start), and about
+# 10 s for Snakemake in the job and its files. Many short jobs of one rule are better grouped.
 SHORT_JOB_SECONDS = 60
 MANY_JOBS = 20
 
@@ -197,7 +198,8 @@ class Usage:
             if len(secs) >= MANY_JOBS and statistics.median(secs) < SHORT_JOB_SECONDS:
                 lines.append(
                     f"Hint: {rule} ran {len(secs)} jobs of {statistics.median(secs):.0f} s each (median). Every "
-                    "Batch job adds about 30-60 s of overhead, so grouping them makes the run faster: "
+                    "Batch job adds about 25 s (a minute or more when a new instance has to start), so "
+                    "grouping them makes the run faster: "
                     "see \"Many small jobs\" in the plugin's README."
                 )
         return "\n".join(lines)
