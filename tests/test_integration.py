@@ -428,11 +428,14 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     # Snakefile imports a module of its own and reads a sheet at the top; none of it in git
     files = {"src/tool.py": "print('tool')", "helper.sh": "echo helper", "lib/__init__.py": "",
              "lib/util.py": "X = 'lib'", "samples.tsv": "s1 s2\n", "config/private.tsv": "sheet",
-             "notes.secret": "x", ".gitignore": "*.secret\nconfig/\n"}
+             "notes.secret": "x", ".gitignore": "*.secret\nconfig/\n",
+             # data and results are read from and written to storage, never sent; not even when
+             # .gitignore doesn't list them, or a local copy of the results is big
+             "data/reads.fq": "x" * 2_000_000, "results/old.txt": "x" * 2_000_000}
     for p, text in files.items():
         (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / p).write_text(text)
-    r, calls = run(tmp_path, FOLDER)
+    r, calls = run(tmp_path, FOLDER, "--aws-batch-flex-max-sources-mb", "1")
     assert r.returncode == 0, r.stdout + r.stderr
     store = tmp_path / "store"
     assert (store / "a.txt").read_text() == "tool\n" and (store / "b.txt").read_text() == "helper\n"
@@ -440,12 +443,12 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     assert (store / "c.txt").read_text() == "lib sheet kept\n"
     assert (store / "s2.txt").read_text() == "s2\n"
 
-    # data left in the folder: stop before anything is submitted, and say where it is
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "reads.fq").write_bytes(b"x" * 2_000_000)
+    # data left in another folder: stop before anything is submitted, and say where it is
+    (tmp_path / "refs").mkdir()
+    (tmp_path / "refs" / "genome.fa").write_bytes(b"x" * 2_000_000)
     (tmp_path / "calls.jsonl").unlink()
     r, calls = run(tmp_path, FOLDER, "--forceall", "--aws-batch-flex-max-sources-mb", "1")
-    assert r.returncode != 0 and "data/ 2 MB" in r.stdout + r.stderr and ".gitignore" in r.stdout + r.stderr
+    assert r.returncode != 0 and "refs/ 2 MB" in r.stdout + r.stderr and ".gitignore" in r.stdout + r.stderr
     assert not any(c["call"] == "submit_job" for c in calls)
 
 

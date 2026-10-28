@@ -146,7 +146,8 @@ smkflex cancel JOB_ID            # stops the run; Snakemake cancels its jobs
 ```
 
 `smkflex run` packs the workflow folder (what git would track, or else everything a
-`.gitignore` there doesn't exclude, and `config/`) together with the profile, uploads it next to your
+`.gitignore` there doesn't exclude, and `config/`, but never `data/`, `results/`, `logs/` or
+`benchmarks/`) together with the profile, uploads it next to your
 workflow's files in the bucket (the head job removes the upload again when it's done), and
 submits the head job, which runs `snakemake` there. Your machine can be switched off once it
 returns. Anything after the options goes to Snakemake, e.g. `smkflex run -- --forceall all`;
@@ -394,12 +395,13 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   Snakemake also prints a warning when a job waits too long.
 - **"can't open file" / "No such file" for a file in a job.** Every job gets the workflow
   folder `snakemake` runs in: what git would track (committed or not), or, outside git,
-  everything `.gitignore` doesn't exclude, and `config/` always. Single files over 10 MB are
-  left out, and so is anything outside the folder. So check whether the file is git-ignored,
+  everything `.gitignore` doesn't exclude, and `config/` always. `data/`, `results/`, `logs/`
+  and `benchmarks/` never go along (jobs read and write those in storage), nor do single files
+  over 10 MB or anything outside the folder. So check whether the file is git-ignored,
   big, or outside the folder. Data the workflow reads belongs in its inputs, in storage.
 - **"Every job gets the workflow folder, and it has … MB".** Data sitting in the folder would
-  go to every job: add its folders to `.gitignore` (`smkflex init` adds `data/`, `results/`,
-  `resources/` and `logs/`), or raise `aws-batch-flex-max-sources-mb`.
+  go to every job: add its folders to `.gitignore` (`smkflex init` adds `resources/`), or raise
+  `aws-batch-flex-max-sources-mb`.
 - **A job fails.** Snakemake prints the end of the job's log, and for causes the plugin recognises
   (out of memory, a full disk, a missing package or storage plugin, S3 permissions) a hint on what
   to do. Full logs are in the AWS console under **CloudWatch** > **Log groups** >

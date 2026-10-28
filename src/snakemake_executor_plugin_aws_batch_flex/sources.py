@@ -7,6 +7,9 @@ import subprocess
 
 SKIP_DIRS = {".snakemake", ".smkflex", ".git", "__pycache__"}
 ALWAYS = "config"
+# Top-level folders that never go along, whatever .gitignore says: input data and results, which
+# jobs read from and write to storage (a local copy, e.g. from `smkflex pull`, isn't used there)
+NEVER = {"data", "results", "logs", "benchmarks"}
 # Snakemake leaves out bigger files itself (with a warning), so they don't count
 SNAKEMAKE_MAX_FILE = 10_000_000
 
@@ -37,8 +40,9 @@ def _ignored(rel, patterns):
 def workflow_files(root):
     """Files to send: what git would track (tracked plus untracked, not ignored), or
     everything outside .snakemake/.git when the folder isn't a git checkout, minus what a
-    .gitignore there lists. Plus config/ even if ignored: every job reads its sample sheets,
-    which people keep out of git when they name patients or private samples."""
+    .gitignore there lists. Never data/, results/, logs/ or benchmarks/ (NEVER). Plus config/
+    even if ignored: every job reads its sample sheets, which people keep out of git when they
+    name patients or private samples."""
     try:
         out = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=root,
                              capture_output=True, check=True).stdout.decode()
@@ -54,7 +58,8 @@ def workflow_files(root):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
         files += [os.path.relpath(os.path.join(d, n), root) for n in names]
     return sorted(set(f for f in files
-                  if not SKIP_DIRS.intersection(f.split("/")) and os.path.isfile(os.path.join(root, f))))
+                  if not SKIP_DIRS.intersection(f.split("/")) and f.split("/")[0] not in NEVER
+                  and os.path.isfile(os.path.join(root, f))))
 
 
 def too_big(files, limit_mb, root="."):
@@ -75,4 +80,4 @@ def too_big(files, limit_mb, root="."):
     biggest = ", ".join(f"{d} {n / 1e6:.0f} MB" for d, n in sorted(by_top.items(), key=lambda kv: -kv[1])[:5])
     return (f"Every job gets the workflow folder, and it has {total / 1e6:.0f} MB to send ({biggest}); the limit "
             f"is {limit_mb} MB. Data belongs in storage: add folders like these to .gitignore (`smkflex init` "
-            "adds data/, results/, resources/ and logs/), or raise aws-batch-flex-max-sources-mb.")
+            "adds resources/ too), or raise aws-batch-flex-max-sources-mb.")
