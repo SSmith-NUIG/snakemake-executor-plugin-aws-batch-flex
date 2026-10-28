@@ -56,10 +56,9 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
     scripts += re.findall(r"Can't open (\S+\.(?:sh|py|R|pl|rb|jl))", text)  # older dash
     if scripts:
         hints.append(
-            f"  hint: {', '.join(sorted(set(scripts)))} wasn't sent to the job. Snakemake sends jobs the "
-            "Snakefile, the files named in script:/conda:, and what git knows about; this plugin also "
-            "always sends scripts/, bin/, envs/ and config/ (at the top or in workflow/). Put it in one "
-            "of those, or `git add` it (no commit needed), or run with `smkflex run`, which sends the folder."
+            f"  hint: {', '.join(sorted(set(scripts)))} wasn't sent to the job. Jobs get the workflow folder "
+            "snakemake runs in, except what .gitignore excludes and single files over 10 MB. Is it "
+            "git-ignored, outside that folder, or made by an earlier rule without being its output?"
         )
     if not plugins and "unrecognized arguments" in text:
         hints.append(

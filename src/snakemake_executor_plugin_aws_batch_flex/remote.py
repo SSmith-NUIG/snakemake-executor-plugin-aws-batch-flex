@@ -33,11 +33,11 @@ from .naming import batch_job_name
 from .orphans import active_jobs
 from .preflight import ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
 from .settings import from_profile, host_mounts
+from .sources import SKIP_DIRS, workflow_files
 from .sizing import fargate_size
 from .tags import MANAGED_BY
 
 HEAD_IMAGE = "buildpack-deps:bookworm-scm"
-SKIP_DIRS = {".snakemake", ".smkflex", ".git", "__pycache__"}
 
 # Runs in the head job before anything else: fetch and unpack the bundle. Kept small, since
 # everything sent with a job must fit in 8192 characters.
@@ -147,50 +147,6 @@ def _clients(profile):
     cfg = BotoConfig(region_name=profile.get("aws-batch-flex-region"),
                      retries={"max_attempts": 10, "mode": "adaptive"})
     return boto3.client("batch", config=cfg), boto3.client("logs", config=cfg), cfg.region_name
-
-
-def _ignore_patterns(root):
-    """Patterns from a .gitignore at the top of a folder that isn't a git checkout (simple
-    globs: `*.bam`, `data/`, `results`; no negation)."""
-    try:
-        with open(os.path.join(root, ".gitignore")) as f:
-            lines = [l.strip() for l in f]
-    except OSError:
-        return []
-    return [l for l in lines if l and not l.startswith(("#", "!"))]
-
-
-def _ignored(rel, patterns):
-    import fnmatch
-
-    parts = rel.split("/")
-    for p in patterns:
-        anchored, p = p.startswith("/"), p.strip("/")
-        if "/" in p or anchored:
-            if fnmatch.fnmatch(rel, p) or any(fnmatch.fnmatch("/".join(parts[:i]), p) for i in range(1, len(parts))):
-                return True
-        elif any(fnmatch.fnmatch(part, p) for part in parts):
-            return True
-    return False
-
-
-def workflow_files(root):
-    """Files to send: what git would track (tracked plus untracked, not ignored), or
-    everything outside .snakemake/.git when the folder isn't a git checkout, minus what a
-    .gitignore there lists."""
-    try:
-        out = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=root,
-                             capture_output=True, check=True).stdout.decode()
-        files = [f for f in out.split("\0") if f]
-    except (OSError, subprocess.CalledProcessError):
-        patterns = _ignore_patterns(root)
-        files = []
-        for d, dirs, names in os.walk(root):
-            dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-            files += [os.path.relpath(os.path.join(d, n), root) for n in names]
-        files = [f for f in files if not _ignored(f, patterns)]
-    return sorted(f for f in files
-                  if not SKIP_DIRS.intersection(f.split("/")) and os.path.isfile(os.path.join(root, f)))
 
 
 def added_files(paths, base="."):

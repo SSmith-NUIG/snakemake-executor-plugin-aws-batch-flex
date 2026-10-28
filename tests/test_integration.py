@@ -401,26 +401,52 @@ def test_sample_sheet_in_config_reaches_jobs_without_git(tmp_path):
     assert (tmp_path / "store" / "s2.txt").read_text() == "s2\n"
 
 
-def test_scripts_folders_reach_jobs_without_git(tmp_path):
-    # a shell: command runs a script that git doesn't know about (no checkout here)
-    for d in ("scripts", "workflow/bin"):
-        (tmp_path / d).mkdir(parents=True)
-        (tmp_path / d / "hello.sh").write_text(f"echo from {d}\n")
-    (tmp_path / "scripts" / "__pycache__").mkdir()
-    snakefile = textwrap.dedent('''
-        rule all:
-            input: "a.txt", "b.txt"
-        rule a:
-            output: "a.txt"
-            shell: "sh scripts/hello.sh > {output}"
-        rule b:
-            output: "b.txt"
-            shell: "sh workflow/bin/hello.sh > {output}"
-    ''')
-    r, calls = run(tmp_path, snakefile)
+FOLDER = textwrap.dedent('''
+    from lib.util import X
+    S = open("samples.tsv").read().split()
+    rule all:
+        input: "a.txt", "b.txt", "c.txt", expand("{s}.txt", s=S)
+    rule a:
+        output: "a.txt"
+        shell: "python3 src/tool.py > {output}"
+    rule b:
+        output: "b.txt"
+        shell: "sh helper.sh > {output}"
+    rule c:
+        output: "c.txt"
+        params: sheet="config/private.tsv"
+        shell: "echo {X} $(cat {params.sheet}) $(test -e notes.secret && echo SENT || echo kept) > {output}"
+    rule s:
+        output: "{s}.txt"
+        wildcard_constraints: s="s[0-9]"
+        shell: "echo {wildcards.s} > {output}"
+''')
+
+
+def test_jobs_get_the_workflow_folder_without_git(tmp_path):
+    # what works locally: a shell: command runs a script from anywhere in the folder, the
+    # Snakefile imports a module of its own and reads a sheet at the top; none of it in git
+    files = {"src/tool.py": "print('tool')", "helper.sh": "echo helper", "lib/__init__.py": "",
+             "lib/util.py": "X = 'lib'", "samples.tsv": "s1 s2\n", "config/private.tsv": "sheet",
+             "notes.secret": "x", ".gitignore": "*.secret\nconfig/\n"}
+    for p, text in files.items():
+        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / p).write_text(text)
+    r, calls = run(tmp_path, FOLDER)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert (tmp_path / "store" / "a.txt").read_text() == "from scripts\n"
-    assert (tmp_path / "store" / "b.txt").read_text() == "from workflow/bin\n"
+    store = tmp_path / "store"
+    assert (store / "a.txt").read_text() == "tool\n" and (store / "b.txt").read_text() == "helper\n"
+    # config/ goes along even though .gitignore lists it; other ignored files don't
+    assert (store / "c.txt").read_text() == "lib sheet kept\n"
+    assert (store / "s2.txt").read_text() == "s2\n"
+
+    # data left in the folder: stop before anything is submitted, and say where it is
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "reads.fq").write_bytes(b"x" * 2_000_000)
+    (tmp_path / "calls.jsonl").unlink()
+    r, calls = run(tmp_path, FOLDER, "--forceall", "--aws-batch-flex-max-sources-mb", "1")
+    assert r.returncode != 0 and "data/ 2 MB" in r.stdout + r.stderr and ".gitignore" in r.stdout + r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)
 
 
 def test_module_from_github(tmp_path):

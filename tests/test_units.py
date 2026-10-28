@@ -312,6 +312,6 @@ def test_hint_for_a_script_that_wasnt_sent():
     for lines, name in ((py, "scripts/synthetic/gen.py"), (r, "scripts/plot.R"), (sh, "tools/run.sh"),
                         (dash, "scripts/a.sh"), (old_dash, "bin/b.sh")):
         h = hints(lines)
-        assert len(h) == 1 and f"{name} wasn't sent to the job" in h[0] and "git add" in h[0], h
+        assert len(h) == 1 and f"{name} wasn't sent to the job" in h[0] and "git-ignored" in h[0], h
     # a data file R can't read is something else
     assert not hints(["Error in file(file, \"rt\") : cannot open file 'data/x.csv': No such file or directory"])

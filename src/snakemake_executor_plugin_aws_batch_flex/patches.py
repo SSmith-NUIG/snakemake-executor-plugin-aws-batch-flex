@@ -1,14 +1,12 @@
 """Workarounds for bugs in Snakemake and the S3 storage plugin, each limited to what this
 plugin needs. They can go once the bugs are fixed upstream."""
 
-import os
 import re
 
-from .settings import PLUGIN_NAME
+from snakemake_interface_common.exceptions import WorkflowError
 
-
-# Folders every job gets, at the top and in workflow/ (the standard layout), git or not
-SEND_ALWAYS = [os.path.join(w, d) for w in ("", "workflow") for d in ("scripts", "bin", "envs", "config")]
+from .settings import MAX_SOURCES_MB, PLUGIN_NAME
+from .sources import too_big, workflow_files
 
 
 def skip_remote_module_scripts():
@@ -16,7 +14,7 @@ def skip_remote_module_scripts():
     "TypeError: ... not GithubFile" when a rule comes from a module fetched from GitHub (as
     snakedeploy sets up), because it treats the rule's script as a local file. Those scripts
     don't need packing: each job fetches them from GitHub itself. So they're hidden while the
-    sources are collected. (2) The standard folders (SEND_ALWAYS) are packed, see below."""
+    sources are collected. (2) The whole workflow folder is packed, see below."""
     try:
         from snakemake.dag import DAG
         from snakemake.sourcecache import LocalSourceFile, SourceFile
@@ -46,15 +44,18 @@ def skip_remote_module_scripts():
         finally:
             for rule, attr, value in hidden:
                 setattr(rule, attr, value)
-        # Sample sheets in config/, and scripts a shell: command runs (python scripts/x.py),
-        # only reach the jobs through `git ls-files`: not at all in a folder that isn't a git
-        # checkout (such as one made by snakedeploy), or for a file never `git add`ed. Send the
-        # standard folders anyway, as Nextflow sends a pipeline's bin/.
+        # Snakemake sends jobs only what git knows about, besides the Snakefile and the files
+        # named in script:/conda:. Scripts a shell: command runs, modules the Snakefile imports,
+        # sample sheets and the like are missing in a folder that isn't a git checkout (such as
+        # one made by snakedeploy), or when never `git add`ed. Send the folder as smkflex run
+        # does: what git would track, or everything .gitignore doesn't exclude, and config/.
         if isinstance(files, set):
-            for top in SEND_ALWAYS:
-                for d, dirs, names in os.walk(top):
-                    dirs[:] = [x for x in dirs if x != "__pycache__"]
-                    files.update(os.path.join(d, n) for n in names)
+            files.update(workflow_files("."))
+            settings = getattr(self.workflow, "executor_settings", None)
+            limit = getattr(settings, "max_sources_mb", None) or MAX_SOURCES_MB
+            problem = too_big(files, limit)
+            if problem:
+                raise WorkflowError(problem)
         return files
 
     get_sources._skips_remote = True

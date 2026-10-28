@@ -20,6 +20,7 @@ PROFILE_PREFIX = PLUGIN_NAME + "-"
 # Seconds between status checks (and before the first): only the tests set it, for their fake
 # Batch whose jobs end at once. Real Batch jobs take 30 s or more to start.
 TEST_STATUS_SECONDS = os.environ.get("SMK_FLEX_TEST_STATUS_SECONDS")
+MAX_SOURCES_MB = 100
 
 
 @dataclass
@@ -334,6 +335,16 @@ class ExecutorSettings(ExecutorSettingsBase):
             "help": "Disable the automatic job tags snakemake-run-id, snakemake-workflow, "
             "snakemake-rule and snakemake-job-id (on by default, for per-rule cost reporting). "
             "Also turns off the check for jobs left over from an interrupted run.",
+            "env_var": False,
+            "required": False,
+        },
+    )
+    max_sources_mb: Optional[int] = field(
+        default=MAX_SOURCES_MB,
+        metadata={
+            "help": "Every job gets the workflow folder (what git would track, or everything "
+            ".gitignore doesn't exclude, and config/; single files over 10 MB are left out). "
+            "Stop with a message when that is more than this many MB: data belongs in storage.",
             "env_var": False,
             "required": False,
         },
