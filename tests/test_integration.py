@@ -456,6 +456,22 @@ def test_workdir_directive_stops_before_submitting(tmp_path):
     assert not any(c["call"] == "submit_job" for c in calls)
 
 
+def test_job_commands_fit_what_ecs_allows(tmp_path):
+    # installing Snakemake at job start makes the longest commands
+    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-bootstrap", "always")
+    assert r.returncode == 0, r.stdout + r.stderr
+    sizes = [c["overrides_chars"] for c in calls if c["call"] == "submit_job"]
+    assert sizes and max(sizes) < 8192 - 500, sizes  # room for a longer storage prefix and the like
+    # too long: stopped before it reaches AWS, saying what makes it long
+    (tmp_path / "calls.jsonl").unlink()
+    many = [f"some-long-package-name-{i}==1.0" for i in range(150)]
+    (tmp_path / "x").mkdir()
+    r, calls = run(tmp_path / "x", SNAKEFILE, "--aws-batch-flex-bootstrap", "always",
+                   "--aws-batch-flex-extra-packages", *many)
+    assert r.returncode != 0 and "more than the 8192 ECS allows per job" in r.stdout + r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)
+
+
 def test_module_from_github(tmp_path):
     # snakedeploy's layout: the pipeline's rules come from GitHub; packing the sources used to
     # crash on their scripts ("not GithubFile")

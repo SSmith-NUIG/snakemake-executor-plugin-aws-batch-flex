@@ -2,6 +2,7 @@
 it, and prints what the run used at the end."""
 
 import asyncio
+import json
 import importlib.metadata as md
 import math
 import os
@@ -51,6 +52,7 @@ CONDA_CACHE_HOST_DIR = "/var/cache/smkflex-conda"
 CONDA_CACHE_JOB_DIR = "/tmp/smkflex-conda"  # condacache.ROOT
 FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
+ECS_OVERRIDES_MAX = 8192  # characters of a job's command and environment
 CANCEL_THREADS = 16  # terminate_job calls at once when the run is cancelled
 
 
@@ -555,6 +557,14 @@ class Executor(RemoteExecutor):
             kwargs["tags"] = tags
             kwargs["propagateTags"] = True
 
+        size = len(json.dumps(kwargs["containerOverrides"], separators=(",", ":")))
+        if size > ECS_OVERRIDES_MAX:
+            raise WorkflowError(
+                f"{job.name}: its command and environment come to {size} characters, more than the "
+                f"{ECS_OVERRIDES_MAX} ECS allows per job. What makes them long: many storage plugins or "
+                "extra packages installed at job start (bootstrap host avoids that), a long storage "
+                "prefix, or very many input/output files in one job."
+            )
         try:
             resp = self.batch.submit_job(**kwargs)
         except (ClientError, BotoCoreError) as e:
