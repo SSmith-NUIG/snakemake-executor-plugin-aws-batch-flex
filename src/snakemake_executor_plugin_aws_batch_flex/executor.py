@@ -20,7 +20,7 @@ from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
 from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
 from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 
-from .bootstrap import conda_snippet, image_python_snippet, job_tools_source, snakemake_prelude
+from .bootstrap import conda_snippet, job_tools_source, launcher_snippet, snakemake_prelude
 from .hints import known_problem_hints
 from .jobdefs import JobDefinitions, describe_existing, log_group_of, mutable_tag, normalize_image
 from .naming import batch_job_name
@@ -415,7 +415,7 @@ class Executor(RemoteExecutor):
                 self.logger.info(f"Jobs that install Snakemake at start get the packages as of {self.resolved_at}.")
             if self.settings.conda_path and platform == "ec2" and conda_mount:
                 base += "\n" + conda_snippet(self.settings.conda_path)
-            base += "\n" + image_python_snippet()  # SMK_FLEX_SCRIPT_PYTHON decides per job
+            base += "\n" + launcher_snippet(bool(self.job_code))  # SMK_FLEX_SCRIPT_PYTHON decides per job
             self._preludes[key] = base
         return self._preludes[key]
 

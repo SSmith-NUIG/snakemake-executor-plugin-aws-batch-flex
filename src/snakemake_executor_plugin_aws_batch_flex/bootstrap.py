@@ -8,6 +8,7 @@ import base64
 import importlib.metadata as md
 import re
 import shlex
+import textwrap
 import zlib
 from typing import Iterable, List, Optional
 
@@ -28,20 +29,7 @@ if [ "$SMK_NEED" = 1 ]; then
   echo "[snakemake-batch] bootstrapping Snakemake into $SMK_BOOT" >&2
   mkdir -p "$SMK_BOOT"
   export UV_CACHE_DIR="$SMK_BOOT/cache" UV_PYTHON_INSTALL_DIR="$SMK_BOOT/python"
-  if [ "@@PREREQ@@" = 1 ] && ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1 \
-     && ! { command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; }; then
-    echo "[snakemake-batch] no curl/wget/pip in the image: installing curl, ca-certificates and bash" >&2
-    if [ "$(id -u)" != 0 ]; then
-      echo "[snakemake-batch] cannot install prerequisites: the image runs as a non-root user" >&2
-    elif command -v apt-get >/dev/null 2>&1; then
-      apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends curl ca-certificates bash >&2 || true
-    elif command -v apk >/dev/null 2>&1; then apk add -q --no-cache curl ca-certificates bash >&2 || true
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates bash >&2 || true
-    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y curl ca-certificates bash >&2 || true
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates bash >&2 || true
-    else echo "[snakemake-batch] no known package manager in the image" >&2
-    fi
-  fi
+@@PREREQS@@
 @@UV@@
   if [ -z "$UV" ]; then
     echo "[snakemake-batch] cannot bootstrap: image needs curl, wget, or python3+pip (and internet access)" >&2
@@ -82,6 +70,25 @@ else
 fi"""
 
 
+# Installs curl (for uv) in an image without curl, wget or pip: only with install_prereqs
+_PREREQS = r'''
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1 \
+     && ! { command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; }; then
+    echo "[snakemake-batch] no curl/wget/pip in the image: installing curl, ca-certificates and bash" >&2
+    if [ "$(id -u)" != 0 ]; then
+      echo "[snakemake-batch] cannot install prerequisites: the image runs as a non-root user" >&2
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends curl ca-certificates bash >&2 || true
+    elif command -v apk >/dev/null 2>&1; then apk add -q --no-cache curl ca-certificates bash >&2 || true
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates bash >&2 || true
+    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y curl ca-certificates bash >&2 || true
+    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates bash >&2 || true
+    else echo "[snakemake-batch] no known package manager in the image" >&2
+    fi
+  fi
+'''
+
+
 WORKDIR = (
     'SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"; mkdir -p "$SMK_WORK"; cd "$SMK_WORK"'
 )
@@ -116,27 +123,14 @@ a = sys.argv[1:]
 if a[:2] != ["-m", "snakemake"]:
     os.execv(sys.executable, [sys.executable] + a)
 sys.argv = ["snakemake"] + a[2:]
-_code = os.environ.get("SMK_FLEX_JOB_CODE")
-if _code and "--deploy-sources" not in sys.argv:
-    # the job tools (condacache.py, jobmonitor.py), uploaded by the plugin once per run: too
-    # long to send with every job. Their name has their sha256: only run what matches it
+if "monitor" in globals() and "--deploy-sources" not in sys.argv:
+    # the job tools came with this launcher, in the same file (job_tools_source)
     try:
-        if _code.startswith("s3://"):
-            import boto3
-            _b, _, _k = _code[5:].partition("/")
-            _raw = boto3.client("s3").get_object(Bucket=_b, Key=_k)["Body"].read()
-        else:
-            _raw = open(_code, "rb").read()
-        import hashlib
-        if not _code.endswith(f"jobtools-{hashlib.sha256(_raw).hexdigest()}.py"):
-            raise ValueError(f"{_code} doesn't match its checksum")
-        _ns = {"__name__": "smkflex_jobtools"}
-        exec(_raw.decode(), _ns)
-        _ns["make_numpy_loadable"]()
-        _ns["monitor"]()
+        make_numpy_loadable()
+        monitor()
         _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
         if _cc != "none":
-            sys.argv = ["snakemake"] + _ns["install"](sys.argv[1:], _cc)
+            sys.argv = ["snakemake"] + install(sys.argv[1:], _cc)
     except Exception as e:
         print(f"[snakemake-batch] job tools off for this job (conda env cache, usage figures): {e!r}",
               file=sys.stderr)
@@ -187,11 +181,43 @@ runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
 
 
 def job_tools_source() -> str:
-    """condacache.py, jobmonitor.py and jobfixes.py as one file, for the launcher to load in the job."""
+    """The file every job downloads and runs (launcher_snippet): condacache.py, jobmonitor.py and
+    jobfixes.py, then the launcher. Too long to send with each job; uploaded once per run."""
     from pathlib import Path
 
     here = Path(__file__).parent
-    return "\n\n".join((here / name).read_text() for name in ("condacache.py", "jobmonitor.py", "jobfixes.py"))
+    tools = [(here / name).read_text() for name in ("condacache.py", "jobmonitor.py", "jobfixes.py")]
+    # the launcher runs when the job's loader runs the file, not when the tools are only loaded
+    launcher = 'if __name__ == "smkflex_launcher":\n' + textwrap.indent(_LAUNCHER, "    ")
+    return "\n\n".join(tools + [launcher])
+
+
+# Fetches the job tools (with the launcher) named in SMK_FLEX_JOB_CODE, checks them against the
+# sha256 in their name, and runs them; else plain Snakemake. In the job's command, so short.
+_LOADER = (
+    "import hashlib,os,runpy,sys\n"
+    "u=os.environ.get(\"SMK_FLEX_JOB_CODE\");a=sys.argv[1:];d=None\n"
+    "if a[:2]!=[\"-m\",\"snakemake\"]:os.execv(sys.executable,[sys.executable]+a)\n"
+    "if u and \"--deploy-sources\" not in a:\n"
+    " try:\n"
+    "  if u.startswith(\"s3://\"):\n"
+    "   import boto3;b,_,k=u[5:].partition(\"/\");d=boto3.client(\"s3\").get_object(Bucket=b,Key=k)[\"Body\"].read()\n"
+    "  else:d=open(u,\"rb\").read()\n"
+    "  if not u.endswith(\"jobtools-%s.py\"%hashlib.sha256(d).hexdigest()):raise ValueError(u+\" does not match its checksum\")\n"
+    " except Exception as e:\n"
+    "  d=None;print(\"[snakemake-batch] job tools off for this job (conda env cache, usage figures, image python for script:): %r\"%e,file=sys.stderr)\n"
+    "if d:exec(compile(d,\"smkflex-jobtools.py\",\"exec\"),{\"__name__\":\"smkflex_launcher\",\"__file__\":os.path.join(os.getcwd(),\".smk-launch.py\")})\n"
+    "else:sys.argv=[\"snakemake\"]+a[2:];runpy.run_module(\"snakemake\",run_name=\"__main__\",alter_sys=True)\n"
+)
+
+
+def launcher_snippet(job_code: bool) -> str:
+    """Point the `python` function (if the prelude defined one) at the launcher: the short loader
+    above when the job tools were uploaded (job_code), else the launcher itself, compressed (ECS
+    allows only 8192 characters of overrides per job)."""
+    if job_code:
+        return 'if [ -n "${SMK_PY:-}" ]; then\n' f'  python() {{ "$SMK_PY" -c {shlex.quote(_LOADER)} "$@"; }}\n' "fi\n"
+    return image_python_snippet()
 
 
 def image_python_snippet() -> str:
@@ -251,7 +277,7 @@ def build_prelude(
         _TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
         .replace("@@CHECK@@", check)
         .replace("@@PYVER@@", shlex.quote(python_version))
-        .replace("@@PREREQ@@", "1" if install_prereqs else "0")
+        .replace("@@PREREQS@@", _PREREQS if install_prereqs else "")
         .replace("@@REQS@@", reqs)
         .replace("@@NEWER@@", f"--exclude-newer {shlex.quote(resolved_at)} " if resolved_at else "")
         .replace("@@UV@@", uv_snippet("$SMK_BOOT/bin", "$SMK_BOOT/uvlib"))

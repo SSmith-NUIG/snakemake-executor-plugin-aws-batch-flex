@@ -92,7 +92,7 @@ def test_install_gives_up_quietly_when_the_folder_is_not_writable(tmp_path, monk
 def _job(tmp_path, code):
     """A job's shell script with the launcher, as the plugin sends it (cf. test_script_python)."""
     import subprocess, sys, textwrap
-    from snakemake_executor_plugin_aws_batch_flex.bootstrap import image_python_snippet
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import launcher_snippet
     (tmp_path / "Snakefile").write_text(textwrap.dedent('''
         rule all:
             run:
@@ -101,7 +101,7 @@ def _job(tmp_path, code):
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     script = (f'set -eu\nSMK_WORK={work}\nSMK_PY={sys.executable}\npython() {{ "$SMK_PY" "$@"; }}\n'
-              f'{image_python_snippet()}\ncd {tmp_path}\npython -m snakemake -c1 -q\n')
+              f'{launcher_snippet(True)}\ncd {tmp_path}\npython -m snakemake -c1 -q\n')
     env = dict(os.environ, SMK_FLEX_CONDA_CACHE="instance", SMK_FLEX_JOB_CODE=str(code),
                SMK_FLEX_CONDA_ROOT=str(tmp_path / "root"))
     return subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=120)
@@ -131,7 +131,7 @@ def test_launcher_runs_only_job_tools_that_match_their_checksum(tmp_path):
     code = _tools(tmp_path, 'print("SHOULD NOT RUN")\n' + job_tools_source(), named_for=job_tools_source())
     r = _job(tmp_path, code)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "doesn't match its checksum" in r.stderr and "SHOULD NOT RUN" not in r.stdout + r.stderr
+    assert "does not match its checksum" in r.stderr and "SHOULD NOT RUN" not in r.stdout + r.stderr
 
 
 def test_launcher_runs_the_job_without_the_cache_code(tmp_path):
