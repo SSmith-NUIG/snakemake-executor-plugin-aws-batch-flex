@@ -132,6 +132,7 @@ if _code and "--deploy-sources" not in sys.argv:
             raise ValueError(f"{_code} doesn't match its checksum")
         _ns = {"__name__": "smkflex_jobtools"}
         exec(_raw.decode(), _ns)
+        _ns["hide_unloadable_numpy"]()
         _ns["monitor"]()
         _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
         if _cc != "none":
@@ -186,11 +187,11 @@ runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
 
 
 def job_tools_source() -> str:
-    """condacache.py and jobmonitor.py as one file, for the launcher to load in the job."""
+    """condacache.py, jobmonitor.py and jobfixes.py as one file, for the launcher to load in the job."""
     from pathlib import Path
 
     here = Path(__file__).parent
-    return "\n\n".join((here / name).read_text() for name in ("condacache.py", "jobmonitor.py"))
+    return "\n\n".join((here / name).read_text() for name in ("condacache.py", "jobmonitor.py", "jobfixes.py"))
 
 
 def image_python_snippet() -> str:

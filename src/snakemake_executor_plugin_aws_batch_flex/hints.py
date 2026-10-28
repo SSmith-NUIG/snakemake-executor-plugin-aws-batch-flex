@@ -18,6 +18,13 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
             f"plugin's options to its jobs. Uninstall it here (pip uninstall "
             f"snakemake-storage-plugin-{name}) or bake an AMI with --storage-plugin {name}."
         )
+    if "pandas of Snakemake's env can't load in this image" in text and "pandas" in text.split("can't load in this image", 1)[1]:
+        hints.append(
+            "  hint: the image lacks the C++ runtime (libstdc++.so.6) where Linux looks for it, which the "
+            "numpy and pandas of the AMI's Snakemake need; many bioconda images keep theirs inside their own "
+            "environment. If the Snakefile imports pandas, use an image that has it in /usr/lib (e.g. a "
+            "Debian- or Ubuntu-based one) for this rule; otherwise this is only a note."
+        )
     missing = sorted(set(re.findall(r"ModuleNotFoundError: No module named '([A-Za-z0-9_.]+)'", text)))
     for mod in missing:
         hints.append(

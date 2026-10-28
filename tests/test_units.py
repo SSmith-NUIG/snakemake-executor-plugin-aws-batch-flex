@@ -1,5 +1,7 @@
+import os
 import re
 import subprocess
+import sys
 import types
 import pytest
 from snakemake_interface_common.exceptions import WorkflowError
@@ -405,3 +407,19 @@ def test_extra_packages_are_pinned_too():
     assert f"pytest=={here}" in pins and any(p.startswith("pluggy==") for p in pins)
     # asked for a version this machine doesn't have: not pinned, so the install doesn't fail
     assert not any(p.startswith("pytest==") for p in hostenv.default_constraints([], ["pytest<1"]))
+
+
+def test_numpy_that_cant_load_in_the_image_looks_not_installed(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import job_tools_source
+    (tmp_path / "numpy").mkdir()  # as the AMI's numpy behaves in an image without libstdc++
+    (tmp_path / "numpy" / "__init__.py").write_text(
+        'raise ImportError("Original error was: libstdc++.so.6: cannot open shared object file")')
+    (tmp_path / "tools.py").write_text(job_tools_source())
+    code = ("ns = {}; exec(open('tools.py').read(), ns); ns['hide_unloadable_numpy']()\n"
+            "for m in ('numpy', 'pandas'):\n"
+            "    try: __import__(m)\n"
+            "    except ModuleNotFoundError: print(m, 'not installed')\n")
+    r = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=dict(os.environ, PYTHONPATH=str(tmp_path)),
+                       capture_output=True, text=True)
+    assert r.stdout.split("\n")[:2] == ["numpy not installed", "pandas not installed"], r.stdout + r.stderr
+    assert "can't load in this image" in r.stderr and "libstdc++.so.6" in r.stderr
