@@ -164,7 +164,8 @@ returns. Anything after the options goes to Snakemake, e.g. `smkflex run -- --fo
   replace the repository's; with `--path`, paths are relative to that folder). It also sends
   files a local folder's `.gitignore` would leave out. Repeatable.
 - Each run records the commit it ran (for a local folder in git, with `-modified` if it had
-  uncommitted changes); `smkflex status` shows it.
+  uncommitted changes or new files that aren't git-ignored, and `+added` with `--add`);
+  `smkflex status` shows it.
 - Snakemake's `.snakemake` records (what was made with which code, unfinished jobs, logs) are
   saved to the bucket at the end of every run and restored at the start of the next, so reruns
   behave as they do on one machine. As with Snakemake's lock on a folder, a project (its

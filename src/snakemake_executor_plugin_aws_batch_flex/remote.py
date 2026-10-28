@@ -300,10 +300,11 @@ def clone(url, rev, dest):
 
 
 def local_commit(root):
-    """The commit of a local git checkout, with -modified if it has uncommitted changes."""
+    """The commit of a local git checkout, with -modified if it has uncommitted changes,
+    including new files that aren't git-ignored (the bundle sends those too)."""
     try:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "."], cwd=root,
+        dirty = subprocess.run(["git", "status", "--porcelain", "."], cwd=root,
                                capture_output=True, text=True, check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None
@@ -352,7 +353,7 @@ def cmd_run(a, snakemake_args):
             root = "."
             extra = added_files(a.add or [])
             commit = local_commit(root)
-            source = {"smkflex-commit": commit} if commit else {}
+            source = {"smkflex-commit": commit + ("+added" if extra else "")} if commit else {}
             default_name = os.path.basename(os.path.abspath("."))
         if extra:
             print(f"Adding {len(extra)} local file(s): " + ", ".join(sorted(extra)[:5])

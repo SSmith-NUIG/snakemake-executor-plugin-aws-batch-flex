@@ -241,6 +241,17 @@ def test_local_runs_record_the_commit(tmp_path):
     _git(tmp_path, "commit", "-q", "-m", "x")
     sha = _git(tmp_path, "rev-parse", "HEAD")[:12]
     assert local_commit(str(tmp_path)) == sha
+    # a new file is sent with the workflow, so it counts; an ignored one isn't, so it doesn't
+    (tmp_path / ".gitignore").write_text("data/\n")
+    _git(tmp_path, "add", ".gitignore")
+    _git(tmp_path, "commit", "-q", "-m", "ignore")
+    sha = _git(tmp_path, "rev-parse", "HEAD")[:12]
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "reads.fq").write_text("x")
+    assert local_commit(str(tmp_path)) == sha
+    (tmp_path / "rules.smk").write_text("x")
+    assert local_commit(str(tmp_path)) == sha + "-modified"
+    (tmp_path / "rules.smk").unlink()
     (tmp_path / "Snakefile").write_text("y")
     assert local_commit(str(tmp_path)) == sha + "-modified"
 
