@@ -136,11 +136,12 @@ def local_only_hint(workflow, files):
     if getattr(getattr(workflow, "executor_plugin", None), "name", None) != PLUGIN_NAME:
         return None
     prefix = str(getattr(workflow.storage_settings, "default_storage_prefix", "") or "").rstrip("/")
-    here = []
+    here, stored = [], False
     for f in files:
         query = getattr(getattr(f, "storage_object", None), "query", None) if getattr(f, "is_storage", False) else None
         if not prefix or not query or not str(query).startswith(prefix + "/"):
             continue
+        stored = True
         rel = str(query)[len(prefix) + 1:]
         # a relative path goes to prefix/path, an absolute one to prefix/path-without-its-/
         for local in (rel, "/" + rel):
@@ -148,7 +149,9 @@ def local_only_hint(workflow, files):
                 here.append(local)
                 break
     if not here:
-        return None
+        return (f"\n    Jobs read their inputs from {prefix}/, not from this machine: upload them there, "
+                "at the paths your rules and sample sheets use, with: smkflex push <files or folders>"
+                if stored else None)
     push = sorted({os.path.dirname(p) if os.path.isabs(p) else p.split("/")[0] for p in here})
     files_text = ", ".join(here[:5]) + (f" and {len(here) - 5} more" if len(here) > 5 else "")
     return (f"\n    On this machine but not in storage, where the jobs read their inputs: {files_text}. "

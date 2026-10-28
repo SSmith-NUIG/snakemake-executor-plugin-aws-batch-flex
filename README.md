@@ -191,7 +191,8 @@ explains rules, wildcards and the rest; everything in it works here, with the di
 under [Limits](docs/reference.md#limits).
 
 Each workflow lives in its own project folder, and its files live in your S3 bucket: jobs read
-their inputs from there and write their outputs there. Put the `Snakefile` in a new folder and,
+their inputs from there, never from your computer, so upload them first, and write their outputs
+there. Put the `Snakefile` in a new folder and,
 in that folder:
 
 ```bash

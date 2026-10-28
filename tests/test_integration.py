@@ -422,6 +422,18 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     assert not any(c["call"] == "submit_job" for c in calls)
 
 
+def test_input_nowhere_says_where_jobs_read_it(tmp_path):
+    snakefile = textwrap.dedent('''
+        rule a:
+            input: "reads/x.fq"
+            output: "a.txt"
+            shell: "cat {input} > {output}"
+    ''')
+    r, _ = run(tmp_path, snakefile)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and "Jobs read their inputs from" in out and "smkflex push" in out, out
+
+
 def test_input_only_on_this_machine_says_how_to_upload_it(tmp_path):
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "x.txt").write_text("local\n")
