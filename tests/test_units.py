@@ -203,3 +203,27 @@ def test_sources_patch_leaves_other_executors_alone(tmp_path, monkeypatch):
 
     assert DAG.get_sources(dag("slurm")) == {"Snakefile"}
     assert DAG.get_sources(dag("aws-batch-flex")) == {"Snakefile", "config/samples.tsv"}
+
+
+def test_cancel_terminates_jobs_in_parallel_and_goes_on_after_errors():
+    import threading, time, types
+    from botocore.exceptions import ClientError
+    from snakemake_executor_plugin_aws_batch_flex.executor import Executor
+
+    done, warnings, lock = [], [], threading.Lock()
+
+    def terminate_job(jobId, reason):
+        time.sleep(0.2)
+        if jobId == "j3":
+            raise ClientError({"Error": {"Code": "ClientException", "Message": "gone"}}, "TerminateJob")
+        with lock:
+            done.append(jobId)
+
+    me = types.SimpleNamespace(batch=types.SimpleNamespace(terminate_job=terminate_job),
+                               logger=types.SimpleNamespace(warning=warnings.append))
+    jobs = [types.SimpleNamespace(external_jobid=f"j{i}") for i in range(20)]
+    start = time.time()
+    Executor.cancel_jobs(me, jobs)
+    assert time.time() - start < 2  # one at a time would take 4 s
+    assert sorted(done) == sorted(f"j{i}" for i in range(20) if i != 3)
+    assert len(warnings) == 1 and "j3" in warnings[0]

@@ -480,3 +480,40 @@ def test_run_refuses_options_nobody_knows(tmp_path):
     r, calls = smkflex(wf, "run", "--wiat")
     assert r.returncode == 2 and "--wiat" in r.stderr, r.stderr
     assert not any(c["call"] == "submit_job" for c in calls)
+
+
+def test_head_job_saves_state_while_running_and_when_stopped(tmp_path, monkeypatch):
+    import time
+    from snakemake_executor_plugin_aws_batch_flex import headjob
+    monkeypatch.chdir(tmp_path)
+    url = str(tmp_path / "store" / "state.tar.gz")
+    uploads = []
+    put = headjob.put
+    monkeypatch.setattr(headjob, "put", lambda u, data: (uploads.append(u), put(u, data)))
+    (tmp_path / ".snakemake" / "metadata").mkdir(parents=True)
+    (tmp_path / ".snakemake" / "metadata" / "a").write_text("{}")
+
+    def wait_for(n):
+        deadline = time.time() + 10
+        while len(uploads) < n and time.time() < deadline:
+            time.sleep(0.02)
+        return len(uploads)
+
+    # every `every` seconds while Snakemake runs; an unchanged state isn't uploaded again
+    saver = headjob.StateSaver(url, every=0.05)
+    assert wait_for(1) == 1
+    time.sleep(0.3)
+    assert len(uploads) == 1
+    saver.finish()
+
+    # at once when the head job is told to stop (SIGTERM), and at the end
+    saver = headjob.StateSaver(url, every=3600)
+    (tmp_path / ".snakemake" / "incomplete").mkdir()
+    (tmp_path / ".snakemake" / "incomplete" / "b").write_text("{}")
+    saver.wake.set()
+    assert wait_for(2) == 2
+    (tmp_path / ".snakemake" / "metadata" / "c").write_text("{}")
+    assert saver.finish() and len(uploads) == 3
+    assert not saver.thread.is_alive()
+    assert sorted(tarfile.open(url).getnames()) == [
+        ".snakemake/incomplete/b", ".snakemake/metadata/a", ".snakemake/metadata/c"]

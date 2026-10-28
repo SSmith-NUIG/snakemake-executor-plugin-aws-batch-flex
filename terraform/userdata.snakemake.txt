@@ -34,6 +34,11 @@ ECS_CONTAINER_START_TIMEOUT=10m
 ECS_IMAGE_PULL_BEHAVIOR=prefer-cached
 SETTINGS
 fi
+# A stopped job gets this long between SIGTERM and SIGKILL (default 30s): a head job that is
+# cancelled needs it to cancel its jobs and save Snakemake's state.
+if ! grep -q '^ECS_CONTAINER_STOP_TIMEOUT=' "$ECS_CFG"; then
+  echo 'ECS_CONTAINER_STOP_TIMEOUT=2m' >> "$ECS_CFG"
+fi
 
 systemctl enable ecs >/dev/null 2>&1 || true
 systemctl restart --no-block ecs

@@ -22,7 +22,7 @@ terraform output -raw snakemake_profile > ../examples/conformance/profile/config
 ```
 
 The instances boot with `userdata.snakemake.txt`. it waits for Batch to write `ECS_CLUSTER`,
-then adds two ECS agent settings and starts the agent.
+then adds three ECS agent settings and starts the agent.
 
 With a baked AMI you can set `aws-batch-flex-host-env-wait-seconds: 0` in the profile.
 

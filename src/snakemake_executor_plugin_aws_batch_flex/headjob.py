@@ -10,11 +10,13 @@ import signal
 import subprocess
 import sys
 import tarfile
+import threading
 
 # The parts of .snakemake that make a rerun behave like one on the same machine: what was
 # made with which code and parameters, and which jobs didn't finish. Conda envs, local
 # copies of storage files and the like are left out.
 STATE_DIRS = ("metadata", "incomplete", "log")
+SAVE_EVERY = 300  # seconds between saves of the state while Snakemake runs (unchanged: skipped)
 WRAPPER_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
 
@@ -66,14 +68,76 @@ def unpack(data, dest):
             t.extractall(dest)
 
 
-def save_state(url):
+def _state_files():
+    """[(path, stat)] of the state files now; files removed meanwhile (a job ended) are left out."""
+    out = []
+    for d in STATE_DIRS:
+        for root, _dirs, names in os.walk(os.path.join(".snakemake", d)):
+            for n in names:
+                p = os.path.join(root, n)
+                try:
+                    out.append((p, os.stat(p)))
+                except OSError:
+                    pass
+    return sorted(out, key=lambda f: f[0])
+
+
+def save_state(url, last=None):
+    """Upload the state. Snakemake may still be running, so files can change or go while they're
+    read; those are left for the next save. Returns what was saved: pass it back as `last` and
+    an unchanged state isn't uploaded again."""
+    files = _state_files()
+    saved = [(p, st.st_size, st.st_mtime_ns) for p, st in files]
+    if saved == last:
+        return last
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
-        for d in STATE_DIRS:
-            path = os.path.join(".snakemake", d)
-            if os.path.isdir(path):
-                t.add(path)
+        for p, st in files:
+            try:
+                with open(p, "rb") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            info = tarfile.TarInfo(p)
+            info.size, info.mtime, info.mode = len(data), int(st.st_mtime), st.st_mode & 0o777
+            t.addfile(info, io.BytesIO(data))
     put(url, buf.getvalue())
+    return saved
+
+
+class StateSaver:
+    """Saves the state every `every` seconds while Snakemake runs, and at once after wake.set(),
+    so a head job that dies (out of memory, instance lost) or is killed while stopping keeps
+    most of it."""
+
+    def __init__(self, url, every):
+        self.url, self.every, self.last = url, every, None
+        self.wake, self.done = threading.Event(), threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while True:
+            self.wake.wait(self.every)
+            self.wake.clear()
+            if self.done.is_set():
+                return
+            self._save()
+
+    def _save(self):
+        try:
+            self.last = save_state(self.url, self.last)
+            return True
+        except Exception as e:
+            print(f"[smkflex] could not save .snakemake state: {e!r}", file=sys.stderr)
+            return False
+
+    def finish(self):
+        """Stop the saves in the background, then save the final state. True if it was saved."""
+        self.done.set()
+        self.wake.set()
+        self.thread.join()
+        return self._save()
 
 
 GIT_SHIM = """#!{python}
@@ -121,18 +185,18 @@ def main(argv):
         cmd += ["--wrapper-prefix", WRAPPER_PREFIX]
     print("[smkflex] " + " ".join(cmd), file=sys.stderr, flush=True)
     proc = subprocess.Popen(cmd, env=env)
+    saver = StateSaver(state_url, SAVE_EVERY)
 
     # `smkflex cancel` (Batch's terminate) sends SIGTERM; Snakemake cancels its jobs on SIGINT.
+    # The state is saved at once too, in case the head job is killed before Snakemake is done.
     def stop(_sig, _frame):
         proc.send_signal(signal.SIGINT)
+        saver.wake.set()
 
     signal.signal(signal.SIGTERM, stop)
     rc = proc.wait()
-    try:
-        save_state(state_url)
+    if saver.finish():
         print("[smkflex] saved .snakemake state", file=sys.stderr)
-    except Exception as e:
-        print(f"[smkflex] could not save .snakemake state: {e!r}", file=sys.stderr)
     bundle = os.environ.get("SMKFLEX_BUNDLE_URL")
     if bundle:  # the uploaded workflow isn't needed any more
         try:

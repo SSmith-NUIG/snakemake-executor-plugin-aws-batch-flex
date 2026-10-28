@@ -7,6 +7,7 @@ import math
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator, List, Optional
 
 import boto3
@@ -36,6 +37,7 @@ CONDA_CACHE_JOB_DIR = "/tmp/smkflex-conda"  # condacache.ROOT
 FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 SHARING_CHECK_SECONDS = 30  # how often to look for other work on this run's instances
+CANCEL_THREADS = 16  # terminate_job calls at once when the run is cancelled
 
 
 def _out_of_memory(d: dict) -> bool:
@@ -641,13 +643,18 @@ class Executor(RemoteExecutor):
         return ""
 
     def cancel_jobs(self, active_jobs: List[SubmittedJobInfo]):
-        for info in active_jobs:
+        # In parallel: a head job that is stopped has little time (ECS_CONTAINER_STOP_TIMEOUT)
+        # to cancel every job and save its state.
+        def cancel(info):
             try:
                 self.batch.terminate_job(
                     jobId=info.external_jobid, reason="Cancelled by Snakemake"
                 )
             except (ClientError, BotoCoreError) as e:
                 self.logger.warning(f"Could not terminate {info.external_jobid}: {e}")
+
+        with ThreadPoolExecutor(CANCEL_THREADS) as pool:
+            list(pool.map(cancel, active_jobs))
 
     def _warn_if_stuck(self, d: dict, info: SubmittedJobInfo):
         if d["status"] != "RUNNABLE" or info.aux.get("warned"):
