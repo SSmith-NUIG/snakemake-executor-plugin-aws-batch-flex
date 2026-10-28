@@ -4,7 +4,9 @@ Running workflows with the plugin, and tuning them. Setting up is in the
 [README](../README.md#getting-started); every setting is in the [Reference](reference.md).
 
 - [Running workflows](#running-workflows): [published pipelines](#running-a-published-pipeline),
-  [coming from a cluster](#coming-from-a-cluster), [long runs with `smkflex`](#long-runs-smkflex),
+  [coming from a cluster](#coming-from-a-cluster),
+  [what works differently from a local run](#what-works-differently-from-a-local-run),
+  [long runs with `smkflex`](#long-runs-smkflex),
   [interrupted runs](#interrupted-runs)
 - [Tuning jobs](#tuning-jobs): [containers and Python](#containers-and-python),
   [conda](#conda-and-wrappers), [what a run used](#what-a-run-used), [many small
@@ -128,6 +130,29 @@ or the `smkflex` head job.
 **Logs.** Snakemake prints the end of a failed job's log; rule `log:` files are in the bucket
 (`smkflex pull logs`), and the full job output in CloudWatch (see
 [Troubleshooting](#troubleshooting)).
+
+### What works differently from a local run
+
+Jobs run on other machines and only share the bucket, so a few things that work when Snakemake
+runs everything on your machine need a change:
+
+- **Input data has to be in the bucket.** Upload it once with `smkflex push data` (see
+  [Paths and data](#coming-from-a-cluster)); a "Missing input files … (in storage)" error says
+  which files are only on your machine.
+- **Results are in the bucket, not on your machine.** Code that runs where Snakemake runs and
+  opens an output, such as an `onsuccess:` handler that prints a summary, finds no file. Do it in
+  a rule that has the file as its input (a `localrules:` rule if it should run on your machine):
+  Snakemake then fetches it. Or download the results after the run: `smkflex pull results`.
+- **Jobs get the workflow folder,** except `data/`, `results/`, `logs/`, `benchmarks/`, what
+  `.gitignore` excludes (but `config/` always goes), files over 10 MB and anything outside the
+  folder. A file a rule reads that isn't one of its inputs has to be in there (see
+  [Troubleshooting](#troubleshooting)).
+- **No `workdir:`.** The jobs need the Snakefile inside the folder Snakemake works in, so the run
+  stops at the start and says so. Outputs go under the storage prefix anyway: remove it.
+- **`threads: workflow.cores`** needs `--cores N`, as on a cluster (Snakemake asks for it). Each
+  such job then asks for N vCPUs, so N has to fit on one machine of the queue.
+- **`envmodules:`** is ignored (there's no module system), so the tool it would load is missing:
+  use a `container:` or `conda:` (see Software above).
 
 ### Long runs: `smkflex`
 
