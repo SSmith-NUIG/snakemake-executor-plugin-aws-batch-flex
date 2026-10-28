@@ -377,7 +377,9 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
         raise Fail("no role for the head job: set aws-batch-flex-head-role-arn in the profile (Terraform "
                    "prints it as head_role_arn) or pass --role")
     name = re.sub(r"[^A-Za-z0-9_-]", "-", a.name or default_name)
-    state_url = f"{prefix}/.smkflex/{name}/state.tar.gz"
+    # One project (storage prefix) has one state and one run at a time, as Snakemake has one
+    # working directory with one lock: two runs would make and overwrite the same outputs.
+    state_url = f"{prefix}/.smkflex/state.tar.gz"
     state_key = hashlib.sha256(state_url.encode()).hexdigest()[:16]
     batch, _logs, region = _clients(profile)
 
@@ -390,15 +392,15 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
     if queue_uses_spot(batch, queue):
         print(f"warning: queue {queue} uses Spot instances; if AWS takes the head job's instance back, "
               "the whole run stops. Use an on-demand queue for it (--queue).", file=sys.stderr)
-    if not a.force:
-        running = _active_heads(batch, queue, state_key)
-        if running:
-            raise Fail(f"workflow '{name}' is already running as head job {running[0]}; wait for it, "
-                       f"`smkflex cancel {running[0]}`, or pass --force")
+    running = _active_heads(batch, queue, state_key)
+    if running:
+        raise Fail(f"a run of this project ({prefix}) is still going: head job {running[0]}. Wait for "
+                   f"it or `smkflex cancel {running[0]}` (finished outputs are kept), then run again. "
+                   "Another set of samples is another project: `smkflex init` in its own folder.")
 
     bundle = make_bundle(root, profile_dir, a.max_bundle_mb, extra)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    bundle_url = f"{prefix}/.smkflex/{name}/runs/{stamp}/workflow.tar.gz"
+    bundle_url = f"{prefix}/.smkflex/runs/{stamp}/workflow.tar.gz"
     headjob.put(bundle_url, bundle)
     print(f"Uploaded the workflow ({len(bundle) // 1024} KiB) to {bundle_url}", file=sys.stderr)
 
@@ -931,7 +933,7 @@ def main(argv=None):
     r.add_argument("--add", action="append", metavar="PATH",
                    help="send this local file or folder too, at the same path (with --git: over the "
                    "repository's, e.g. --add config/ for your own config); repeatable")
-    r.add_argument("--name", help="workflow name; runs with the same name share state "
+    r.add_argument("--name", help="the run's name in smkflex status and AWS Batch "
                    "(default: the folder's or repository's name)")
     r.add_argument("--queue", help="queue for the head job (default: the profile's)")
     r.add_argument("--role", help="IAM role for the head job (default: aws-batch-flex-head-role-arn)")
@@ -940,7 +942,6 @@ def main(argv=None):
     r.add_argument("--mem-mb", type=int, default=2048)
     r.add_argument("--max-bundle-mb", type=int, default=100)
     r.add_argument("--wait", action="store_true", help="stay attached and print the log until the run ends")
-    r.add_argument("--force", action="store_true", help="submit even if this workflow is already running")
     for name, text in (("logs", "print a run's Snakemake log"), ("cancel", "stop a run and its jobs")):
         s = sub.add_parser(name, help=text)
         s.add_argument("job_id")

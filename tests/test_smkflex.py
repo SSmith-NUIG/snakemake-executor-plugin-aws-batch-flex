@@ -64,7 +64,7 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     assert head["tags"]["smkflex-workflow"] == "wf"
     assert {"type": "MEMORY", "value": "2048"} in head["res"]
     # the head job removes the uploaded workflow when it's done
-    assert not list((store / ".smkflex" / "wf" / "runs").glob("*/workflow.tar.gz"))
+    assert not list((store / ".smkflex" / "runs").glob("*/workflow.tar.gz"))
     import io
     from snakemake_executor_plugin_aws_batch_flex.remote import make_bundle
     bundle = io.BytesIO(make_bundle(str(wf), str(wf / "profile"), 100))
@@ -74,7 +74,7 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     bundle.seek(0)
     assert tarfile.open(fileobj=bundle).extractfile(".smkflex/files.txt").read().decode().split() == ["Snakefile", "profile/config.yaml"]
     assert not any(n.startswith(".snakemake") for n in names)
-    state = tarfile.open(store / ".smkflex" / "wf" / "state.tar.gz").getnames()
+    state = tarfile.open(store / ".smkflex" / "state.tar.gz").getnames()
     assert any(n.startswith(".snakemake/metadata") for n in state)
     assert "snakemake exited with 0" in out
     assert "--wrapper-prefix https://github.com/snakemake/snakemake-wrappers/raw/" in out
@@ -93,12 +93,22 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
 
 def test_refuses_a_second_run_of_the_same_workflow(tmp_path):
     wf = setup(tmp_path)
-    key = hashlib.sha256(f"{tmp_path / 'store'}/.smkflex/wf/state.tar.gz".encode()).hexdigest()[:16]
+    key = hashlib.sha256(f"{tmp_path / 'store'}/.smkflex/state.tar.gz".encode()).hexdigest()[:16]
     running = [{"jobId": "old-head", "queue": "default-queue", "jobDefinition": "snakemake-x",
                 "tags": {"smkflex-state": key}}]
     r, calls = smkflex(wf, "run", env_extra={"FAKEAWS_ORPHANS": json.dumps(running)})
-    assert r.returncode == 2 and "already running as head job old-head" in r.stderr
+    assert r.returncode == 2 and "still going: head job old-head" in r.stderr
+    assert "smkflex init" in r.stderr
     assert not any(c["call"] == "submit_job" for c in calls)
+    # one run per project (storage prefix), whatever the run is called
+    r, calls = smkflex(wf, "run", "--name", "other", env_extra={"FAKEAWS_ORPHANS": json.dumps(running)})
+    assert r.returncode == 2 and "old-head" in r.stderr
+    assert not any(c["call"] == "submit_job" for c in calls)
+    # smkflex has no --force: it's Snakemake's and reaches it
+    r, calls = smkflex(wf, "run", "--wait", "--force", "-n")
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    assert "--force -n" in out
 
 
 def test_warns_about_a_spot_queue(tmp_path):
