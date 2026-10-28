@@ -200,7 +200,8 @@ class Executor(RemoteExecutor):
         if not prefix:
             return None
         data = job_tools_source().encode()
-        url = f"{prefix}/.smkflex/code/jobtools-{hashlib.sha256(data).hexdigest()[:12]}.py"
+        # the jobs check the content against the sha256 in the name before running it
+        url = f"{prefix}/.smkflex/code/jobtools-{hashlib.sha256(data).hexdigest()}.py"
         try:
             if headjob.get(url) != data:
                 headjob.put(url, data)

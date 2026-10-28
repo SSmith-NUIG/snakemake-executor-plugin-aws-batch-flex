@@ -107,16 +107,31 @@ def _job(tmp_path, code):
     return subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=120)
 
 
+def _tools(tmp_path, text, named_for=None):
+    import hashlib
+    data = (named_for or text).encode()
+    code = tmp_path / f"jobtools-{hashlib.sha256(data).hexdigest()}.py"
+    code.write_text(text)
+    return code
+
+
 def test_launcher_turns_the_job_tools_on(tmp_path):
     from snakemake_executor_plugin_aws_batch_flex.bootstrap import job_tools_source
-    code = tmp_path / "jobtools.py"
-    code.write_text(job_tools_source())
+    code = _tools(tmp_path, job_tools_source())
     r = _job(tmp_path, code)
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"PREFIX {tmp_path / 'root' / condacache.platform_key()}" in r.stdout + r.stderr
     # and the usage figures, at the end
     assert re.search(r"\[snakemake-batch\] peak-memory-bytes=\d+ peak-cpus=[\d.]+ avg-cpus=[\d.]+ "
                      r"peak-disk-bytes=\d+", r.stderr), r.stderr
+
+
+def test_launcher_runs_only_job_tools_that_match_their_checksum(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import job_tools_source
+    code = _tools(tmp_path, 'print("SHOULD NOT RUN")\n' + job_tools_source(), named_for=job_tools_source())
+    r = _job(tmp_path, code)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "doesn't match its checksum" in r.stderr and "SHOULD NOT RUN" not in r.stdout + r.stderr
 
 
 def test_launcher_runs_the_job_without_the_cache_code(tmp_path):

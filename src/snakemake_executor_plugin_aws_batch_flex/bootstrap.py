@@ -111,16 +111,19 @@ sys.argv = ["snakemake"] + a[2:]
 _code = os.environ.get("SMK_FLEX_JOB_CODE")
 if _code and "--deploy-sources" not in sys.argv:
     # the job tools (condacache.py, jobmonitor.py), uploaded by the plugin once per run: too
-    # long to send with every job
+    # long to send with every job. Their name has their sha256: only run what matches it
     try:
         if _code.startswith("s3://"):
             import boto3
             _b, _, _k = _code[5:].partition("/")
-            _src = boto3.client("s3").get_object(Bucket=_b, Key=_k)["Body"].read().decode()
+            _raw = boto3.client("s3").get_object(Bucket=_b, Key=_k)["Body"].read()
         else:
-            _src = open(_code).read()
+            _raw = open(_code, "rb").read()
+        import hashlib
+        if not _code.endswith(f"jobtools-{hashlib.sha256(_raw).hexdigest()}.py"):
+            raise ValueError(f"{_code} doesn't match its checksum")
         _ns = {"__name__": "smkflex_jobtools"}
-        exec(_src, _ns)
+        exec(_raw.decode(), _ns)
         _ns["monitor"]()
         _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
         if _cc != "none":
