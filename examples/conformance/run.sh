@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run, from this directory, with the profile setup.sh installed (or
-# profile/config.yaml here, see find-profile.sh). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
+# profile/config.yaml here, see find-profile.sh). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|pdsheet|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
 # (both need enable_fargate=true in terraform), `spot` = fanout on the Spot queue (enable_spot_queue=true)
 # `rules` = checkpoint group shadow benchmark retries tempdir directory (one small workflow each)
@@ -35,6 +35,7 @@ run() { # name, snakemake args...
       ecr)        check ecr results/ecr/os.txt "Debian GNU/Linux 12";;
       shm)        check shm results/shm/big.txt "^1024$" && check shm results/shm/default.txt "^64$";;
       pyimage)    check pyimage results/pyimg/out.txt "sum=6 pandas=2.2.1";;
+      pdsheet)    check pdsheet results/pdsheet/s2.txt "samtools 1.21" && check pdsheet results/pdsheet/s2.txt "s2";;
       pyrule)     check pyrule results/pyrule/image.txt "python=/usr/local/bin/python pandas=yes" \
                     && check pyrule results/pyrule/host.txt "python=/opt/snakemake-env/";;  # the AMI's (pandas or not)
       rscript)    check rscript results/r/out.txt "rscript threads=2 rule=r_script R=4";;
@@ -86,6 +87,7 @@ for t in "${@:-script fanout}"; do
       pyimage) run pyimage -s pyimage.smk;;
       oom) run oom -s oom.smk --retries 1;;
       pyrule) run pyrule -s pyrule.smk -j 2;;
+      pdsheet) run pdsheet -s pdsheet.smk -j 2;;
       rscript) run rscript -s rscript.smk;;
       wrapper) run wrapper -s wrapper.smk --sdm conda -j 2;;
       mixed|disk) FQ=$(terraform -chdir=../../terraform output -raw snakemake_profile_fargate | sed -n 's/^aws-batch-flex-queue: //p')

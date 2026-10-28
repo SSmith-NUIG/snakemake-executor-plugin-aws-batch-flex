@@ -415,7 +415,7 @@ def test_numpy_that_cant_load_in_the_image_looks_not_installed(tmp_path):
     (tmp_path / "numpy" / "__init__.py").write_text(
         'raise ImportError("Original error was: libstdc++.so.6: cannot open shared object file")')
     (tmp_path / "tools.py").write_text(job_tools_source())
-    code = ("ns = {}; exec(open('tools.py').read(), ns); ns['hide_unloadable_numpy']()\n"
+    code = ("ns = {}; exec(open('tools.py').read(), ns); ns['make_numpy_loadable']()\n"
             "for m in ('numpy', 'pandas'):\n"
             "    try: __import__(m)\n"
             "    except ModuleNotFoundError: print(m, 'not installed')\n")
@@ -423,3 +423,24 @@ def test_numpy_that_cant_load_in_the_image_looks_not_installed(tmp_path):
                        capture_output=True, text=True)
     assert r.stdout.split("\n")[:2] == ["numpy not installed", "pandas not installed"], r.stdout + r.stderr
     assert "can't load in this image" in r.stderr and "libstdc++.so.6" in r.stderr
+
+
+def test_numpy_gets_the_amis_conda_libstdcxx_first(tmp_path, monkeypatch):
+    import ctypes
+    from snakemake_executor_plugin_aws_batch_flex import jobfixes
+    root = tmp_path / "miniforge3"
+    (root / "condabin").mkdir(parents=True)
+    (root / "lib").mkdir()
+    for lib in ("libgcc_s.so.1", "libstdc++.so.6"):
+        (root / "lib" / lib).write_text("")
+    monkeypatch.setenv("PATH", f"/usr/bin:{root / 'condabin'}")  # as bootstrap.conda_snippet puts it
+    loaded = []
+    monkeypatch.setattr(ctypes, "CDLL", lambda path, mode=0: loaded.append((path, mode)))
+    jobfixes.make_numpy_loadable()
+    # libgcc_s first (libstdc++ needs it), both for the whole process, before numpy is imported
+    assert loaded == [(str(root / "lib" / "libgcc_s.so.1"), ctypes.RTLD_GLOBAL),
+                      (str(root / "lib" / "libstdc++.so.6"), ctypes.RTLD_GLOBAL)]
+    monkeypatch.setenv("PATH", "/usr/bin")
+    loaded.clear()
+    jobfixes.make_numpy_loadable()  # no conda mounted: nothing to load
+    assert loaded == []

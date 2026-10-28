@@ -132,7 +132,7 @@ if _code and "--deploy-sources" not in sys.argv:
             raise ValueError(f"{_code} doesn't match its checksum")
         _ns = {"__name__": "smkflex_jobtools"}
         exec(_raw.decode(), _ns)
-        _ns["hide_unloadable_numpy"]()
+        _ns["make_numpy_loadable"]()
         _ns["monitor"]()
         _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
         if _cc != "none":
