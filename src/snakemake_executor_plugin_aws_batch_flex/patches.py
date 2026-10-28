@@ -31,6 +31,16 @@ def skip_remote_module_scripts():
         plugin = getattr(getattr(self, "workflow", None), "executor_plugin", None)
         if getattr(plugin, "name", None) != PLUGIN_NAME:
             return get_sources.__wrapped__(self)
+        # Jobs only get files below the folder Snakemake works in; Snakemake leaves the rest out
+        # with a warning, and every job then fails for want of the Snakefile
+        main = str(getattr(self.workflow, "main_snakefile", "") or "")
+        if main and os.path.exists(main) and os.path.relpath(main).startswith(".."):
+            raise WorkflowError(
+                f"The Snakefile ({os.path.relpath(main)}) is outside the folder Snakemake works in "
+                f"({os.getcwd()}), set by a workdir: directive or --directory, so the jobs couldn't get it. "
+                "Remove workdir: and start Snakemake in the workflow's folder: outputs go under the "
+                "storage prefix anyway (a project of its own: smkflex init in its own folder)."
+            )
         hidden = []
         for rule in getattr(self.workflow, "rules", []):
             base = getattr(rule, "basedir", None)

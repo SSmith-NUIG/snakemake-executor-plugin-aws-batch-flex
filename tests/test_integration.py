@@ -478,6 +478,14 @@ def test_input_only_on_this_machine_says_how_to_upload_it(tmp_path):
     assert (store / "a.txt").read_text() == "local\nabs\n"
 
 
+def test_workdir_directive_stops_before_submitting(tmp_path):
+    snakefile = 'workdir: "sub"\nrule a:\n    output: "a.txt"\n    shell: "echo ok > {output}"\n'
+    r, calls = run(tmp_path, snakefile)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and "is outside the folder Snakemake works in" in out and "Remove workdir:" in out, out
+    assert not any(c["call"] == "submit_job" for c in calls)
+
+
 def test_module_from_github(tmp_path):
     # snakedeploy's layout: the pipeline's rules come from GitHub; packing the sources used to
     # crash on their scripts ("not GithubFile")
