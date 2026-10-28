@@ -338,6 +338,22 @@ def test_out_of_memory_retries_with_more(tmp_path, monkeypatch):
     assert "Snakemake retries it with more" in out
 
 
+def test_out_of_memory_rule_that_scales_itself_isnt_scaled_again(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKEAWS_OOM_BELOW_MIB", "3000")
+    snakefile = textwrap.dedent('''
+        rule oom_scaled:
+            output: "scaled.txt"
+            resources: mem_mb=lambda wildcards, attempt: 1000 * attempt
+            shell: "echo ok > {output}"
+    ''')
+    r, calls = run(tmp_path, snakefile, "--retries", "2")
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    first, second, third = _mem(calls, "oom_scaled")
+    assert first == 1210 and 2000 < second < 2420 and 3000 < third < 4840  # the rule's, not doubled too
+    assert f"its rule asks for {second} MiB this time" in out
+
+
 def test_out_of_memory_without_retries_says_how(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKEAWS_OOM_BELOW_MIB", "3000")
     r, calls = run(tmp_path, OOM.replace(', "fargate.txt"', ""))

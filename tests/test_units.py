@@ -1,4 +1,5 @@
 import subprocess
+import types
 import pytest
 from snakemake_interface_common.exceptions import WorkflowError
 from snakemake_executor_plugin_aws_batch_flex.sizing import fargate_size, job_requirements
@@ -277,3 +278,25 @@ def test_versions_that_dont_fit_are_not_pinned(monkeypatch):
     monkeypatch.setattr(bootstrap.md, "distribution", distribution)
     # dep 3.1 breaks top's dep<3 (an environment mixed by hand); other is only for an extra
     assert bootstrap.locked(["top", "local"]) == (["top==1.0"], ["dep==3.1", "local==1.0+cu12"])
+
+
+def test_rules_whose_jobs_ran_out_get_no_memory_suggestion(tmp_path, monkeypatch):
+    from snakemake_executor_plugin_aws_batch_flex import jobmonitor
+    from snakemake_executor_plugin_aws_batch_flex.costs import Usage
+    (tmp_path / "memory.events").write_text("low 0\nhigh 0\nmax 3\noom 1\noom_kill 2\n")
+    monkeypatch.setattr(jobmonitor, "CGROUP", str(tmp_path))
+    assert jobmonitor._oom_kills() == 2
+    monkeypatch.setattr(jobmonitor, "CGROUP", str(tmp_path / "none"))
+    assert jobmonitor._oom_kills() is None
+
+    u = Usage()
+    for rule in ("ok", "killed"):
+        u.add(rule, {"startedAt": 0, "stoppedAt": 1000}, 1, 4352, "ec2", False)
+        u.add_log(rule, "g", rule)
+    logs = {"ok": "peak-memory-bytes=1073741824 peak-cpus=1.00 oom-kills=0",
+            "killed": "peak-memory-bytes=4294967296 peak-cpus=1.00 oom-kills=2"}
+    client = types.SimpleNamespace(get_log_events=lambda logGroupName, logStreamName, **kw: {
+        "events": [{"message": "[snakemake-batch] " + logs[logStreamName]}]})
+    u.fetch_peaks(client)
+    assert set(u.suggestions(256)) == {"ok"}
+    assert "Hint: in killed's jobs, Linux killed 2 process(es) for lack of memory" in u.table(256)

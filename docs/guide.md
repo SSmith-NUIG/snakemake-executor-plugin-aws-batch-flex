@@ -270,7 +270,7 @@ AWS Batch usage of this run (cost: the EC2 instances at AWS's prices, shared out
   fastp_pe        4      0.08      0.32      0.02      4    1.4      4071     310       0.4
   total           8      1.04      0.64      0.23
 EC2: 1 × m6i.2xlarge (on-demand, 32 min in all): ~$0.23 at AWS's prices (disks included: $0.01); the jobs used 24% of these instances' vCPU-time.
-vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most memory its processes used (without file cache); disk GiB: the most its working folder took. Each the highest of the rule's jobs, sampled every 2 s.
+vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most memory its processes used (without file cache); disk GiB: the most its working folder took. Each the highest of the rule's jobs; memory sampled every 0.5 s (a shorter spike isn't seen), CPUs every 2 s.
 Memory for each rule (its peak + 30%), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
 set-resources:
   fastp_pe:
@@ -296,12 +296,14 @@ set-threads:
   rough estimate from the jobs' vCPUs and says so. AWS Cost Explorer has the exact figures, a day
   later: the instances are tagged `ManagedBy=snakemake-batch-flex`, which you can filter by once
   it's switched on under **Billing** > **Cost allocation tags**.
-- **Memory, CPU and disk:** each job samples its container every 2 seconds and logs the most it
-  saw: its processes' memory (from Linux's cgroup statistics, without file cache, which Linux
+- **Memory, CPU and disk:** each job samples its container (memory every half second, CPUs every
+  2 seconds) and logs the most it saw: its processes' memory (from Linux's cgroup statistics, without file cache, which Linux
   frees before it kills anything), how many vCPUs were busy at once, and how big its working
   folder (inputs, outputs, conda downloads) got. The plugin reads those lines from the job logs
-  (on runs with more than 300 jobs, from 25 per rule). A spike shorter than 2 seconds can be missed, which the retry with more memory
-  covers. For a job that builds its conda environment, that build counts too (often 1-1.5 GB).
+  (on runs with more than 300 jobs, from 25 per rule). A spike between two samples can be missed, which the retry with more memory
+  covers. If Linux killed a process for lack of memory in a rule's jobs (a tool can survive
+  that), the table says so and leaves that rule out of the suggestions, since what was seen is
+  less than it needs. For a job that builds its conda environment, that build counts too (often 1-1.5 GB).
   The `set-resources:` block has every rule whose peak is known, at its peak plus 30% (at least
   512 MiB per job): paste it into the project's settings, and the next run neither wastes room
   on the instances nor runs out. On rna-seq-star-deseq2's test data the rules used 0.3-2.7 GB of

@@ -68,6 +68,7 @@ class Usage:
         self.busy = defaultdict(list)  # rule -> most vCPUs in use at once, per job
         self.disk = defaultdict(list)  # rule -> most disk a job's working folder took (GiB)
         self.threads = defaultdict(float)  # rule -> most vCPUs a job asked for
+        self.oom_kills = defaultdict(int)  # rule -> its jobs' processes killed for lack of memory
         self.platform = {}  # rule -> ec2 | fargate
         self.sampled = False
         self.estimated = False  # some EC2 cost is the rough per-vCPU estimate
@@ -134,14 +135,18 @@ class Usage:
                         self.busy[rule].append(float(fields["peak-cpus"]))
                     if "peak-disk-bytes" in fields:
                         self.disk[rule].append(int(fields["peak-disk-bytes"]) / 1024 ** 3)
+                    self.oom_kills[rule] += int(fields.get("oom-kills", 0))
                 except ValueError:
                     pass
 
     def suggestions(self, overhead_mib: int) -> dict:
         """rule -> mem_mb that gives its jobs their peak plus headroom (at least 512 MiB in
-        all), for every rule whose peak is known."""
+        all), for every rule whose peak is known. Not for rules whose jobs ran out: what was
+        seen before that is less than they need."""
         out = {}
         for rule, peaks in self.peaks.items():
+            if self.oom_kills.get(rule):
+                continue
             want = max(512, math.ceil(max(peaks) * HEADROOM / 100) * 100)  # container memory, MiB
             # the plugin adds overhead_mib for Snakemake itself; mem_mb is in MB
             out[rule] = max(100, math.ceil((want - overhead_mib) * 1.048576 / 100) * 100)
@@ -199,7 +204,8 @@ class Usage:
             note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
             lines.append(f"vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most "
                          f"memory its processes used (without file cache); disk GiB: the most its working "
-                         f"folder took. Each the highest of the rule's jobs{note}, sampled every 2 s.")
+                         f"folder took. Each the highest of the rule's jobs{note}; memory sampled every "
+                         f"0.5 s (a shorter spike isn't seen), CPUs every 2 s.")
         tips = self.suggestions(overhead_mib)
         if tips:
             lines.append("Memory for each rule (its peak + 30%), to paste into the project's "
@@ -216,6 +222,11 @@ class Usage:
             lines.append("set-threads:")
             for rule, n in sorted(threads.items()):
                 lines.append(f"  {rule}: {n:<6}# had {self.threads[rule]:g}, at most {max(self.busy[rule]):.1f} busy")
+        for rule, n in sorted(self.oom_kills.items()):
+            if n:
+                lines.append(f"Hint: in {rule}'s jobs, Linux killed {n} process(es) for lack of memory (a job "
+                             "can still succeed if the tool retried). Its peak is from before that, so it "
+                             "needs more: raise its mem_mb.")
         for rule, gib in sorted((r, max(d)) for r, d in self.disk.items() if d and max(d) > BIG_DISK_GIB):
             where = ("Fargate gives a job 20 GiB unless disk_mb asks for more"
                      if self.platform.get(rule) == "fargate" else

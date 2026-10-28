@@ -156,7 +156,7 @@ class Executor(RemoteExecutor):
         self._fair_share: dict = {}  # queue -> has a scheduling policy
         self._warned_existing: set = set()
         self.usage = Usage()
-        self._oom: dict = {}  # job id -> times it ran out of memory
+        self._oom: dict = {}  # job id -> (times it ran out of memory, MiB its rule asked for then)
         self._spot: dict = {}  # queue -> runs on Spot
         self._sharing_checked = 0.0
         if not s.skip_preflight:
@@ -330,10 +330,17 @@ class Executor(RemoteExecutor):
 
     def _more_memory_after_oom(self, job: JobExecutorInterface, req, platform: str):
         """A retry of a job that ran out of memory asks for oom_memory_factor times more,
-        for every time it ran out (Fargate: at most 120 GiB)."""
-        times = self._oom.get(job.jobid, 0)
+        for every time it ran out (Fargate: at most 120 GiB). Unless its rule already asks for
+        more on this attempt (mem_mb=lambda wildcards, attempt: ...): that is used as it is."""
+        times, asked = self._oom.get(job.jobid, (0, None))
         factor = self.settings.oom_memory_factor
         if not times or factor <= 1:
+            return
+        if asked is not None and req.memory_mib > asked:
+            self.logger.info(
+                f"{job.name} (attempt {job.attempt}) ran out of memory with {asked} MiB; its rule asks "
+                f"for {req.memory_mib} MiB this time, so that is used."
+            )
             return
         before = req.memory_mib
         mem = int(before * factor**times)
@@ -477,6 +484,7 @@ class Executor(RemoteExecutor):
         self._handle_orphans(queue)
         self._check_fargate_ok(platform, queue)
         req = job_requirements(job.resources, job.threads, platform, self.settings.mem_overhead_mib)
+        asked = req.memory_mib  # by the rule, before the retry's extra
         self._more_memory_after_oom(job, req, platform)
         script_python = str(job.resources.get("batch_script_python") or self.settings.script_python).lower()
         if script_python not in ("image", "host"):
@@ -561,7 +569,7 @@ class Executor(RemoteExecutor):
                 job,
                 external_jobid=resp["jobId"],
                 aux={"image": image, "queue": queue, "platform": platform, "warned": False,
-                     "vcpu": float(req.vcpu), "mem": req.memory_mib},
+                     "vcpu": float(req.vcpu), "mem": req.memory_mib, "asked": asked},
             )
         )
 
@@ -600,7 +608,8 @@ class Executor(RemoteExecutor):
                 self.report_job_success(info)
             elif status == "FAILED":
                 if _out_of_memory(d):
-                    self._oom[info.job.jobid] = self._oom.get(info.job.jobid, 0) + 1
+                    times, _asked = self._oom.get(info.job.jobid, (0, None))
+                    self._oom[info.job.jobid] = (times + 1, info.aux.get("asked"))
                 msg = await asyncio.to_thread(self._failure_message, d, info)
                 self.report_job_error(info, msg=msg)
             elif status in ACTIVE:
