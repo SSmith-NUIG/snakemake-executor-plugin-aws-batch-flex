@@ -132,22 +132,24 @@ explain_local_only_inputs()
 def recheck_s3_directories():
     """Work around snakemake-storage-plugin-s3 (0.3.6): a storage object remembers is_dir() =
     False from before the job ran, so a directory() output the job then uploads is reported
-    "missing in storage". A remembered False is looked up again; a True still counts."""
+    "missing in storage". exists() looks a remembered False up again (it only asks is_dir()
+    when there's no plain object of that name). Only there: mtime() and size() of every file
+    ask is_dir() too, and keep the remembered answer, as without the patch."""
     try:
         from snakemake_storage_plugin_s3 import StorageObject
     except Exception:
         return
-    orig = getattr(StorageObject, "is_dir", None)
+    orig = getattr(StorageObject, "exists", None)
     if orig is None or getattr(orig, "_rechecks", False):
         return
 
-    def is_dir(self):
+    def exists(self):
         if getattr(self, "_is_dir", None) is False:
             self._is_dir = None
         return orig(self)
 
-    is_dir._rechecks = True
-    StorageObject.is_dir = is_dir
+    exists._rechecks = True
+    StorageObject.exists = exists
 
 
 def keep_unneeded_temp(cmd: str) -> str:

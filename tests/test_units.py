@@ -145,22 +145,32 @@ def test_keep_unneeded_temp():
 def test_s3_directory_is_looked_up_again():
     import pytest
     s3 = pytest.importorskip("snakemake_storage_plugin_s3")
+    from botocore.exceptions import ClientError
     from snakemake_executor_plugin_aws_batch_flex.patches import recheck_s3_directories as _recheck_s3_directories
     _recheck_s3_directories()
     _recheck_s3_directories()  # patching twice is harmless
 
     class Obj:
-        is_dir = s3.StorageObject.is_dir
+        exists, is_dir = s3.StorageObject.exists, s3.StorageObject.is_dir
         def __init__(self):
-            self._is_dir = None
-            self.keys = []
+            self._is_dir, self.keys, self.listed = None, [], 0
         def get_subkeys(self):
+            self.listed += 1
             return iter(self.keys)
+        def bucket_exists(self):
+            return True
+        def s3obj(self):  # no plain object of this name: a directory, or nothing yet
+            def load():
+                raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
+            return types.SimpleNamespace(load=load)
 
     o = Obj()
-    assert o.is_dir() is False  # before the job: no files under the prefix
+    assert o.exists() is False  # before the job: no files under the prefix
     o.keys = ["star_genome/SA"]  # the job uploaded the directory
-    assert o.is_dir() is True
+    assert o.exists() is True
+    # what mtime() and size() ask for every file: answered from memory, no extra S3 request
+    f = Obj()
+    assert f.is_dir() is False and f.is_dir() is False and f.listed == 1
 
 
 def test_memory_suggestions():
