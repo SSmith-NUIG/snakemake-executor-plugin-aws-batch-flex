@@ -16,7 +16,8 @@ def run_conf(tmp_path, smk, *extra):
     cmd = [sys.executable, "-m", "snakemake", "-s", smk, "--executor", "aws-batch-flex",
            "--aws-batch-flex-queue", "q", "--aws-batch-flex-default-image", "debian:12",
            "--default-storage-provider", "fs", "--default-storage-prefix", str(tmp_path / "store"),
-           "--default-resources", "mem_mb=500", "--latency-wait", "10", *extra]
+           "--default-resources", "mem_mb=500", "--latency-wait", "10",
+           "--seconds-between-status-checks", "1", *extra]
     r = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=900)
     calls = [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
     return r, calls

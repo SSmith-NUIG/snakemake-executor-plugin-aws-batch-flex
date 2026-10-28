@@ -33,6 +33,7 @@ def setup(tmp_path, **extra):
         "aws-batch-flex-head-role-arn": "arn:aws:iam::1:role/head",
         "default-resources": ["mem_mb=500"],
         "latency-wait": 5,
+        "seconds-between-status-checks": 1,
         "jobs": 2,
         **extra,
     }

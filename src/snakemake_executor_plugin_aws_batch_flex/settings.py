@@ -2,7 +2,6 @@
 command line. `from_profile` reads them from a profile the way Snakemake does, for smkflex."""
 
 import dataclasses
-import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -19,9 +18,6 @@ from .sizing import DEFAULT_MEM_OVERHEAD_MIB
 
 PLUGIN_NAME = "aws-batch-flex"
 PROFILE_PREFIX = PLUGIN_NAME + "-"
-# Seconds between status checks (and before the first): only the tests set it, for their fake
-# Batch whose jobs end at once. Real Batch jobs take 30 s or more to start.
-TEST_STATUS_SECONDS = os.environ.get("SMK_FLEX_TEST_STATUS_SECONDS")
 MAX_SOURCES_MB = 100
 
 
@@ -373,7 +369,8 @@ common_settings = CommonSettings(
     pass_envvar_declarations_to_cmd=False,
     # We install storage plugins ourselves, version-pinned, inside the bootstrap venv.
     auto_deploy_default_storage_provider=False,
-    init_seconds_before_status_checks=int(TEST_STATUS_SECONDS or 10),
+    # an early first look at the jobs only costs one status call; then every 10 s, as Snakemake's default
+    init_seconds_before_status_checks=1,
 )
 
 

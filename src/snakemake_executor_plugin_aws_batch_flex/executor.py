@@ -8,6 +8,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import AsyncGenerator, List, Optional
 
 import boto3
@@ -34,7 +35,6 @@ from .preflight import (
     version_note,
 )
 from .settings import (
-    TEST_STATUS_SECONDS,
     ExecutorSettings,
     host_mounts,
     normalized,
@@ -60,6 +60,22 @@ def _out_of_memory(d: dict) -> bool:
     return "OutOfMemory" in (c.get("reason") or "") or "OutOfMemory" in (d.get("statusReason") or "")
 
 
+@dataclass
+class Submitted:
+    """What the plugin keeps about a submitted job (in SubmittedJobInfo.aux["smkflex"])."""
+    image: str
+    queue: str
+    platform: str  # ec2 | fargate
+    vcpu: float
+    mem: int  # MiB the job got
+    asked: int  # MiB its rule asked for (before a retry's extra)
+    warned: bool = False  # about waiting long in RUNNABLE
+
+
+def _sub(info: SubmittedJobInfo) -> Submitted:
+    return info.aux["smkflex"]
+
+
 def _not_allowed(e) -> bool:
     """Was a Batch call refused for want of a permission? Batch reports a missing iam:PassRole
     as a plain ClientException that says "not authorized"."""
@@ -70,8 +86,6 @@ def _not_allowed(e) -> bool:
 class Executor(RemoteExecutor):
     def __post_init__(self):
         s: ExecutorSettings = validate(normalized(self.workflow.executor_settings))
-        if TEST_STATUS_SECONDS:
-            self.next_seconds_between_status_checks = int(TEST_STATUS_SECONDS)
         recheck_s3_directories()
         mounts = volume_mounts(s) + host_mounts(s)
         cache = s.conda_cache.strip()
@@ -82,11 +96,13 @@ class Executor(RemoteExecutor):
         self.mounts = mounts
         registry_credentials = registry_secrets(s)
         self.settings = s
-        lock = getattr(getattr(self.workflow, "execution_settings", None), "lock", True)
+        # lock, default_storage_prefix, container_image and wrapper_prefix are Snakemake's but not
+        # declared by the executor interface, hence getattr with a default
+        lock = getattr(self.workflow.execution_settings, "lock", True)
         self.orphan_mode = s.orphan_jobs or ("cancel" if lock else "warn")
         self.workflow_id = workflow_id(
             os.getcwd(),
-            getattr(self.workflow, "main_snakefile", "") or "",
+            self.workflow.main_snakefile or "",
             getattr(self.workflow.storage_settings, "default_storage_prefix", "") or "",
         )
         self._orphans_checked: set = set()
@@ -100,8 +116,7 @@ class Executor(RemoteExecutor):
         )
         self.batch = boto3.client("batch", config=cfg)
         self.cwlogs = boto3.client("logs", config=cfg)
-        self.region = getattr(getattr(self.batch, "meta", None), "region_name", None) or s.region
-        self._cfg = cfg
+        self.region = self.batch.meta.region_name or s.region
         self.tags = tags
         self.jobdefs = JobDefinitions(
             self.batch,
@@ -549,8 +564,7 @@ class Executor(RemoteExecutor):
             SubmittedJobInfo(
                 job,
                 external_jobid=resp["jobId"],
-                aux={"image": image, "queue": queue, "platform": platform, "warned": False,
-                     "vcpu": float(req.vcpu), "mem": req.memory_mib, "asked": asked},
+                aux={"smkflex": Submitted(image, queue, platform, float(req.vcpu), req.memory_mib, asked)},
             )
         )
 
@@ -589,7 +603,7 @@ class Executor(RemoteExecutor):
             elif status == "FAILED":
                 if _out_of_memory(d):
                     times, _asked = self._oom.get(info.job.jobid, (0, None))
-                    self._oom[info.job.jobid] = (times + 1, info.aux.get("asked"))
+                    self._oom[info.job.jobid] = (times + 1, _sub(info).asked)
                 msg = await asyncio.to_thread(self._failure_message, d, info)
                 self.report_job_error(info, msg=msg)
             elif status in ACTIVE:
@@ -599,8 +613,8 @@ class Executor(RemoteExecutor):
                 yield info
 
     def _record_usage(self, info: SubmittedJobInfo, d: dict):
-        self.usage.add(info.job.name, d, info.aux.get("vcpu", 1.0), info.aux.get("mem", 0),
-                       info.aux.get("platform", "ec2"))
+        sub = _sub(info)
+        self.usage.add(info.job.name, d, sub.vcpu, sub.mem, sub.platform)
         c = d.get("container") or {}
         if c.get("logStreamName") and d.get("status") == "SUCCEEDED":
             group = log_group_of(c, self.settings.log_group)
@@ -638,14 +652,15 @@ class Executor(RemoteExecutor):
             list(pool.map(cancel, active_jobs))
 
     def _warn_if_stuck(self, d: dict, info: SubmittedJobInfo):
-        if d["status"] != "RUNNABLE" or info.aux.get("warned"):
+        sub = _sub(info)
+        if d["status"] != "RUNNABLE" or sub.warned:
             return
         waited = (time.time() * 1000 - d.get("createdAt", time.time() * 1000)) / 60000
         if waited >= self.settings.runnable_warn_minutes:
-            info.aux["warned"] = True
+            sub.warned = True
             self.logger.warning(
                 f"AWS Batch job {d['jobId']} has waited {waited:.0f} min in RUNNABLE "
-                f"on queue {info.aux['queue']}. Usually the compute environment cannot "
+                f"on queue {sub.queue}. Usually the compute environment cannot "
                 "provide the requested vCPU/memory (max vCPUs reached, instance types "
                 "too small, or subnets without capacity). Check the Batch console."
             )
@@ -653,7 +668,7 @@ class Executor(RemoteExecutor):
     def _failure_message(self, d: dict, info: SubmittedJobInfo) -> str:
         c = d.get("container") or {}
         lines = [
-            f"AWS Batch job {d['jobId']} FAILED (image {info.aux.get('image')}).",
+            f"AWS Batch job {d['jobId']} FAILED (image {_sub(info).image}).",
         ]
         if d.get("statusReason"):
             lines.append(f"  status reason: {d['statusReason']}")
@@ -662,7 +677,7 @@ class Executor(RemoteExecutor):
         if c.get("exitCode") is not None:
             lines.append(f"  exit code: {c['exitCode']}")
         if _out_of_memory(d):
-            mem = info.aux.get("mem")
+            mem = _sub(info).mem
             factor = self.settings.oom_memory_factor
             retries = getattr(info.job, "restart_times", 0) or 0
             if retries >= info.job.attempt and factor > 1:

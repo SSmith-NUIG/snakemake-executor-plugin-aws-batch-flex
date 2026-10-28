@@ -40,7 +40,8 @@ def run(tmp_path, snakefile, *extra):
     cmd = [sys.executable, "-m", "snakemake", "--executor", "aws-batch-flex",
            "--aws-batch-flex-queue", "default-queue", "--aws-batch-flex-default-image", "debian:12",
            "--default-storage-provider", "fs", "--default-storage-prefix", str(tmp_path / "store"),
-           "--default-resources", "mem_mb=500", "-j", "4", "--latency-wait", "5", *extra]
+           "--default-resources", "mem_mb=500", "-j", "4", "--latency-wait", "5",
+           "--seconds-between-status-checks", "1", *extra]
     r = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=300)
     calls = [json.loads(l) for l in log.read_text().splitlines()] if log.exists() else []
     return r, calls

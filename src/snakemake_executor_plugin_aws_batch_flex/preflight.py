@@ -2,6 +2,7 @@
 
 A missing permission to look only gives a warning. Skip with --aws-batch-flex-skip-preflight."""
 
+import weakref
 from typing import Optional
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -12,12 +13,19 @@ def access_denied(e: ClientError) -> bool:
     return "AccessDenied" in code or "UnauthorizedOperation" in code or code == "AccessDeniedException"
 
 
+# What describe_queue found, per Batch client (one region and login), for as long as it lives
+_QUEUES: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
 def describe_queue(batch, queue: str):
     """(queue, its compute environments) as Batch describes them, looked up once per client:
     the startup checks, Spot and priority all need them. (None, None) if there's no such
     queue; the environments are None if they couldn't be described. Batch's errors for the
     queue itself are raised."""
-    cache = batch.__dict__.setdefault("_smkflex_queues", {})
+    try:
+        cache = _QUEUES.setdefault(batch, {})
+    except TypeError:  # a stand-in client that can't be weakly referenced (tests): no cache
+        cache = {}
     if queue in cache:
         return cache[queue]
     found = batch.describe_job_queues(jobQueues=[queue])["jobQueues"]
