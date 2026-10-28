@@ -22,7 +22,8 @@ variable "ami_id" {
 variable "userdata_file" {
   description = <<-EOT
     Boot-time user-data for the instances. userdata.snakemake.txt waits for Batch to set
-    ECS_CLUSTER, adds two ECS agent settings and starts the agent. Null: none.
+    ECS_CLUSTER, adds three ECS agent settings and starts the agent. Null: none. To add your own,
+    see "Your own user-data" in docs/setup.md.
     If the AMI was not baked with the Snakemake env, generate user-data that installs it at boot
     (--include merges in any user-data you already use):
       snakemake-batch-flex-host-env userdata --storage-plugin s3 [--include existing.txt] > userdata.mime

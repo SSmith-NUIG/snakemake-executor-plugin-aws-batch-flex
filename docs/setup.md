@@ -152,6 +152,36 @@ each container when its job starts (about 10-15 s per job), which needs internet
 `curl`, `wget` or `pip` in the image (`--aws-batch-flex-install-prereqs` installs `curl` first if
 missing).
 
+Or install the Snakemake env on each instance as it boots, with the stock ECS image and no AMI of
+your own: every new instance then spends about a minute on it before its first job (not yet
+tried on AWS). Make the instances' user-data with it, keeping the plugin's own boot script:
+
+```bash
+snakemake-batch-flex-host-env userdata --storage-plugin s3 \
+  --include terraform/userdata.snakemake.txt > terraform/userdata.mime
+```
+
+and set `userdata_file = "userdata.mime"` and the stock ECS AMI as `ami_id` in `terraform.tfvars`.
+
+## Your own user-data
+
+The instances boot with `terraform/userdata.snakemake.txt`, which sets the ECS agent up for big
+images and for stopping jobs cleanly. To run your own setup at boot as well (a site's agent, a
+mount, a proxy), merge the two rather than replacing ours: `--include` keeps each file as it is
+(a script, a `#cloud-config`, or a multipart document) and packs them into the one document EC2
+takes:
+
+```bash
+snakemake-batch-flex-host-env userdata --storage-plugin s3 \
+  --include terraform/userdata.snakemake.txt --include my-setup.sh > terraform/userdata.mime
+```
+
+That also installs the Snakemake env at boot (see above). On an AMI baked with the same versions
+(made from the same machine, before its Snakemake changed) the installer finds it ready and does
+nothing; otherwise it installs this machine's versions over it, about a minute per instance.
+Then set `userdata_file = "userdata.mime"` in
+`terraform.tfvars`, and `terraform plan` / `apply`.
+
 ## Costs and removing everything
 
 While idle, the only costs are the files in your bucket, the job logs and the stored machine image
