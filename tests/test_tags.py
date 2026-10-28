@@ -62,6 +62,10 @@ def test_tags_reach_submit_job(tmp_path):
     assert a["tags"]["snakemake-run-id"] == b["tags"]["snakemake-run-id"]
     assert a["tags"]["snakemake-job-id"] != b["tags"]["snakemake-job-id"]
     assert a["propagate"] is True
+    # the job definitions get the global tags and ManagedBy (cleanup-jobdefs.sh looks for it)
+    regs = [c for c in calls if c["call"] == "register_job_definition"]
+    assert regs and all(c["tags"] == {"team": "genomics", "project": "rnaseq", "ManagedBy": "snakemake-batch-flex"}
+                        for c in regs)
 
 
 def test_auto_tags_can_be_disabled(tmp_path):
@@ -83,13 +87,6 @@ def test_list_settings_parse_from_cli_and_profile(tmp_path):
     reg = next(c for c in calls if c["call"] == "register_job_definition")
     assert {"sourceVolume": "vol1", "containerPath": "/ref", "readOnly": True} in reg["mounts"]
     assert all(c["tags"]["from"] == "profile" for c in _subs(calls))
-
-
-def test_job_definitions_are_tagged_managed_by(tmp_path):
-    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-tags", "project=x")
-    assert r.returncode == 0, r.stdout + r.stderr
-    regs = [c for c in calls if c["call"] == "register_job_definition"]
-    assert regs and all(c["tags"] == {"project": "x", "ManagedBy": "snakemake-batch-flex"} for c in regs)
 
 
 def test_managed_by_is_on_every_job_even_without_the_automatic_tags():

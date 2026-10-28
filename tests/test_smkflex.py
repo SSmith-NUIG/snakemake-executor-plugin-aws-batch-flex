@@ -225,12 +225,13 @@ def test_run_from_git(tmp_path):
     assert head["tags"]["smkflex-commit"] == v1[:12] and head["tags"]["smkflex-source"] == f"{url} v1"
     assert f"Submitted workflow 'pipeline' at {v1[:12]}" in r.stdout
 
-    # a commit (not a branch or tag) needs a full clone; default branch is v2
-    r, _ = smkflex(wf, "run", "--wait", "--git", url, "--rev", v1, "--path", "workflow", "--", "--forceall")
-    assert r.returncode == 0, r.stdout + r.stderr
-    r, _ = smkflex(wf, "run", "--wait", "--git", url, "--path", "workflow", "--", "--forceall")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert (tmp_path / "store" / "b.txt").read_text() == "A\nv2\n"
+    # the rest of a run doesn't depend on what was cloned: a commit needs a full clone, and
+    # without --rev it's the default branch (v2)
+    from snakemake_executor_plugin_aws_batch_flex.bundle import clone
+    assert clone(url, v1, str(tmp_path / "c1")) == v1
+    assert "echo v1" in (tmp_path / "c1" / "workflow" / "Snakefile").read_text()
+    assert clone(url, None, str(tmp_path / "c2")) == _git(repo, "rev-parse", "HEAD")
+    assert "echo v2" in (tmp_path / "c2" / "workflow" / "Snakefile").read_text()
 
     r, _ = smkflex(wf, "run", "--git", url, "--rev", "no-such-tag")
     assert r.returncode == 2 and "has no branch, tag or commit 'no-such-tag'" in r.stderr

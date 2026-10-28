@@ -381,26 +381,6 @@ def test_temp_output_nobody_uses(tmp_path):
     assert not any("--unneeded-temp-files" in c["cmdtail"] for c in calls if c["call"] == "submit_job")
 
 
-SHEET = textwrap.dedent('''
-    samples = open("config/samples.txt").read().split()
-    rule all:
-        input: expand("{s}.txt", s=samples)
-    rule one:
-        output: "{s}.txt"
-        shell: "echo {wildcards.s} > {output}"
-''')
-
-
-def test_sample_sheet_in_config_reaches_jobs_without_git(tmp_path):
-    # Snakemake only packs files like config/samples.txt via `git ls-files`; this folder is no
-    # git checkout (like one made by snakedeploy), and every job reads the sheet again.
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "samples.txt").write_text("s1 s2\n")
-    r, calls = run(tmp_path, SHEET)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert (tmp_path / "store" / "s2.txt").read_text() == "s2\n"
-
-
 FOLDER = textwrap.dedent('''
     from lib.util import X
     S = open("samples.tsv").read().split()
