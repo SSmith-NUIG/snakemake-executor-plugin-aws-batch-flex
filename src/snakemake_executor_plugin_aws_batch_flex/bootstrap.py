@@ -42,26 +42,7 @@ if [ "$SMK_NEED" = 1 ]; then
     else echo "[snakemake-batch] no known package manager in the image" >&2
     fi
   fi
-  UV=""
-  if command -v uv >/dev/null 2>&1; then
-    UV=uv
-  else
-    if command -v curl >/dev/null 2>&1; then
-      curl -fsSL https://astral.sh/uv/@@UVVER@@/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
-    elif command -v wget >/dev/null 2>&1; then
-      wget -qO- https://astral.sh/uv/@@UVVER@@/install.sh | UV_UNMANAGED_INSTALL="$SMK_BOOT/bin" sh >&2 || true
-    fi
-    if [ -x "$SMK_BOOT/bin/uv" ]; then
-      UV="$SMK_BOOT/bin/uv"
-    else
-      for p in python3 python; do
-        if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$SMK_BOOT/uvlib" uv==@@UVVER@@ >&2; then
-          UV="env PYTHONPATH=$SMK_BOOT/uvlib $p -m uv"
-          break
-        fi
-      done
-    fi
-  fi
+@@UV@@
   if [ -z "$UV" ]; then
     echo "[snakemake-batch] cannot bootstrap: image needs curl, wget, or python3+pip (and internet access)" >&2
     exit 127
@@ -72,6 +53,33 @@ if [ "$SMK_NEED" = 1 ]; then
   python() { "$SMK_PY" "$@"; }
 fi
 """
+
+
+def uv_snippet(bin_dir: str, lib_dir: str) -> str:
+    """Shell that sets UV to a uv to run: the image's own, else version UV_VERSION from its
+    installer (curl or wget; it checks the download's sha256) into bin_dir, else from pip into
+    lib_dir. UV stays empty if none of them worked. For jobs that install Snakemake at start
+    and for the AMI's env (hostenv.py)."""
+    return f"""UV=""
+if command -v uv >/dev/null 2>&1; then
+  UV=uv
+else
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://astral.sh/uv/{UV_VERSION}/install.sh | UV_UNMANAGED_INSTALL="{bin_dir}" sh >&2 || true
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- https://astral.sh/uv/{UV_VERSION}/install.sh | UV_UNMANAGED_INSTALL="{bin_dir}" sh >&2 || true
+  fi
+  if [ -x "{bin_dir}/uv" ]; then
+    UV="{bin_dir}/uv"
+  else
+    for p in python3 python; do
+      if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "{lib_dir}" uv=={UV_VERSION} >&2; then
+        UV="env PYTHONPATH={lib_dir} $p -m uv"
+        break
+      fi
+    done
+  fi
+fi"""
 
 
 WORKDIR = (
@@ -242,7 +250,7 @@ def build_prelude(
         .replace("@@PREREQ@@", "1" if install_prereqs else "0")
         .replace("@@REQS@@", reqs)
         .replace("@@NEWER@@", f"--exclude-newer {shlex.quote(resolved_at)} " if resolved_at else "")
-        .replace("@@UVVER@@", UV_VERSION)
+        .replace("@@UV@@", uv_snippet("$SMK_BOOT/bin", "$SMK_BOOT/uvlib"))
     )
 
 

@@ -20,7 +20,7 @@ from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 
 from .bootstrap import conda_snippet, image_python_snippet, job_tools_source, snakemake_prelude
 from .hints import known_problem_hints
-from .jobdefs import JobDefinitions, describe_existing, mutable_tag, normalize_image
+from .jobdefs import JobDefinitions, describe_existing, log_group_of, mutable_tag, normalize_image
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
 from .patches import keep_unneeded_temp, recheck_s3_directories
@@ -129,11 +129,7 @@ class Executor(RemoteExecutor):
             if s.job_role_arn:
                 e2, w2 = check_role(boto3.client("iam", config=cfg), s.job_role_arn, "Job role")
                 errors, warnings = errors + e2, warnings + w2
-            for w in warnings:
-                self.logger.warning(f"preflight: {w}")
-            if errors:
-                raise WorkflowError("Startup check failed:\n  - " + "\n  - ".join(errors) +
-                                    "\n(skip with --aws-batch-flex-skip-preflight)")
+            self._report_checks(errors, warnings)
         main_platform = self._queue_platform(s.queue)
         self._handle_orphans(s.queue)
         if s.bootstrap == "host" and main_platform == "ec2" and not s.skip_preflight:
@@ -181,13 +177,16 @@ class Executor(RemoteExecutor):
             detected = None
             if not self.settings.skip_preflight:
                 errors, warnings, detected = check_queue(self.batch, queue)
-                for w in warnings:
-                    self.logger.warning(f"preflight: {w}")
-                if errors:
-                    raise WorkflowError("Startup check failed:\n  - " + "\n  - ".join(errors) +
-                                        "\n(skip with --aws-batch-flex-skip-preflight)")
+                self._report_checks(errors, warnings)
             self._platforms[queue] = detected or self.settings.platform or "ec2"
         return self._platforms[queue]
+
+    def _report_checks(self, errors, warnings):
+        for w in warnings:
+            self.logger.warning(f"preflight: {w}")
+        if errors:
+            raise WorkflowError("Startup check failed:\n  - " + "\n  - ".join(errors) +
+                                "\n(skip with --aws-batch-flex-skip-preflight)")
 
     def _handle_orphans(self, queue: str):
         if queue in self._orphans_checked or self.orphan_mode == "ignore" or self.settings.no_auto_tags:
@@ -589,7 +588,7 @@ class Executor(RemoteExecutor):
                        info.aux.get("platform", "ec2"))
         c = d.get("container") or {}
         if c.get("logStreamName") and d.get("status") == "SUCCEEDED":
-            group = (c.get("logConfiguration") or {}).get("options", {}).get("awslogs-group", self.settings.log_group)
+            group = log_group_of(c, self.settings.log_group)
             self.usage.add_log(info.job.name, group, c["logStreamName"])
 
     def shutdown(self):
@@ -660,11 +659,7 @@ class Executor(RemoteExecutor):
                 )
         stream = c.get("logStreamName")
         if stream:
-            group = (
-                c.get("logConfiguration", {})
-                .get("options", {})
-                .get("awslogs-group", self.settings.log_group)
-            )
+            group = log_group_of(c, self.settings.log_group)
             lines.append(f"  CloudWatch: group {group}, stream {stream}")
             try:
                 events = self.cwlogs.get_log_events(

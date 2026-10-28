@@ -12,26 +12,30 @@ def workflow_id(workdir: str, snakefile: str, storage_prefix: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
-def active_jobs(batch, queue: str) -> list:
-    """Every active job in `queue`, described (with its tags and job definition)."""
-    ids = []
-    for status in ACTIVE:
-        token = None
-        while True:
-            kw = dict(jobQueue=queue, jobStatus=status, maxResults=1000)
-            if token:
-                kw["nextToken"] = token
-            resp = batch.list_jobs(**kw)
-            # The summaries have no job definition or tags (despite the API model), so
-            # everything active is described below.
-            ids += [j["jobId"] for j in resp.get("jobSummaryList", [])]
-            token = resp.get("nextToken")
-            if not token:
-                break
-    jobs = []
-    for i in range(0, len(ids), 100):  # describe_jobs takes at most 100
+def list_jobs(batch, **kw) -> list:
+    """The job summaries list_jobs(**kw) gives, from every page."""
+    out, token = [], None
+    while True:
+        resp = batch.list_jobs(**kw, **({"nextToken": token} if token else {}))
+        out += resp.get("jobSummaryList", [])
+        token = resp.get("nextToken")
+        if not token:
+            return out
+
+
+def describe_jobs(batch, ids) -> list:
+    """The jobs described (with their tags and job definition), 100 at a time as Batch takes them."""
+    ids, jobs = list(ids), []
+    for i in range(0, len(ids), 100):
         jobs += batch.describe_jobs(jobs=ids[i : i + 100])["jobs"]
     return jobs
+
+
+def active_jobs(batch, queue: str) -> list:
+    """Every active job in `queue`, described. The summaries have no job definition or tags
+    (despite the API model), so every one is described."""
+    return describe_jobs(batch, [j["jobId"] for status in ACTIVE
+                                 for j in list_jobs(batch, jobQueue=queue, jobStatus=status, maxResults=1000)])
 
 
 def find_orphans(batch, queue: str, jobdef_prefix: str, wf_id: str, run_id: str) -> list:

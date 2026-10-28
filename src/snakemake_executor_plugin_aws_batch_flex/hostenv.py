@@ -25,22 +25,8 @@ if [ -f "$ENV/.ready" ] && [ "$(cat "$ENV/.ready")" = @@STAMP@@ ]; then
 fi
 rm -f "$ENV/.ready"
 export UV_CACHE_DIR="$ENV/.cache" UV_PYTHON_INSTALL_DIR="$ENV/python" UV_PYTHON_PREFERENCE=only-managed
-UV=""
-if command -v uv >/dev/null 2>&1; then UV=uv
-else
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL https://astral.sh/uv/@@UVVER@@/install.sh | UV_UNMANAGED_INSTALL="$ENV/.uv" sh || true
-  fi
-  if [ -x "$ENV/.uv/uv" ]; then UV="$ENV/.uv/uv"
-  else
-    for p in python3 python; do
-      if command -v "$p" >/dev/null 2>&1 && "$p" -m pip install -q --target "$ENV/.uvlib" uv==@@UVVER@@; then
-        UV="env PYTHONPATH=$ENV/.uvlib $p -m uv"; break
-      fi
-    done
-  fi
-fi
-[ -n "$UV" ] || { echo "need curl or python3+pip to install uv" >&2; exit 1; }
+@@UV@@
+[ -n "$UV" ] || { echo "need curl, wget or python3+pip to install uv" >&2; exit 1; }
 $UV python install @@PYVER@@
 $UV venv --clear --python @@PYVER@@ "$ENV/venv"
 # exactly the versions on the machine that made this script (see bootstrap.locked)
@@ -78,7 +64,7 @@ def default_constraints(storage_plugins: list[str]) -> list[str]:
 
 def install_script(env_path: str, python_version: str, requirements: list[str],
                    constraints: list[str] = ()) -> str:
-    from .bootstrap import UV_VERSION
+    from .bootstrap import uv_snippet
 
     stamp = shlex.quote("|".join([python_version, *sorted(requirements), *sorted(constraints)]))
     return (
@@ -87,7 +73,7 @@ def install_script(env_path: str, python_version: str, requirements: list[str],
         .replace("@@PYVER@@", shlex.quote(python_version))
         .replace("@@PINS@@", "\n".join(constraints))
         .replace("@@REQS@@", " ".join(shlex.quote(r) for r in requirements))
-        .replace("@@UVVER@@", UV_VERSION)
+        .replace("@@UV@@", uv_snippet("$ENV/.uv", "$ENV/.uvlib"))
     )
 
 

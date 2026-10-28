@@ -24,9 +24,9 @@ from snakemake_interface_common.exceptions import WorkflowError
 from . import headjob
 from .bundle import _tag, added_files, clone, head_command, local_commit, make_bundle
 from .check import cmd_check
-from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
+from .jobdefs import JobDefinitions, log_group_of
 from .naming import batch_job_name
-from .orphans import active_jobs
+from .orphans import active_jobs, describe_jobs, list_jobs
 from .preflight import check_queue, queue_uses_spot
 from .profiles import Fail, _clients, _load_profile, _Log, workflow_profile_file
 from .settings import from_profile, host_mounts
@@ -185,7 +185,7 @@ def follow(batch, logs, jid, follow_logs):
             last_status = status
         c = d.get("container", {})
         stream = c.get("logStreamName") or stream
-        group = (c.get("logConfiguration", {}).get("options", {}).get("awslogs-group") or DEFAULT_LOG_GROUP)
+        group = log_group_of(c)
         got = 0
         if stream:
             while True:
@@ -262,25 +262,15 @@ def cmd_status(a):
     _dir, profile = _load_profile(a.profile)
     batch, _logs, _r = _clients(profile)
     queue = a.queue or profile.get("aws-batch-flex-queue")
-    rows, token = [], None
-    while True:
-        kw = dict(jobQueue=queue, filters=[{"name": "JOB_NAME", "values": ["smkflex-*"]}])
-        if token:
-            kw["nextToken"] = token
-        resp = batch.list_jobs(**kw)
-        rows += resp.get("jobSummaryList", [])
-        token = resp.get("nextToken")
-        if not token:
-            break
+    if not queue:
+        raise Fail("no queue: set aws-batch-flex-queue in the profile or pass --queue")
+    rows = list_jobs(batch, jobQueue=queue, filters=[{"name": "JOB_NAME", "values": ["smkflex-*"]}])
     rows = sorted(rows, key=lambda j: j.get("createdAt", 0), reverse=True)[:a.limit]
     if not rows:
         print(f"no smkflex runs in queue {queue}")
         return 0
-    # the summaries have no tags; the commit is on the job itself (describe_jobs: 100 at a time)
-    tags = {}
-    for i in range(0, len(rows), 100):
-        for d in batch.describe_jobs(jobs=[j["jobId"] for j in rows[i:i + 100]])["jobs"]:
-            tags[d["jobId"]] = d.get("tags") or {}
+    # the summaries have no tags; the commit is on the job itself
+    tags = {d["jobId"]: d.get("tags") or {} for d in describe_jobs(batch, [j["jobId"] for j in rows])}
     for j in rows:
         when = datetime.fromtimestamp(j.get("createdAt", 0) / 1000).strftime("%Y-%m-%d %H:%M")
         t = tags.get(j["jobId"], {})

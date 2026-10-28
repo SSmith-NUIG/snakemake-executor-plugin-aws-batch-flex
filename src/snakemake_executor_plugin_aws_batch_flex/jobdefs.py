@@ -17,6 +17,11 @@ DEFAULT_LOG_GROUP = "/aws/batch/job"
 FARGATE_PLATFORM = "1.4.0"
 
 
+def log_group_of(container: dict, default: str = DEFAULT_LOG_GROUP) -> str:
+    """The CloudWatch log group of a described job's container: its job definition's, or default."""
+    return ((container.get("logConfiguration") or {}).get("options") or {}).get("awslogs-group") or default
+
+
 def normalize_image(url: str) -> str:
     if url.startswith("docker://"):
         return url[len("docker://") :]
