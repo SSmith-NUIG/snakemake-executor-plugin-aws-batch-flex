@@ -164,19 +164,22 @@ class Usage:
             lines.append(f"  {'total':<{width}}  {total.jobs:>5}  {total.vcpu_h:>8.2f}  {total.gib_h:>8.2f}")
         if self.peaks:
             note = f" (from up to {PEAK_SAMPLE} jobs per rule)" if self.sampled else ""
-            lines.append(f"vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most "
+            lines.append(f"vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once (on EC2 a job can use "
+                         "idle vCPUs of its instance, so this can be more than it had); peak: the most "
                          f"memory its processes used (without file cache); disk GiB: the most its working "
                          f"folder took. Each the highest of the rule's jobs{note}; memory sampled every "
                          f"0.5 s (a shorter spike isn't seen), CPUs every 2 s.")
         tips = self.suggestions(overhead_mib)
         if tips:
-            lines.append("Memory for each rule (its peak + 30%), to paste into the project's "
+            lines.append("Memory for each rule (its peak + 30%; mem_mb leaves out the plugin's own "
+                         f"{overhead_mib} MiB, added on top), to paste into the project's "
                          "profiles/default/config.yaml (smkflex init makes it):")
             lines.append("set-resources:")
             for rule, mb in sorted(tips.items()):
                 had = self.asked.get(rule)
+                gets = int(mb / 1.048576) + overhead_mib  # what the job is given for that, MiB
                 lines += [f"  {rule}:",
-                          f"    mem_mb: {mb:<8}# had {had} MiB, peak {max(self.peaks[rule]):.0f}"]
+                          f"    mem_mb: {mb:<8}# job gets {gets} MiB; had {had}, peak {max(self.peaks[rule]):.0f}"]
         threads = self.thread_suggestions()
         if threads:
             lines.append("Threads for rules that never had most of theirs busy (the most in use at once "

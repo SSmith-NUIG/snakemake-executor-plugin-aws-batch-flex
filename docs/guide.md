@@ -296,13 +296,13 @@ AWS Batch usage of this run (costs: AWS Billing, by the jobs' tags snakemake-run
   star_align      4      0.96      0.32      8    7.6      4071    1840       3.2
   fastp_pe        4      0.08      0.32      4    1.4      4071     310       0.4
   total           8      1.04      0.64
-vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once; peak: the most memory its processes used (without file cache); disk GiB: the most its working folder took. Each the highest of the rule's jobs; memory sampled every 0.5 s (a shorter spike isn't seen), CPUs every 2 s.
-Memory for each rule (its peak + 30%), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
+vCPUs, mem MiB: what a job had; busy: the most vCPUs in use at once (on EC2 a job can use idle vCPUs of its instance, so this can be more than it had); peak: the most memory its processes used (without file cache); disk GiB: the most its working folder took. Each the highest of the rule's jobs; memory sampled every 0.5 s (a shorter spike isn't seen), CPUs every 2 s.
+Memory for each rule (its peak + 30%; mem_mb leaves out the plugin's own 256 MiB, added on top), to paste into the project's profiles/default/config.yaml (smkflex init makes it):
 set-resources:
   fastp_pe:
-    mem_mb: 300     # had 4071 MiB, peak 310
+    mem_mb: 300     # job gets 542 MiB; had 4071, peak 310
   star_align:
-    mem_mb: 2300    # had 4071 MiB, peak 1840
+    mem_mb: 2300    # job gets 2449 MiB; had 4071, peak 1840
 Threads for rules that never had most of theirs busy (the most in use at once + 25%; a burst shorter than 2 s isn't seen, so check the tool first):
 set-threads:
   fastp_pe: 2     # had 4, at most 1.4 busy

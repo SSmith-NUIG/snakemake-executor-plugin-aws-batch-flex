@@ -526,7 +526,7 @@ def test_peak_memory_in_the_table(tmp_path, monkeypatch):
     cols = row.split()
     # vCPUs 4, busy (from the fake cpu.stat: unchanged, so 0), mem 8000 MB -> 7630 MiB + 256, peak 1 GiB
     assert cols[4:8] == ["4", "0.0", "7886", "1024"], row
-    assert "set-resources:\n  make_a:\n    mem_mb: 1200    # had 7886 MiB, peak 1024" in out
+    assert "set-resources:\n  make_a:\n    mem_mb: 1200    # job gets 1400 MiB; had 7886, peak 1024" in out
 
 
 def test_conda_cache_is_set_up_for_jobs(tmp_path):

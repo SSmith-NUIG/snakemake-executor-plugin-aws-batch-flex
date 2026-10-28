@@ -189,7 +189,7 @@ def test_memory_suggestions():
     # big: 1024 * 1.3 -> 1400 MiB container, minus 256 for Snakemake = 1144 MiB = 1200 MB
     assert tips == {"big": 1200, "fine": 3200, "tight": 5100}
     t = u.table(256)
-    assert "set-resources:\n  big:\n    mem_mb: 1200    # had 8448 MiB, peak 1024\n  fine:" in t
+    assert "set-resources:\n  big:\n    mem_mb: 1200    # job gets 1400 MiB; had 8448, peak 1024\n  fine:" in t
     import yaml
     block = t[t.index("set-resources:"):]
     assert yaml.safe_load(block)["set-resources"]["tight"] == {"mem_mb": 5100}  # pastes as YAML
