@@ -452,6 +452,32 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     assert not any(c["call"] == "submit_job" for c in calls)
 
 
+def test_input_only_on_this_machine_says_how_to_upload_it(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "x.txt").write_text("local\n")
+    (tmp_path / "abs").mkdir()
+    (tmp_path / "abs" / "y.txt").write_text("abs\n")
+    snakefile = textwrap.dedent(f'''
+        rule a:
+            input: "data/x.txt", "{tmp_path}/abs/y.txt"
+            output: "a.txt"
+            shell: "cat {{input}} > {{output}}"
+    ''')
+    r, _ = run(tmp_path, snakefile)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and "On this machine but not in storage" in out, out
+    assert f"smkflex push {tmp_path}/abs data" in out
+    # what smkflex push does: the same paths under the prefix (an absolute one without its /)
+    store = tmp_path / "store"
+    (store / "data").mkdir(parents=True)
+    (store / "data" / "x.txt").write_text("local\n")
+    (store / str(tmp_path).lstrip("/") / "abs").mkdir(parents=True)
+    (store / str(tmp_path).lstrip("/") / "abs" / "y.txt").write_text("abs\n")
+    r, _ = run(tmp_path, snakefile)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (store / "a.txt").read_text() == "local\nabs\n"
+
+
 def test_module_from_github(tmp_path):
     # snakedeploy's layout: the pipeline's rules come from GitHub; packing the sources used to
     # crash on their scripts ("not GithubFile")

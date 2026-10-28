@@ -1,6 +1,7 @@
 """Workarounds for bugs in Snakemake and the S3 storage plugin, each limited to what this
 plugin needs. They can go once the bugs are fixed upstream."""
 
+import os
 import re
 
 from snakemake_interface_common.exceptions import WorkflowError
@@ -65,6 +66,57 @@ def skip_remote_module_scripts():
 
 # Snakemake packs the sources before it creates the executor, so this can't wait for it.
 skip_remote_module_scripts()
+
+
+def explain_local_only_inputs():
+    """Snakemake only says "Missing input files ... (in storage)" for an input that is on this
+    machine but was never uploaded (data/, or an absolute path): jobs read their inputs from
+    storage. Say so, with the smkflex push command that uploads it."""
+    try:
+        from snakemake.exceptions import MissingInputException
+    except Exception:
+        return
+    orig = MissingInputException.__init__
+    if getattr(orig, "_smkflex", False):
+        return
+
+    def __init__(self, job, files, *args, **kwargs):
+        orig(self, job, files, *args, **kwargs)
+        try:
+            hint = local_only_hint(job.rule.workflow, files)
+        except Exception:
+            hint = None
+        if hint and self.args:
+            self.args = (self.args[0] + hint, *self.args[1:])
+
+    __init__._smkflex = True
+    MissingInputException.__init__ = __init__
+
+
+def local_only_hint(workflow, files):
+    if getattr(getattr(workflow, "executor_plugin", None), "name", None) != PLUGIN_NAME:
+        return None
+    prefix = str(getattr(workflow.storage_settings, "default_storage_prefix", "") or "").rstrip("/")
+    here = []
+    for f in files:
+        query = getattr(getattr(f, "storage_object", None), "query", None) if getattr(f, "is_storage", False) else None
+        if not prefix or not query or not str(query).startswith(prefix + "/"):
+            continue
+        rel = str(query)[len(prefix) + 1:]
+        # a relative path goes to prefix/path, an absolute one to prefix/path-without-its-/
+        for local in (rel, "/" + rel):
+            if os.path.exists(local):
+                here.append(local)
+                break
+    if not here:
+        return None
+    push = sorted({os.path.dirname(p) if os.path.isabs(p) else p.split("/")[0] for p in here})
+    files_text = ", ".join(here[:5]) + (f" and {len(here) - 5} more" if len(here) > 5 else "")
+    return (f"\n    On this machine but not in storage, where the jobs read their inputs: {files_text}. "
+            f"Upload with: smkflex push {' '.join(push)}")
+
+
+explain_local_only_inputs()
 
 
 def recheck_s3_directories():

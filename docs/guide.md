@@ -399,6 +399,10 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   and `benchmarks/` never go along (jobs read and write those in storage), nor do single files
   over 10 MB or anything outside the folder. So check whether the file is git-ignored,
   big, or outside the folder. Data the workflow reads belongs in its inputs, in storage.
+- **"Missing input files … (in storage)".** Jobs read their inputs from storage, not from your
+  machine, so input data has to be uploaded once: `smkflex push data` (absolute paths too, e.g.
+  `smkflex push /shared/refs`). When the file is on this machine, the message says so and gives
+  the command.
 - **"Every job gets the workflow folder, and it has … MB".** Data sitting in the folder would
   go to every job: add its folders to `.gitignore` (`smkflex init` adds `resources/`), or raise
   `aws-batch-flex-max-sources-mb`.
