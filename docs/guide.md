@@ -193,8 +193,8 @@ returns. Anything after the options goes to Snakemake, e.g. `smkflex run -- --fo
 - Each run records the commit it ran (for a local folder in git, with `-modified` if it had
   uncommitted changes or new files that aren't git-ignored, and `+added` with `--add`);
   `smkflex status` shows it.
-- Snakemake's `.snakemake` records (what was made with which code, unfinished jobs, logs) are
-  saved to the bucket at the end of every run and restored at the start of the next, so reruns
+- Snakemake's `.snakemake` records (what was made with which code, unfinished jobs, logs; also
+  with `--persistence-backend db`) are saved to the bucket at the end of every run and restored at the start of the next, so reruns
   behave as they do on one machine. As with Snakemake's lock on a folder, a project (its
   storage prefix) runs once at a time: a second `smkflex run` while one is going is refused.
   For more samples, add them to the sample sheet and run again once the first run is done or

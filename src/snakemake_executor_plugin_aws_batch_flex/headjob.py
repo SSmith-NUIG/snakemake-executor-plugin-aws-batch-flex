@@ -7,15 +7,19 @@ runs Snakemake on the unpacked workflow, then saves the state for the next run.
 import io
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 
 # The parts of .snakemake that make a rerun behave like one on the same machine: what was
 # made with which code and parameters, and which jobs didn't finish. Conda envs, local
 # copies of storage files and the like are left out.
 STATE_DIRS = ("metadata", "incomplete", "log")
+# The same records with Snakemake's --persistence-backend db (SQLite at its default place)
+DB = os.path.join(".snakemake", "metadata.db")
 SAVE_EVERY = 300  # seconds between saves of the state while Snakemake runs (unchanged: skipped)
 WRAPPER_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 
@@ -69,8 +73,14 @@ def unpack(data, dest):
 
 
 def _state_files():
-    """[(path, stat)] of the state files now; files removed meanwhile (a job ended) are left out."""
+    """[(path, stat)] of the state files now; files removed meanwhile (a job ended) are left out.
+    The database's write-ahead log counts too: recent changes can be only there."""
     out = []
+    for p in (DB, DB + "-wal"):
+        try:
+            out.append((p, os.stat(p)))
+        except OSError:
+            pass
     for d in STATE_DIRS:
         for root, _dirs, names in os.walk(os.path.join(".snakemake", d)):
             for n in names:
@@ -93,16 +103,39 @@ def save_state(url, last=None):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
         for p, st in files:
+            if p == DB + "-wal":
+                continue  # in the snapshot of the database
             try:
-                with open(p, "rb") as f:
-                    data = f.read()
-            except OSError:
+                if p == DB:
+                    data = _db_snapshot()
+                else:
+                    with open(p, "rb") as f:
+                        data = f.read()
+            except (OSError, sqlite3.Error):
                 continue
             info = tarfile.TarInfo(p)
             info.size, info.mtime, info.mode = len(data), int(st.st_mtime), st.st_mode & 0o777
             t.addfile(info, io.BytesIO(data))
     put(url, buf.getvalue())
     return saved
+
+
+def _db_snapshot():
+    """The database as one consistent file, with what's in its write-ahead log, although
+    Snakemake may be writing to it: copying the file itself could catch it halfway."""
+    fd, tmp = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        src, dst = sqlite3.connect(DB), sqlite3.connect(tmp)
+        try:
+            src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
+        with open(tmp, "rb") as f:
+            return f.read()
+    finally:
+        os.remove(tmp)
 
 
 class StateSaver:

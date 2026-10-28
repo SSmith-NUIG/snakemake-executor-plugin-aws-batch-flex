@@ -550,3 +550,40 @@ def test_head_job_saves_state_while_running_and_when_stopped(tmp_path, monkeypat
     assert not saver.thread.is_alive()
     assert sorted(tarfile.open(url).getnames()) == [
         ".snakemake/incomplete/b", ".snakemake/metadata/a", ".snakemake/metadata/c"]
+
+
+def test_head_job_saves_the_sqlite_metadata_while_snakemake_writes_it(tmp_path, monkeypatch):
+    import sqlite3
+    from snakemake_executor_plugin_aws_batch_flex import headjob
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".snakemake").mkdir()
+    db = sqlite3.connect(".snakemake/metadata.db")  # Snakemake, still running, holds it open
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("CREATE TABLE records (target TEXT)")
+    db.executemany("INSERT INTO records VALUES (?)", [("a.txt",), ("b.txt",)])
+    db.commit()  # in the write-ahead log, not yet in metadata.db itself
+    assert (tmp_path / ".snakemake" / "metadata.db-wal").stat().st_size > 0
+    url = str(tmp_path / "store" / "state.tar.gz")
+    headjob.save_state(url)
+    db.close()
+    restored = tmp_path / "next-run"
+    restored.mkdir()
+    headjob.unpack(open(url, "rb").read(), str(restored))
+    names = tarfile.open(url).getnames()
+    assert ".snakemake/metadata.db" in names and not any(n.endswith("-wal") for n in names)
+    got = sqlite3.connect(restored / ".snakemake" / "metadata.db").execute("SELECT target FROM records").fetchall()
+    assert sorted(got) == [("a.txt",), ("b.txt",)]
+
+
+def test_run_with_the_database_backend_keeps_its_records(tmp_path):
+    import sqlite3
+    wf = setup(tmp_path, **{"persistence-backend": "db"})
+    r, _ = smkflex(wf, "run", "--wait")
+    assert r.returncode == 0, r.stdout + r.stderr
+    state = tmp_path / "store" / ".smkflex" / "state.tar.gz"
+    t = tarfile.open(state)
+    assert ".snakemake/metadata.db" in t.getnames()
+    t.extract(".snakemake/metadata.db", tmp_path / "x", filter="data")
+    con = sqlite3.connect(tmp_path / "x" / ".snakemake" / "metadata.db")
+    tables = [n for (n,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    assert sum(con.execute(f'SELECT COUNT(*) FROM "{n}"').fetchone()[0] for n in tables) > 0, tables
