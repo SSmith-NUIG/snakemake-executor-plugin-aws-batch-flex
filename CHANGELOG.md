@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-10-28)
 
 First release. Needs Snakemake 9 (9.5 or newer) and Python 3.11 to 3.13. Tested on Linux; macOS
 should work, and on Windows use WSL.
@@ -23,12 +23,23 @@ should work, and on Windows use WSL.
   missing package or storage plugin, S3 permissions, an image `ENTRYPOINT` in the way)
 * startup checks of the queue, compute environments and roles; jobs left over from an
   interrupted run are cancelled
-* end-of-run table of what each rule used and cost, priced from the EC2 instances the jobs ran
-  on (on-demand or Spot, disks included) or per Fargate job
+* end-of-run table of what each rule used (vCPU- and GiB-hours); costs come from AWS Billing, by
+  the tags `snakemake-run-id` and `snakemake-rule` that every job carries
 * peak memory, busy vCPUs and disk use per rule, with `set-resources:` and `set-threads:`
   suggestions to paste
+* every job gets the whole workflow folder (what git tracks, or all that `.gitignore` doesn't
+  exclude, and `config/`), so scripts that `shell:` runs, imported modules and sample sheets
+  reach it without git; `data/`, `results/`, `logs/` and `benchmarks/` stay behind, and more than
+  100 MB (`max-sources-mb`) stops the run at the start
+* the same Snakemake and package versions in every job, pinned to the AMI's or the local ones
+* a missing input says that jobs read inputs from the bucket, and the `smkflex push` that uploads it
+* runs that can't work stop at the start: a `workdir:` directive, a job command too long for ECS
+* `script:` rules and pandas work in images that bring their own conda libraries (bioconda's)
+* jobs can't use the instances' credentials, and the launcher policy can't register privileged
+  job definitions
 * `smkflex run`: run Snakemake itself on AWS in a head job, from the current folder or a git
-  repository (`--git`, `--rev`, `--path`, `--add`), with `.snakemake` state kept between runs
+  repository (`--git`, `--rev`, `--path`, `--add`), with `.snakemake` state (also with
+  `--persistence-backend db`) kept between runs and saved while it runs; one run per project
 * `smkflex logs`, `status` and `cancel` for those runs
 * `smkflex init`, `push` and `pull`: a project folder in the bucket, uploading inputs and
   downloading results at the paths Snakemake uses
