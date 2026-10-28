@@ -66,7 +66,7 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     # the head job removes the uploaded workflow when it's done
     assert not list((store / ".smkflex" / "runs").glob("*/workflow.tar.gz"))
     import io
-    from snakemake_executor_plugin_aws_batch_flex.remote import make_bundle
+    from snakemake_executor_plugin_aws_batch_flex.bundle import make_bundle
     bundle = io.BytesIO(make_bundle(str(wf), str(wf / "profile"), 100))
     names = tarfile.open(fileobj=bundle).getnames()
     assert "Snakefile" in names and ".smkflex/profile/config.yaml" in names and ".smkflex/head.py" in names
@@ -129,7 +129,7 @@ def test_needs_remote_storage_and_a_head_role(tmp_path):
 
 
 def test_bundle_follows_gitignore(tmp_path):
-    from snakemake_executor_plugin_aws_batch_flex.remote import workflow_files
+    from snakemake_executor_plugin_aws_batch_flex.sources import workflow_files
     (tmp_path / "Snakefile").write_text("")
     (tmp_path / "big.bam").write_text("x")
     (tmp_path / ".gitignore").write_text("*.bam\n")
@@ -239,7 +239,7 @@ def test_run_from_git(tmp_path):
 
 
 def test_local_runs_record_the_commit(tmp_path):
-    from snakemake_executor_plugin_aws_batch_flex.remote import local_commit
+    from snakemake_executor_plugin_aws_batch_flex.bundle import local_commit
     assert local_commit(str(tmp_path)) is None
     (tmp_path / "Snakefile").write_text("x")
     _git(tmp_path, "init", "-q")
@@ -298,7 +298,7 @@ def test_git_with_local_config_added(tmp_path):
 
 def test_add_sends_ignored_files_and_replaces(tmp_path):
     import io
-    from snakemake_executor_plugin_aws_batch_flex.remote import added_files, make_bundle
+    from snakemake_executor_plugin_aws_batch_flex.bundle import added_files, make_bundle
     (tmp_path / "Snakefile").write_text("x")
     (tmp_path / ".gitignore").write_text("samples.tsv\n")
     (tmp_path / "samples.tsv").write_text("s1\n")
@@ -375,7 +375,7 @@ def test_profile_by_name(tmp_path):
 
 
 def test_plain_folder_follows_its_gitignore(tmp_path):
-    from snakemake_executor_plugin_aws_batch_flex.remote import workflow_files
+    from snakemake_executor_plugin_aws_batch_flex.sources import workflow_files
     for f in ("workflow/Snakefile", "config/config.yaml", "data/a.fq", "x.bam", "sub/y.bam", "results/r.txt"):
         (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / f).write_text("")

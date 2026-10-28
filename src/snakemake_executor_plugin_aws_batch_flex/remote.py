@@ -9,267 +9,35 @@ Optional: `snakemake --executor aws-batch-flex` from your own machine works as b
 
 import argparse
 import hashlib
-import io
 import os
 import re
-import shlex
-import subprocess
-import sys
 import shutil
-import tarfile
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
 
-import boto3
 import yaml
-from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 from . import headjob
-from .bootstrap import conda_snippet, snakemake_prelude
+from .bundle import _tag, added_files, clone, head_command, local_commit, make_bundle
+from .check import cmd_check
 from .jobdefs import DEFAULT_LOG_GROUP, JobDefinitions
 from .naming import batch_job_name
 from .orphans import active_jobs
-from .preflight import ami_snakemake_version, check_queue, check_role, queue_uses_spot, version_note
+from .preflight import check_queue, queue_uses_spot
+from .profiles import Fail, _clients, _load_profile, _Log, workflow_profile_file
 from .settings import from_profile, host_mounts
-from .sources import SKIP_DIRS, workflow_files
 from .sizing import fargate_size
 from .tags import MANAGED_BY
+from .transfer import cmd_pull, cmd_push
 
 HEAD_IMAGE = "buildpack-deps:bookworm-scm"
-
-# Runs in the head job before anything else: fetch and unpack the bundle. Kept small, since
-# everything sent with a job must fit in 8192 characters.
-_FETCH = (
-    "import io,sys,tarfile\n"
-    "u,d=sys.argv[1],sys.argv[2]\n"
-    "if u.startswith('s3://'):\n"
-    " import boto3;b,_,k=u[5:].partition('/')\n"
-    " data=boto3.client('s3').get_object(Bucket=b,Key=k)['Body'].read()\n"
-    "else:\n"
-    " data=open(u,'rb').read()\n"
-    "t=tarfile.open(fileobj=io.BytesIO(data))\n"
-    "t.extractall(d,**({'filter':'data'} if hasattr(tarfile,'data_filter') else {}))\n"
-)
-
-
-class Fail(Exception):
-    pass
-
-
-class _Log:
-    def info(self, msg):
-        print(msg, file=sys.stderr)
-
-    warning = info
-
-
-def workflow_profile_file(create=False):
-    """The project's workflow profile, as Snakemake finds it when started here: the first of
-    default/, profiles/default/ and (next to workflow/Snakefile) workflow/profiles/default/ that
-    exists. With create, profiles/default/config.yaml when there's none (Snakemake reads that
-    for a Snakefile at the top or in workflow/)."""
-    candidates = ["default", os.path.join("profiles", "default")]
-    if os.path.isfile(os.path.join("workflow", "Snakefile")):
-        candidates.append(os.path.join("workflow", "profiles", "default"))
-    for d in candidates:
-        if os.path.isdir(d):
-            for name in ("profile.yaml", "config.yaml"):
-                if os.path.isfile(os.path.join(d, name)):
-                    return os.path.join(d, name)
-            return os.path.join(d, "config.yaml")
-    return os.path.join("profiles", "default", "config.yaml") if create else None
-
-
-def _only_installed_profile():
-    """The name of the one profile in ~/.config/snakemake that uses this plugin, if there is
-    exactly one (setup.sh installs it there)."""
-    base = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "snakemake")
-    names = []
-    try:
-        entries = sorted(os.listdir(base))
-    except OSError:
-        return None
-    for n in entries:
-        for f in ("profile.yaml", "config.yaml"):
-            cfg = os.path.join(base, n, f)
-            if os.path.isfile(cfg):
-                try:
-                    with open(cfg) as fh:
-                        if (yaml.safe_load(fh) or {}).get("executor") == "aws-batch-flex":
-                            names.append(n)
-                except (OSError, yaml.YAMLError):
-                    pass
-                break
-    if len(names) == 1:
-        print(f"(using profile {names[0]} from {base})", file=sys.stderr)
-        return names[0]
-    if names:
-        raise Fail(f"there are {len(names)} profiles for this plugin in {base} ({', '.join(names)}): "
-                   f"say which with --profile {names[0]} (or export SNAKEMAKE_PROFILE={names[0]})")
-    return None
-
-
-def _load_profile(path):
-    """(profile folder, settings) for --profile: a folder, or a name that Snakemake looks up in
-    ~/.config/snakemake/ (as `snakemake --profile NAME` does). Default: ./profile, then
-    $SNAKEMAKE_PROFILE."""
-    if path is None:
-        path = "profile" if os.path.isdir("profile") else os.environ.get("SNAKEMAKE_PROFILE")
-    if not path:
-        path = _only_installed_profile()
-    if not path:
-        raise Fail("no profile: pass --profile (a folder with config.yaml, or a profile name)")
-    found = None
-    try:
-        from snakemake.cli import get_profile_dir
-
-        found = get_profile_dir(path)
-    except ImportError:
-        cfg = os.path.join(path, "config.yaml")
-        found = (path, cfg) if os.path.isfile(cfg) else None
-    if not found:
-        raise Fail(f"profile {path} not found (looked for a folder with config.yaml or profile.yaml "
-                   "here and in ~/.config/snakemake/)")
-    folder, cfg = found
-    with open(cfg) as f:
-        settings = yaml.safe_load(f) or {}
-    # The project's own workflow profile, which Snakemake loads on top (e.g. its storage prefix)
-    wp = workflow_profile_file()
-    if wp and os.path.isfile(wp):
-        with open(wp) as f:
-            settings.update(yaml.safe_load(f) or {})
-    return str(folder), settings
-
-
-def _clients(profile):
-    cfg = BotoConfig(region_name=profile.get("aws-batch-flex-region"),
-                     retries={"max_attempts": 10, "mode": "adaptive"})
-    return boto3.client("batch", config=cfg), boto3.client("logs", config=cfg), cfg.region_name
-
-
-def added_files(paths, base="."):
-    """{path in the bundle: local file} for --add: files, or every file in a folder, given
-    relative to `base` (the current folder) and sent to the same place."""
-    out = {}
-    for p in paths:
-        norm = os.path.normpath(p)
-        if os.path.isabs(p) or norm == ".." or norm.startswith(".." + os.sep):
-            raise Fail(f"--add {p}: give a path inside this folder (it's sent to the same place)")
-        full = os.path.join(base, norm)
-        if os.path.isfile(full):
-            out[norm] = full
-        elif os.path.isdir(full):
-            for d, dirs, names in os.walk(full):
-                dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-                for n in names:
-                    f = os.path.join(d, n)
-                    out[os.path.relpath(f, base)] = f
-        else:
-            raise Fail(f"--add {p}: no such file or folder here")
-    return out
-
-
-def make_bundle(root, profile_dir, max_mb, extra=None):
-    """The workflow folder `root` as a tar.gz, with `extra` ({path in the bundle: local file})
-    laid over it, plus the profile, this plugin and the head job's script."""
-    buf = io.BytesIO()
-    total = 0
-    sources = {f: os.path.join(root, f) for f in workflow_files(root)}
-    sources.update(extra or {})
-    files = sorted(sources)
-    with tarfile.open(fileobj=buf, mode="w:gz") as t:
-        for f in files:
-            total += os.path.getsize(sources[f])
-            if total > max_mb * 1024 * 1024:
-                raise Fail(f"the workflow folder has more than {max_mb} MB of files (at {f}); data "
-                           "belongs in storage. Add big files to .gitignore, or raise --max-bundle-mb.")
-            t.add(sources[f], arcname=f)
-        # what `git ls-files` would say, for the head job's stand-in git
-        listing = "".join(f + "\n" for f in files).encode()
-        info = tarfile.TarInfo(".smkflex/files.txt")
-        info.size = len(listing)
-        t.addfile(info, io.BytesIO(listing))
-        for d, dirs, names in os.walk(profile_dir):
-            dirs[:] = [x for x in dirs if x != "__pycache__"]
-            for n in names:
-                p = os.path.join(d, n)
-                t.add(p, arcname=os.path.join(".smkflex", "profile", os.path.relpath(p, profile_dir)))
-        # this plugin as installed here, so the head job runs the same version
-        pkg = os.path.dirname(os.path.abspath(__file__))
-        for n in sorted(os.listdir(pkg)):
-            if n.endswith(".py"):
-                t.add(os.path.join(pkg, n), arcname=f".smkflex/site/{os.path.basename(pkg)}/{n}")
-        t.add(headjob.__file__, arcname=".smkflex/head.py")
-    return buf.getvalue()
 
 
 def _active_heads(batch, queue, state_key):
     return [d["jobId"] for d in active_jobs(batch, queue) if (d.get("tags") or {}).get("smkflex-state") == state_key]
-
-
-def head_command(profile, platform, bundle_url, state_url, snakemake_args):
-    s = from_profile(profile)
-    mode = "auto" if s.bootstrap == "host" and platform == "fargate" else s.bootstrap
-    resolved_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    prelude = snakemake_prelude(s, mode, profile.get("default-storage-provider"), resolved_at)
-    if s.conda_path and platform == "ec2":
-        prelude += "\n" + conda_snippet(s.conda_path)
-    args = " ".join(shlex.quote(a) for a in snakemake_args)
-    return (
-        f"{prelude}\n"
-        'SMKFLEX_DIR="${TMPDIR:-/tmp}/smkflex-workflow"; rm -rf "$SMKFLEX_DIR"; mkdir -p "$SMKFLEX_DIR"\n'
-        'SMKFLEX_PY="${SMK_PY:-python}"\n'
-        f'"$SMKFLEX_PY" -c {shlex.quote(_FETCH)} {shlex.quote(bundle_url)} "$SMKFLEX_DIR"\n'
-        'cd "$SMKFLEX_DIR"\n'
-        f'exec "$SMKFLEX_PY" .smkflex/head.py {shlex.quote(state_url)} {args}\n'
-    )
-
-
-def _git(*args, cwd=None):
-    try:
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
-    except FileNotFoundError:
-        raise Fail("git isn't installed here; it's needed for --git") from None
-    except subprocess.CalledProcessError as e:
-        raise Fail(f"git {' '.join(args[:2])} failed: {(e.stderr or e.stdout).strip()}") from None
-
-
-def clone(url, rev, dest):
-    """Shallow clone of `rev` (branch, tag; default: the default branch), or a full clone
-    when it's a commit. Returns the commit."""
-    opts = ["--quiet", "--recurse-submodules", "--shallow-submodules"]
-    try:
-        _git("clone", *opts, "--depth", "1", *(["--branch", rev] if rev else []), url, dest)
-    except Fail:
-        if not rev:
-            raise
-        shutil.rmtree(dest, ignore_errors=True)
-        _git("clone", "--quiet", "--recurse-submodules", url, dest)
-        try:
-            _git("checkout", "--quiet", rev, cwd=dest)
-        except Fail:
-            raise Fail(f"{url} has no branch, tag or commit '{rev}'") from None
-        _git("submodule", "update", "--quiet", "--init", "--recursive", cwd=dest)
-    return _git("rev-parse", "HEAD", cwd=dest)
-
-
-def local_commit(root):
-    """The commit of a local git checkout, with -modified if it has uncommitted changes,
-    including new files that aren't git-ignored (the bundle sends those too)."""
-    try:
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "."], cwd=root,
-                               capture_output=True, text=True, check=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return sha[:12] + ("-modified" if dirty else "")
-
-
-def _tag(value):
-    return re.sub(r"[^A-Za-z0-9 _.:/=+\-@]", "_", str(value))[:256]
-
 
 def _check_snakemake_args(args):
     """Fail on options Snakemake doesn't know (a typo in an smkflex option such as --wiat
@@ -286,7 +54,6 @@ def _check_snakemake_args(args):
     if unknown:
         raise Fail(f"neither smkflex run nor snakemake has the option(s) {' '.join(unknown)} "
                    "(see smkflex run --help and snakemake --help)")
-
 
 def cmd_run(a, snakemake_args):
     _check_snakemake_args(snakemake_args)
@@ -318,7 +85,6 @@ def cmd_run(a, snakemake_args):
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
-
 
 def _run(a, snakemake_args, root, source, default_name, extra=None):
     profile_dir, profile = _load_profile(a.profile)
@@ -402,7 +168,6 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
     print(f"  follow it:  smkflex logs {jid} --follow\n  cancel it:  smkflex cancel {jid}")
     return 0
 
-
 def follow(batch, logs, jid, follow_logs):
     """Print the head job's log (until it ends, with follow_logs). Returns 0 if it succeeded."""
     token, last_status, group, stream = None, None, None, None
@@ -458,7 +223,6 @@ def follow(batch, logs, jid, follow_logs):
         if not got:
             time.sleep(5)
 
-
 def _job_clients(a):
     """Clients for commands that only need a job ID: the profile (as the other commands find
     it) for the region, else the AWS config's; --region overrides both."""
@@ -472,11 +236,9 @@ def _job_clients(a):
         profile["aws-batch-flex-region"] = a.region
     return _clients(profile)
 
-
 def cmd_logs(a):
     batch, logs, _r = _job_clients(a)
     return follow(batch, logs, a.job_id, a.follow)
-
 
 def cmd_cancel(a):
     batch, _logs, _r = _job_clients(a)
@@ -494,7 +256,6 @@ def cmd_cancel(a):
     else:
         print(f"Cancelled head job {a.job_id} before it started ({status}); no jobs were submitted.")
     return 0
-
 
 def cmd_status(a):
     _dir, profile = _load_profile(a.profile)
@@ -528,127 +289,7 @@ def cmd_status(a):
         print(f"{j['jobId']}  {j.get('status', ''):<9}  {when}  {what}")
     return 0
 
-
-def _remote_files(prefix, path, s3):
-    """(relative path, size, modification time) of the files under prefix/path, in storage."""
-    path = path.strip("/")
-    if prefix.startswith("s3://"):
-        bucket, _, base = prefix[len("s3://"):].partition("/")
-        base = base.strip("/")
-        key = f"{base}/{path}" if base else path
-        out = []
-        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key):
-            for o in page.get("Contents", []):
-                rel = o["Key"][len(base) + 1:] if base else o["Key"]
-                # "results" must not also match "results2/..."
-                if rel == path or rel.startswith(path + "/") or not path:
-                    out.append((rel, o["Size"], o["LastModified"].timestamp()))
-        return out
-    root = os.path.join(prefix, path)
-    if os.path.isfile(root):
-        return [(path, os.path.getsize(root), os.path.getmtime(root))]
-    out = []
-    for d, _dirs, names in os.walk(root):
-        for n in names:
-            full = os.path.join(d, n)
-            out.append((os.path.relpath(full, prefix), os.path.getsize(full), os.path.getmtime(full)))
-    return sorted(out)
-
-
-def _same(size, mtime, other_size, other_mtime):
-    """A copy is up to date if it has the same size and was made after the original last
-    changed, as `aws s3 sync` decides (a copy's time is when it was copied)."""
-    return other_size == size and other_mtime >= mtime
-
-
-def _bucket_key(prefix, rel):
-    """(bucket, key) of the file at `rel` under an s3:// prefix."""
-    bucket, _, base = prefix[len("s3://"):].partition("/")
-    base = base.strip("/")
-    return bucket, f"{base}/{rel}" if base else rel
-
-
-TRANSFER_THREADS = 16  # files at once; big files are also split into parallel parts by boto3
-
-
-def _storage_path(path):
-    """Where Snakemake puts a workflow path in storage, relative to the prefix: as it is, or
-    for an absolute path without its leading /."""
-    norm = os.path.normpath(path)
-    if norm == ".." or norm.startswith(".." + os.sep):
-        raise Fail(f"{path}: Snakemake can't map paths outside the workflow folder to storage; "
-                   "use the path the workflow names (relative, or absolute like /shared/refs)")
-    return norm.lstrip("/") if os.path.isabs(norm) else norm
-
-
-def _transfer(jobs, work, verb):
-    """Run work(item) for every item, TRANSFER_THREADS at a time; prints each as it finishes."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    done = total = 0
-    start = time.time()
-    with ThreadPoolExecutor(TRANSFER_THREADS) as pool:
-        futures = {pool.submit(work, item): item for item in jobs}
-        for f in as_completed(futures):
-            name, size = futures[f][0], futures[f][-1]
-            f.result()  # re-raises the first error
-            done += 1
-            total += size
-            print(f"{verb} {name}")
-    secs = max(time.time() - start, 0.001)
-    return done, total, secs
-
-
-def _rate(total, secs):
-    mb = total / 1e6
-    return f"{mb:.1f} MB in {secs:.0f} s ({mb / secs:.1f} MB/s)" if total else ""
-
-
-def cmd_pull(a):
-    _dir, profile = _load_profile(a.profile)
-    prefix = str(a.prefix or profile.get("default-storage-prefix") or "").rstrip("/")
-    if not prefix:
-        raise Fail("no default-storage-prefix in the profile")
-    region = profile.get("aws-batch-flex-region")
-    s3 = boto3.client("s3", config=BotoConfig(region_name=region, max_pool_connections=TRANSFER_THREADS * 2)) \
-        if prefix.startswith("s3://") else None
-    if not a.paths:
-        tops = sorted({rel.split("/")[0] for rel, *_ in _remote_files(prefix, "", s3)
-                       if not rel.startswith((".smkflex/", "snakemake-workflow-sources."))})
-        raise Fail("say what to download, e.g. `smkflex pull results`. In storage: " + (", ".join(tops) or "nothing"))
-    todo, skipped = [], 0
-    for path in a.paths:
-        files = _remote_files(prefix, _storage_path(path), s3)
-        if not files:
-            print(f"nothing in storage under {path}", file=sys.stderr)
-        for rel, size, mtime in files:
-            dest = os.path.join(a.to, rel)
-            if not a.force and os.path.isfile(dest) and _same(size, mtime, os.path.getsize(dest), os.path.getmtime(dest)):
-                skipped += 1
-                continue
-            if a.dry_run:
-                print(f"would download {rel} ({size} bytes)")
-                continue
-            todo.append((rel, dest, size))
-
-    def get(item):
-        rel, dest, _size = item
-        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-        if s3:
-            s3.download_file(*_bucket_key(prefix, rel), dest)
-        else:
-            shutil.copyfile(os.path.join(prefix, rel), dest)
-
-    if not a.dry_run:
-        got, total, secs = _transfer(todo, get, "downloaded")
-        rate = _rate(total, secs)
-        print(f"{got} downloaded" + (f" ({rate})" if rate else "")
-              + (f", {skipped} already here (unchanged; --force downloads them again)" if skipped else ""))
-    return 0
-
-
 IGNORE_LINES = ("data/", "results/", "resources/", "logs/", ".snakemake/")
-
 
 def cmd_init(a):
     """Set up this folder as a project: its own folder in the bucket (in the workflow profile
@@ -693,196 +334,6 @@ def cmd_init(a):
           "  smkflex push data          upload input files (data/ here, as the sample sheets name them)\n"
           "  snakemake --profile " + os.path.basename(_dir.rstrip("/")) + "     or: smkflex run")
     return 0
-
-
-def cmd_push(a):
-    """Upload local input files to where the workflow's rules look for them in storage: a
-    relative path to the same path under the prefix, an absolute one (/shared/refs) to
-    prefix/shared/refs, as Snakemake maps them."""
-    _dir, profile = _load_profile(a.profile)
-    prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
-    if a.prefix:
-        prefix = a.prefix.rstrip("/")
-    if not prefix:
-        raise Fail("no default-storage-prefix in the profile")
-    files = {}
-    for path in a.paths:
-        target = _storage_path(path)
-        if not os.path.exists(path):
-            raise Fail(f"{path}: no such file or folder")
-        if os.path.isfile(path):
-            files[target] = path
-            continue
-        for d, dirs, names in os.walk(path):
-            dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-            for n in names:
-                local = os.path.join(d, n)
-                files[os.path.normpath(os.path.join(target, os.path.relpath(local, path)))] = local
-    s3 = boto3.client("s3", config=BotoConfig(region_name=profile.get("aws-batch-flex-region"),
-                                              max_pool_connections=TRANSFER_THREADS * 2)) \
-        if prefix.startswith("s3://") else None
-    there = {}
-    for top in {f.split("/")[0] for f in files}:
-        there.update({rel: (size, mtime) for rel, size, mtime in _remote_files(prefix, top, s3)})
-    todo, skipped = [], 0
-    for rel, local in sorted(files.items()):
-        size = os.path.getsize(local)
-        if not a.force and rel in there and _same(size, os.path.getmtime(local), *there[rel]):
-            skipped += 1
-            continue
-        if a.dry_run:
-            print(f"would upload {rel} ({size} bytes)")
-            continue
-        todo.append((rel, local, size))
-
-    def put(item):
-        rel, local, _size = item
-        if s3:
-            s3.upload_file(local, *_bucket_key(prefix, rel))
-        else:
-            os.makedirs(os.path.dirname(os.path.join(prefix, rel)), exist_ok=True)
-            shutil.copyfile(local, os.path.join(prefix, rel))
-
-    if not a.dry_run:
-        sent, total, secs = _transfer(todo, put, "uploaded")
-        rate = _rate(total, secs)
-        print(f"{sent} uploaded to {prefix}" + (f" ({rate})" if rate else "")
-              + (f", {skipped} already there (unchanged; --force sends them again)" if skipped else ""))
-        _hint_gitignore([p for p in a.paths if not os.path.isabs(p)])
-    return 0
-
-
-def _hint_gitignore(paths):
-    """Data uploaded with push reaches the jobs through storage; if smkflex run would also
-    pack it with the workflow, say how to leave it out."""
-    if not paths:
-        return
-    sent = set(workflow_files("."))
-    tops = sorted({os.path.normpath(p).split(os.sep)[0] for p in paths
-                   if any(f == os.path.normpath(p) or f.startswith(os.path.normpath(p) + "/") for f in sent)})
-    if tops:
-        lines = "".join(f"{t}/\n" if os.path.isdir(t) else f"{t}\n" for t in tops)
-        print(f"\nNote: smkflex run would also send {', '.join(tops)} with the workflow (it doesn't need to: the "
-              f"jobs read it from storage). To leave it out, add to .gitignore:\n{lines}", end="")
-
-
-def cmd_check(a):
-    """Check the setup from this machine, one line per check, with what to do about failures."""
-    results = []
-
-    def report(level, what, fix=""):
-        results.append(level)
-        mark = {"ok": "  ok  ", "warn": " warn ", "fail": " FAIL "}[level]
-        print(f"[{mark}] {what}" + (f"\n         -> {fix}" if fix else ""))
-
-    try:
-        profile_dir, profile = _load_profile(a.profile)
-    except Fail as e:
-        report("fail", f"profile: {e}", "run this in your workflow folder, or pass --profile DIR")
-        return 1
-    report("ok", f"profile {profile_dir}")
-    if profile.get("executor") != "aws-batch-flex":
-        report("warn", f"the profile's executor is {profile.get('executor')!r}, not aws-batch-flex",
-               "add `executor: aws-batch-flex`, or pass --executor aws-batch-flex to snakemake")
-
-    import importlib.metadata as md
-    try:
-        local = md.version("snakemake")
-        report("ok", f"Snakemake {local} installed here")
-    except md.PackageNotFoundError:
-        local = None
-        report("fail", "Snakemake isn't installed here", "pip install snakemake")
-    provider = profile.get("default-storage-provider")
-    prefix = str(profile.get("default-storage-prefix") or "").rstrip("/")
-    if not provider or provider == "local" or not prefix:
-        report("fail", "no remote storage in the profile",
-               "set default-storage-provider: s3 and default-storage-prefix: s3://BUCKET/PREFIX")
-    else:
-        try:
-            md.version(f"snakemake-storage-plugin-{provider}")
-            report("ok", f"storage plugin {provider} installed here")
-        except md.PackageNotFoundError:
-            report("fail", f"snakemake-storage-plugin-{provider} isn't installed here",
-                   f"pip install snakemake-storage-plugin-{provider}")
-
-    region = profile.get("aws-batch-flex-region")
-    cfg = BotoConfig(region_name=region, retries={"max_attempts": 3})
-    try:
-        who = boto3.client("sts", config=cfg).get_caller_identity()["Arn"]
-        report("ok", f"AWS login: {who}")
-    except (ClientError, BotoCoreError) as e:
-        report("fail", f"AWS login: {e}", "run `aws configure` (or `aws sso login`), or set AWS_PROFILE")
-        return 1
-    batch = boto3.client("batch", config=cfg)
-    region = batch.meta.region_name if hasattr(batch, "meta") else region
-    if not region:
-        report("fail", "no AWS region", "set aws-batch-flex-region in the profile")
-        return 1
-
-    queue = profile.get("aws-batch-flex-queue")
-    platform, queue_ok = None, False
-    if not queue:
-        report("fail", "no queue in the profile", "set aws-batch-flex-queue (Terraform prints it as queue_name)")
-    else:
-        errors, warnings, detected = check_queue(batch, queue, profile.get("aws-batch-flex-platform"))
-        platform = profile.get("aws-batch-flex-platform") or detected or "ec2"
-        for e in errors:
-            report("fail", f"queue: {e}")
-        for w in warnings:
-            report("warn", f"queue: {w}")
-        queue_ok = not errors
-        if not errors:
-            spot = " (Spot)" if queue_uses_spot(batch, queue) else ""
-            report("ok", f"queue {queue} in {region}: enabled, {platform.upper()}{spot}")
-
-    iam = boto3.client("iam", config=cfg)
-    for key, label in (("aws-batch-flex-job-role-arn", "job role"), ("aws-batch-flex-head-role-arn", "head role"),
-                       ("aws-batch-flex-execution-role-arn", "execution role")):
-        arn = profile.get(key)
-        if arn:
-            errors, _w = check_role(iam, arn, label.capitalize())
-            if errors:
-                report("fail", errors[0], f"check {key} in the profile (Terraform prints the right one)")
-            else:
-                report("ok", f"{label} {arn.rsplit('/', 1)[-1]}")
-    if not profile.get("aws-batch-flex-job-role-arn") and platform == "fargate":
-        report("fail", "Fargate jobs need a job role (there's no instance role to reach storage with)",
-               "set aws-batch-flex-job-role-arn")
-    if platform == "fargate" and not profile.get("aws-batch-flex-execution-role-arn"):
-        report("fail", "Fargate needs an execution role", "set aws-batch-flex-execution-role-arn")
-    if not profile.get("aws-batch-flex-head-role-arn"):
-        report("warn", "no aws-batch-flex-head-role-arn: fine for snakemake, but smkflex run needs it",
-               "add the head_role_arn that Terraform prints")
-
-    if prefix and provider and provider != "local":
-        probe = f"{prefix}/.smkflex/check-{os.getpid()}"
-        try:
-            headjob.put(probe, b"smkflex check")
-            ok = headjob.get(probe) == b"smkflex check"
-            if probe.startswith("s3://"):
-                s3, bucket, key = headjob._s3(probe)
-                s3.delete_object(Bucket=bucket, Key=key)
-            else:
-                os.remove(probe)
-            report("ok" if ok else "fail", f"storage {prefix}: write, read, delete")
-        except (ClientError, BotoCoreError, OSError) as e:
-            report("fail", f"storage {prefix}: {e}",
-                   "check the bucket name and that your AWS login may read and write under the prefix")
-
-    if queue_ok and platform == "ec2" and profile.get("aws-batch-flex-bootstrap") == "host" and local:
-        ami = ami_snakemake_version(batch, boto3.client("ec2", config=cfg), queue)
-        level, note = version_note(ami, local)
-        if not ami:
-            report("warn", "couldn't find the AMI's Snakemake version (an older AMI, or no ec2:Describe* permission)")
-        elif level == "warning":
-            report("warn", note, f"pip install snakemake=={ami}, or bake a new AMI")
-        else:
-            report("ok", f"the AMI has Snakemake {ami}" + (f" (here: {local}; known to work together)" if level else ""))
-
-    fails, warns = results.count("fail"), results.count("warn")
-    print(f"\n{fails} problem(s), {warns} warning(s)." if fails or warns else "\nAll good.")
-    return 1 if fails else 0
-
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="smkflex", description=__doc__.split("\n\n")[0])
