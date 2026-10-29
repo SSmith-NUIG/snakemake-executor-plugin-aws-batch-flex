@@ -83,8 +83,10 @@ class Usage:
         todo = []
         for rule, streams in self.logs.items():
             if total > ALL_PEAKS and len(streams) > PEAK_SAMPLE:
+                # spread over the run: a rule's biggest inputs aren't always its last jobs
                 self.sampled = True
-                streams = streams[-PEAK_SAMPLE:]
+                step = len(streams) / PEAK_SAMPLE
+                streams = [streams[int(i * step)] for i in range(PEAK_SAMPLE)]
             todo += [(rule, g, st) for g, st in streams]
 
         def one(item):

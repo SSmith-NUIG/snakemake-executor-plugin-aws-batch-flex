@@ -316,6 +316,24 @@ def test_rules_whose_jobs_ran_out_get_no_memory_suggestion(tmp_path, monkeypatch
     assert "Hint: in killed's jobs, Linux killed 2 process(es) for lack of memory" in u.table(256)
 
 
+def test_big_runs_sample_jobs_from_the_whole_run():
+    from snakemake_executor_plugin_aws_batch_flex import usage
+    u = usage.Usage()
+    for i in range(usage.ALL_PEAKS + 100):  # the first jobs took the most memory
+        u.add("align", {"startedAt": 0, "stoppedAt": 1000}, 1, 4352, "ec2")
+        u.add_log("align", "g", str(i))
+    client = types.SimpleNamespace(get_log_events=lambda logGroupName, logStreamName, **kw: {
+        "events": [{"message": f"[snakemake-batch] peak-memory-bytes={(4000 - int(logStreamName)) << 20}"}]})
+    u.fetch_peaks(client)
+    assert len(u.peaks["align"]) == usage.PEAK_SAMPLE and max(u.peaks["align"]) == 4000
+
+
+def test_transfer_sizes():
+    from snakemake_executor_plugin_aws_batch_flex.transfer import _rate
+    assert (_rate(0, 1), _rate(12, 0.01), _rate(4300, 0.01)) == ("", "12 bytes", "4.3 kB")
+    assert _rate(250_000_000, 10) == "250.0 MB in 10 s (25.0 MB/s)"
+
+
 def test_hint_for_a_script_that_wasnt_sent():
     from snakemake_executor_plugin_aws_batch_flex.hints import known_problem_hints as hints
     py = ["python: can't open file '/tmp/snakemake-job-7/scripts/synthetic/gen.py': [Errno 2] No such file or directory"]
