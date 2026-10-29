@@ -21,3 +21,4 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+examples/pipelines/results.tsv
