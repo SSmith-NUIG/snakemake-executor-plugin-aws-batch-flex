@@ -70,20 +70,29 @@ else
 fi"""
 
 
-# Installs curl (for uv) in an image without curl, wget or pip: only with install_prereqs
+# For an image without curl, wget or pip (only with install_prereqs): uv from the image's own
+# conda, mamba or micromamba into $SMK_BOOT, which works as any user and leaves the image's
+# environments alone; else curl from its package manager, which needs root
 _PREREQS = r'''
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1 \
      && ! { command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; }; then
-    echo "[snakemake-batch] no curl/wget/pip in the image: installing curl, ca-certificates and bash" >&2
-    if [ "$(id -u)" != 0 ]; then
-      echo "[snakemake-batch] cannot install prerequisites: the image runs as a non-root user" >&2
-    elif command -v apt-get >/dev/null 2>&1; then
-      apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends curl ca-certificates bash >&2 || true
-    elif command -v apk >/dev/null 2>&1; then apk add -q --no-cache curl ca-certificates bash >&2 || true
-    elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates bash >&2 || true
-    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y curl ca-certificates bash >&2 || true
-    elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates bash >&2 || true
-    else echo "[snakemake-batch] no known package manager in the image" >&2
+    SMK_CONDA=$(command -v micromamba || command -v mamba || command -v conda || true)
+    if [ -n "$SMK_CONDA" ]; then
+      echo "[snakemake-batch] no curl/wget/pip in the image: getting uv with its $SMK_CONDA" >&2
+      CONDA_PKGS_DIRS="$SMK_BOOT/pkgs" "$SMK_CONDA" create -y -q -p "$SMK_BOOT/uvenv" -c conda-forge "uv=@@UVVER@@" >&2 \
+        && mkdir -p "$SMK_BOOT/bin" && ln -sf "$SMK_BOOT/uvenv/bin/uv" "$SMK_BOOT/bin/uv" || true
+    elif [ "$(id -u)" != 0 ]; then
+      echo "[snakemake-batch] no curl/wget/pip/conda in the image, and it runs as a non-root user, so none can be installed. Add curl to the image (or USER root), or run the rule on EC2 (batch_queue), where Snakemake comes from the AMI" >&2
+    else
+      echo "[snakemake-batch] no curl/wget/pip in the image: installing curl, ca-certificates and bash" >&2
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends curl ca-certificates bash >&2 || true
+      elif command -v apk >/dev/null 2>&1; then apk add -q --no-cache curl ca-certificates bash >&2 || true
+      elif command -v dnf >/dev/null 2>&1; then dnf install -y -q curl ca-certificates bash >&2 || true
+      elif command -v microdnf >/dev/null 2>&1; then microdnf install -y curl ca-certificates bash >&2 || true
+      elif command -v yum >/dev/null 2>&1; then yum install -y -q curl ca-certificates bash >&2 || true
+      else echo "[snakemake-batch] no known package manager in the image" >&2
+      fi
     fi
   fi
 '''
@@ -277,7 +286,7 @@ def build_prelude(
         _TEMPLATE.replace("@@WORKDIR@@", WORKDIR)
         .replace("@@CHECK@@", check)
         .replace("@@PYVER@@", shlex.quote(python_version))
-        .replace("@@PREREQS@@", _PREREQS if install_prereqs else "")
+        .replace("@@PREREQS@@", _PREREQS.replace("@@UVVER@@", UV_VERSION) if install_prereqs else "")
         .replace("@@REQS@@", reqs)
         .replace("@@NEWER@@", f"--exclude-newer {shlex.quote(resolved_at)} " if resolved_at else "")
         .replace("@@UV@@", uv_snippet("$SMK_BOOT/bin", "$SMK_BOOT/uvlib"))

@@ -1,4 +1,4 @@
-"""The curl/ca-certificates fallback, run in a stripped PATH with stub package managers."""
+"""The fallbacks for images without curl, wget or pip, run in a stripped PATH with stub tools."""
 import os, stat, subprocess
 from snakemake_executor_plugin_aws_batch_flex.bootstrap import build_prelude
 
@@ -42,7 +42,13 @@ def test_off_by_default_installs_nothing_and_fails_clearly(tmp_path):
 
 def test_non_root_is_reported_not_attempted(tmp_path):
     r, calls = _run(tmp_path, True, ["apt-get"], uid="1000")
-    assert calls == "" and "non-root" in r.stderr
+    assert calls == "" and "non-root" in r.stderr and "batch_queue" in r.stderr
+
+
+def test_uv_from_the_images_conda_as_any_user(tmp_path):
+    # mambaorg/micromamba: non-root, no curl; its micromamba fetches uv into the job's folder
+    r, calls = _run(tmp_path, True, ["apt-get", "micromamba"], uid="1000")
+    assert "micromamba create -y -q -p" in calls and "-c conda-forge uv=" in calls and "apt-get" not in calls
 
 
 def test_skipped_when_curl_already_present(tmp_path):

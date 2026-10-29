@@ -51,7 +51,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | `host-env-wait-seconds` | `120` | How long a job waits for that Snakemake if its machine is still setting it up when the job starts. A machine image made by `setup.sh` has it from the start, so 0 is fine there. |
 | `extra-packages` | *none* | Extra pip packages to install along with Snakemake when a job starts (e.g. `[pandas]`, or other Snakemake plugins). |
 | `python-version` | *the one you run Snakemake with* | The Python version to install Snakemake with when a job starts. |
-| `install-prereqs` | `false` | When installing at start: first install `curl` into images that have none of `curl`, `wget` or `pip`. |
+| `install-prereqs` | `false` | When installing at start, for images that have none of `curl`, `wget` or `pip`: get uv with the image's conda, mamba or micromamba (any user), or else install `curl` with its package manager (images that run as root). |
 | `script-python` | `image` | Which Python runs Python `script:` rules. `image`: the image's own, if it's 3.10 or newer, so the script can use the image's packages. `host`: always Snakemake's own. |
 
 **Memory, disk and Spot**

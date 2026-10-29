@@ -469,8 +469,8 @@ def test_workdir_directive_stops_before_submitting(tmp_path):
 
 
 def test_job_commands_fit_what_ecs_allows(tmp_path):
-    # installing Snakemake at job start makes the longest commands
-    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-bootstrap", "always")
+    # installing Snakemake at job start, with the prerequisites, makes the longest commands
+    r, calls = run(tmp_path, SNAKEFILE, "--aws-batch-flex-bootstrap", "always", "--aws-batch-flex-install-prereqs")
     assert r.returncode == 0, r.stdout + r.stderr
     sizes = [c["overrides_chars"] for c in calls if c["call"] == "submit_job"]
     assert sizes and max(sizes) < 8192 - 500, sizes  # room for a longer storage prefix and the like

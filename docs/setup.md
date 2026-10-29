@@ -149,8 +149,9 @@ lines like `executor: aws-batch-flex` and `aws-batch-flex-queue: smkflex-queue`.
 To try the plugin on an existing Batch queue without building an AMI, set
 `aws-batch-flex-bootstrap: auto` in the profile instead of `host`. Snakemake is then installed into
 each container when its job starts (about 10-15 s per job), which needs internet access and
-`curl`, `wget` or `pip` in the image (`--aws-batch-flex-install-prereqs` installs `curl` first if
-missing).
+`curl`, `wget` or `pip` in the image. Without them, `--aws-batch-flex-install-prereqs` gets uv
+with the image's own conda, mamba or micromamba if it has one (as any user), or else installs
+`curl` with its package manager, which needs an image that runs as root.
 
 Or install the Snakemake env on each instance as it boots, with the stock ECS image and no AMI of
 your own: every new instance then spends about a minute on it before its first job (not yet
