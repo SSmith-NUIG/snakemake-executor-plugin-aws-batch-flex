@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.1](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.1.0...v0.1.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* big runs read peak memory from jobs across the whole run, not only the last ones ([147a054](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/147a054053c7e7dbfee38029c95d9fa92dd44f00))
+* cancelling a run stops every job, also those Snakemake is checking on ([9edb388](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/9edb3880575bb8d3c4fb2aceb469f7a120bfb3a4))
+* non-root images without curl get uv from their own conda at job start ([374cc30](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/374cc303e6d1d42b17255dc36fe05c76ec84beff))
+* smkflex push gives the .gitignore note only when it uploaded, and no rate for tiny transfers ([6be28ad](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/6be28ad2efe30a30f13c4c9bd077969f573024fb))
+
 ## 0.1.0 (2026-10-28)
 
 First release. Needs Snakemake 9 (9.5 or newer) and Python 3.11 to 3.13. Tested on Linux; macOS

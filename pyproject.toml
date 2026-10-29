@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "snakemake-executor-plugin-aws-batch-flex"
-version = "0.1.0"
+version = "0.1.1"
 description = "Snakemake executor plugin for AWS Batch that runs every rule in its own container image"
 dynamic = ["readme"]
 requires-python = ">=3.11"
