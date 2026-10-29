@@ -30,6 +30,10 @@ FAILING = textwrap.dedent('''
         output: "x.txt"
         shell: "echo about-to-fail-marker >&2; exit 3"
 ''')
+# The tool's own error in the rule's log: file, as published pipelines write it (2> {log})
+LOGGED = FAILING.replace('    shell: "echo', '''    log: "logs/boom.log"
+    shell: "echo '[E::bwa_idx_load_from_disk] fail to locate the index files' > {log}; echo''')
+assert LOGGED != FAILING
 
 
 def run(tmp_path, snakefile, *extra):
@@ -67,11 +71,15 @@ def test_per_rule_images_queues_and_resources(tmp_path):
 
 
 def test_failure_surfaces_log_tail(tmp_path):
-    r, _ = run(tmp_path, FAILING)
+    r, _ = run(tmp_path, LOGGED)
     assert r.returncode != 0
     out = r.stdout + r.stderr
     assert "FAILED" in out and "exit code: 1" in out and "exit status 3" in out
     assert "about-to-fail-marker" in out  # log tail was fetched and shown
+    # and the end of the rule's log: file, from storage, with what it means
+    assert "end of log file" in out and "logs/boom.log" in out and "fail to locate the index files" in out
+    assert "multiext(" in out
+    assert not list(tmp_path.glob(".snakemake/storage/**/boom.log"))  # read, not left behind
 
 
 def test_startup_check_wrong_queue(tmp_path):

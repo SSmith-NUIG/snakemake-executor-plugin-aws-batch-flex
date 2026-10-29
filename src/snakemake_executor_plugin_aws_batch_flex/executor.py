@@ -55,6 +55,7 @@ FARGATE_MAX_MEM_MIB = 122880
 WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 ECS_OVERRIDES_MAX = 8192  # characters of a job's command and environment
 CANCEL_THREADS = 16  # terminate_job calls at once when the run is cancelled
+LOG_FILES, LOG_LINES = 3, 20  # of a failed job's log: files, shown with its error
 
 
 def _out_of_memory(d: dict) -> bool:
@@ -77,6 +78,33 @@ class Submitted:
 
 def _sub(info: SubmittedJobInfo) -> Submitted:
     return info.aux["smkflex"]
+
+
+def _log_tails(job, files=LOG_FILES, n=LOG_LINES):
+    """[(name, last lines)] of a failed job's log: files, which it uploaded before it ended.
+    Best effort: a file that isn't there or can't be read is left out."""
+    out = []
+    for f in list(getattr(job, "log", None) or [])[:files]:
+        obj = getattr(f, "storage_object", None) if getattr(f, "is_storage", False) else None
+        try:
+            if obj is None:
+                path, name = str(f), str(f)
+            else:  # fetched to where the job had it, and removed again: only read here
+                path, name = str(obj.local_path()), obj.print_query
+                fetched = not os.path.exists(path)
+                if fetched:
+                    obj.local_path().parent.mkdir(parents=True, exist_ok=True)
+                    obj.retrieve_object()
+            with open(path, "rb") as fh:
+                fh.seek(max(0, os.path.getsize(path) - 16_000))
+                tail = fh.read().decode(errors="replace").splitlines()[-n:]
+            if obj is not None and fetched:
+                os.remove(path)
+        except Exception:  # not there, not allowed, or a storage that can't do this
+            continue
+        if any(t.strip() for t in tail):
+            out.append((name, tail))
+    return out
 
 
 def _not_allowed(e) -> bool:
@@ -725,7 +753,14 @@ class Executor(RemoteExecutor):
                 if events:
                     lines.append("  last log lines:")
                     lines += [f"    {e['message'].rstrip()}" for e in events]
-                lines += known_problem_hints([e["message"] for e in events])
             except (ClientError, BotoCoreError):
+                events = []
                 lines.append("  (could not fetch log tail)")
+        # Tools' own errors are usually in the rule's log: files (2> {log}), which are in storage
+        logged = []
+        for name, tail in _log_tails(info.job):
+            lines.append(f"  end of log file {name}:")
+            lines += [f"    {t}" for t in tail]
+            logged += tail
+        lines += known_problem_hints([e["message"] for e in events] + logged)
         return "\n".join(lines) + "\n"

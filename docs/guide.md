@@ -148,6 +148,11 @@ runs everything on your machine need a change:
   `.gitignore` excludes (but `config/` always goes), files over 10 MB and anything outside the
   folder. A file a rule reads that isn't one of its inputs has to be in there (see
   [Troubleshooting](#troubleshooting)).
+- **A job only gets the inputs its rule names.** Files a tool finds next to an input locally,
+  such as a genome's index (`genome.fa.bwt`, `genome.fa.fai`, `genome.dict`) or a BAM's `.bai`,
+  aren't fetched unless the rule lists them: `input: multiext("genome.fa", ".amb", ".ann",
+  ".bwt", ".pac", ".sa")` for bwa, or `bai="x.bam.bai"`. The failed job's error says so when the
+  tool's message is a known one.
 - **No `workdir:`.** The jobs need the Snakefile inside the folder Snakemake works in, so the run
   stops at the start and says so. Outputs go under the storage prefix anyway: remove it.
 - **`threads: workflow.cores`** needs `--cores N`, as on a cluster (Snakemake asks for it). Each
@@ -430,6 +435,8 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   to do. Full logs are in the AWS console under **CloudWatch** > **Log groups** >
   `/aws/batch/smkflex` (`/aws/batch/` plus the `name` from `terraform.tfvars`; `/aws/batch/job`
   without the Terraform setup); the rule's own `log:` files are in the bucket (`smkflex pull logs`).
+- **Where a job's error is.** The plugin shows the end of the job's own output and of the rule's
+  `log:` files (most tools write their errors there, with `2> {log}`), fetched from the bucket.
 - **A job fails with "403" or "Forbidden" from S3.** Jobs use the job role, not your login, and
   the Terraform setup only lets it use `s3://BUCKET/snakemake/`. Keep the project's folder inside
   it (which `smkflex init` does).

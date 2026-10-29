@@ -41,6 +41,15 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
             "it use the s3_prefix folder (s3://BUCKET/snakemake/...). Keep default-storage-prefix "
             "inside that folder, or give the role access to the other one."
         )
+    if re.search(r"fail to locate the index files|Could not retrieve index file|"
+                 r"Could not locate a (Bowtie|HISAT2) index|Fasta (dict|index) file .* does not exist", text):
+        hints.append(
+            "  hint: the tool looked for index files next to an input (genome.fa.bwt, x.bam.bai, "
+            "genome.dict...) that the rule doesn't list. A job only gets the inputs its rule names "
+            "from storage, so list them too, e.g. input: "
+            "multiext(\"genome.fa\", \".amb\", \".ann\", \".bwt\", \".pac\", \".sa\") for bwa, "
+            "or bai=\"x.bam.bai\"."
+        )
     if "No space left on device" in text:
         hints.append(
             "  hint: the job ran out of disk. On EC2, all jobs on an instance share its disk "
