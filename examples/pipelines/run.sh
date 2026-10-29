@@ -99,8 +99,14 @@ for name in "$@"; do
   steps=$(grep -oE '[0-9]+ of [0-9]+ steps \([0-9]+%\) done' "$log" | tail -1)
   if [ "$rc" = 0 ]; then echo "  PASS in $mins min ($steps)"; pass+=("$name")
   else
-    echo "  FAILED ($rc) after $mins min${steps:+ at $steps}; first error:"
-    grep -m1 -A3 -E "^Error in rule|WorkflowError|Missing input" "$log" | sed 's/^/    /'
+    # failed jobs per rule (an earlier one may have been retried and passed), then the last
+    # error, which is the one Snakemake gave up on
+    echo "  FAILED ($rc) after $mins min${steps:+ at $steps}; failed jobs:"
+    grep "^Error in rule" "$log" | sort | uniq -c | sed 's/^ */    /'
+    echo "  last error:"
+    awk '/^Error in rule|^MissingInputException|^WorkflowError/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$log" \
+      | grep -E "^Error in rule|^[A-Za-z]+(Exception|Error)|message:|container reason|end of log file|hint:|[Ee]rror|Unable|denied|No such" \
+      | grep -v -E "check log file|CalledProcessError|Exiting because|At least one job" | head -10 | cut -c1-220 | sed 's/^ */    /'
     fail+=("$name")
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s min\t%s\n' "$(date +%F)" "$name" "$TAG" "$MODE" \
