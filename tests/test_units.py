@@ -221,6 +221,7 @@ def test_sources_patch_leaves_other_executors_alone(tmp_path, monkeypatch):
 
 
 def test_cancel_terminates_jobs_in_parallel_and_goes_on_after_errors():
+    # also j20, which Snakemake leaves out of the list while it checks on it
     import threading, time, types
     from botocore.exceptions import ClientError
     from snakemake_executor_plugin_aws_batch_flex.executor import Executor
@@ -235,12 +236,12 @@ def test_cancel_terminates_jobs_in_parallel_and_goes_on_after_errors():
             done.append(jobId)
 
     me = types.SimpleNamespace(batch=types.SimpleNamespace(terminate_job=terminate_job),
-                               logger=types.SimpleNamespace(warning=warnings.append))
+                               logger=types.SimpleNamespace(warning=warnings.append), _unfinished={"j1", "j20"})
     jobs = [types.SimpleNamespace(external_jobid=f"j{i}") for i in range(20)]
     start = time.time()
     Executor.cancel_jobs(me, jobs)
     assert time.time() - start < 2  # one at a time would take 4 s
-    assert sorted(done) == sorted(f"j{i}" for i in range(20) if i != 3)
+    assert sorted(done) == sorted(f"j{i}" for i in range(21) if i != 3)  # j1 once
     assert len(warnings) == 1 and "j3" in warnings[0]
 
 

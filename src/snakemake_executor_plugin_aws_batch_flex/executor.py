@@ -156,6 +156,9 @@ class Executor(RemoteExecutor):
         self._warned_fargate_shm = False
         self._said_resolved = False
         self._warned_tags: set = set()
+        # Batch jobs submitted and not seen to end. Cancelling stops these too: while Snakemake
+        # checks on its running jobs, it takes them out of the list it would hand cancel_jobs.
+        self._unfinished: set = set()
         self._warned_disk: set = set()
         self._existing_defs: dict = {}  # ref -> ExistingJobDefinition
         self._fair_share: dict = {}  # queue -> has a scheduling policy
@@ -578,6 +581,7 @@ class Executor(RemoteExecutor):
             f"Submitted {job.name} as AWS Batch job {resp['jobId']} "
             f"({image}, {req.vcpu} vCPU, {req.memory_mib} MiB, queue {queue}, {platform})"
         )
+        self._unfinished.add(resp["jobId"])
         self.report_job_submission(
             SubmittedJobInfo(
                 job,
@@ -608,6 +612,8 @@ class Executor(RemoteExecutor):
 
         for jid, info in by_id.items():
             d = described.get(jid)
+            if d is None or d["status"] in ("SUCCEEDED", "FAILED"):
+                self._unfinished.discard(jid)
             if d is None:
                 self.report_job_error(
                     info, msg=f"AWS Batch no longer knows job {jid} (expired?)."
@@ -658,16 +664,16 @@ class Executor(RemoteExecutor):
     def cancel_jobs(self, active_jobs: List[SubmittedJobInfo]):
         # In parallel: a head job that is stopped has little time (ECS_CONTAINER_STOP_TIMEOUT)
         # to cancel every job and save its state.
-        def cancel(info):
+        def cancel(jid):
             try:
-                self.batch.terminate_job(
-                    jobId=info.external_jobid, reason="Cancelled by Snakemake"
-                )
+                self.batch.terminate_job(jobId=jid, reason="Cancelled by Snakemake")
             except (ClientError, BotoCoreError) as e:
-                self.logger.warning(f"Could not terminate {info.external_jobid}: {e}")
+                self.logger.warning(f"Could not terminate {jid}: {e}")
 
+        # set() copies at once, so the status checks can't change it meanwhile
+        ids = {i.external_jobid for i in active_jobs} | set(self._unfinished)
         with ThreadPoolExecutor(CANCEL_THREADS) as pool:
-            list(pool.map(cancel, active_jobs))
+            list(pool.map(cancel, sorted(ids)))
 
     def _warn_if_stuck(self, d: dict, info: SubmittedJobInfo):
         sub = _sub(info)
