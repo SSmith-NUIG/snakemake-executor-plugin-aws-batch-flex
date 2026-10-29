@@ -556,6 +556,9 @@ class Executor(RemoteExecutor):
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()
                 ]
                 + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}]
+                # bioconda needs strict channel priority; an image's own conda often isn't set so,
+                # and then mixes packages from different channels that don't load together
+                + [{"name": "CONDA_CHANNEL_PRIORITY", "value": "strict"}]
                 # the region, which jobs can't look up on the instance (IMDS) when it's closed to them
                 + [{"name": n, "value": self.region} for n in ("AWS_REGION", "AWS_DEFAULT_REGION") if self.region]
                 + ([{"name": "SMK_FLEX_JOB_CODE", "value": self.job_code}] if self.job_code else [])

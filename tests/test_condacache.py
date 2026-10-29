@@ -161,4 +161,5 @@ def test_environments_are_kept_apart_by_cpu_type_and_glibc(monkeypatch):
     import platform
     monkeypatch.setattr(platform, "machine", lambda: "aarch64")
     assert condacache.platform_key().startswith("aarch64-")
+    assert condacache.platform_key().endswith("-strict")  # not the environments built without it
     assert condacache.env_prefix("/r") == "/r/" + condacache.platform_key()

@@ -578,6 +578,7 @@ def test_conda_cache_is_set_up_for_jobs(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     sub = next(c for c in calls if c["call"] == "submit_job")
     assert "SMK_FLEX_CONDA_CACHE" not in sub["env"] and "SMK_FLEX_JOB_CODE" in sub["env"]
+    assert sub["env"]["CONDA_CHANNEL_PRIORITY"] == "strict"  # as bioconda needs, whatever the image's conda says
 
 def test_failure_explains_missing_storage_plugin(tmp_path):
     smk = FAILING.replace('echo about-to-fail-marker >&2; exit 3',

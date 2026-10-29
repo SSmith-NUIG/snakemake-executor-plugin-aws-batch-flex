@@ -8,7 +8,7 @@ under one fixed folder, so Snakemake gives the same environment the same name in
    on that machine (a lock makes the others wait while one builds);
 2. in S3, if a cache URL is set: <url>/<platform>/<name>.tar.gz, uploaded by an earlier job.
 
-The folder (<platform>) is the CPU type and the image's glibc version, e.g. x86_64-glibc-2.36,
+The folder (<platform>) is the CPU type and the image's glibc version, e.g. x86_64-glibc-2.36-strict,
 so environments are only shared between machines and images that conda would have built the
 same packages for: an x86 build doesn't run on Graviton (arm64).
 
@@ -30,7 +30,9 @@ def platform_key():
         version = os.confstr("CS_GNU_LIBC_VERSION") or ""
     except (ValueError, OSError, AttributeError):
         version = ""
-    return f"{platform.machine() or 'unknown'}-{version.replace(' ', '-') or 'unknown'}"
+    # -strict: built with strict channel priority (CONDA_CHANNEL_PRIORITY, set for every job),
+    # as bioconda needs; environments built before, without it, are left behind
+    return f"{platform.machine() or 'unknown'}-{version.replace(' ', '-') or 'unknown'}-strict"
 
 
 def env_prefix(root=None):
