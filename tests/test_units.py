@@ -172,6 +172,8 @@ def test_s3_directory_is_looked_up_again():
     assert o.exists() is False  # before the job: no files under the prefix
     o.keys = ["star_genome/SA"]  # the job uploaded the directory
     assert o.exists() is True
+    o.keys = []  # a failed job's directory output, removed: missing, so its mtime() isn't trusted
+    assert o.exists() is False
     # what mtime() and size() ask for every file: answered from memory, no extra S3 request
     f = Obj()
     assert f.is_dir() is False and f.is_dir() is False and f.listed == 1

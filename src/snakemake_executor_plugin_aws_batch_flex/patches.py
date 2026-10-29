@@ -20,7 +20,7 @@ SOURCES = ("sending the workflow folder to the jobs (Snakemake's DAG.get_sources
            "what git knows about")
 MISSING = "the hint for inputs that are only on this machine (Snakemake's MissingInputException)"
 S3_DIRS = ("directory() outputs on S3 (the S3 storage plugin's StorageObject.exists): they can be "
-           "reported missing after the job made them")
+           "reported missing after the job made them, or stop the run after a failed job removed them")
 # Workarounds this Snakemake (or S3 plugin) doesn't let us apply; the executor warns about them
 NOT_APPLIED: list = []
 
@@ -165,11 +165,14 @@ explain_local_only_inputs()
 
 
 def recheck_s3_directories():
-    """Work around snakemake-storage-plugin-s3 (0.3.6): a storage object remembers is_dir() =
-    False from before the job ran, so a directory() output the job then uploads is reported
-    "missing in storage". exists() looks a remembered False up again (it only asks is_dir()
-    when there's no plain object of that name). Only there: mtime() and size() of every file
-    ask is_dir() too, and keep the remembered answer, as without the patch."""
+    """Work around snakemake-storage-plugin-s3 (0.3.6): a storage object remembers its is_dir()
+    answer, which a job then makes wrong. Remembered False: a directory() output the job
+    uploads is reported "missing in storage". Remembered True: a failed job's directory output,
+    which Snakemake removes, still exists, and its mtime() fails on the empty listing
+    ("max() iterable argument is empty"), which stops the run. exists() looks it up again
+    (it only asks is_dir() when there's no plain object of that name), and when mtime() or
+    size() fail, Snakemake asks exists() and takes the file as missing. Only there: mtime() and
+    size() of every file ask is_dir() too, and keep the remembered answer, as without the patch."""
     try:
         from snakemake_storage_plugin_s3 import StorageObject
     except ImportError:  # not installed: nothing to work around
@@ -183,8 +186,7 @@ def recheck_s3_directories():
         return
 
     def exists(self):
-        if getattr(self, "_is_dir", None) is False:
-            self._is_dir = None
+        self._is_dir = None
         return orig(self)
 
     exists._rechecks = True
