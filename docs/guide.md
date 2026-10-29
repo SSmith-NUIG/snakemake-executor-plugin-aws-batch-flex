@@ -433,12 +433,11 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
 - **A job fails with "403" or "Forbidden" from S3.** Jobs use the job role, not your login, and
   the Terraform setup only lets it use `s3://BUCKET/snakemake/`. Keep the project's folder inside
   it (which `smkflex init` does).
-- **Every job of a rule fails at once with "SyntaxError: ... in file /bin/sh".** The rule's image
-  has a Python `ENTRYPOINT` (such as `["python3"]`), so Python is handed the job's command as a
-  script to run. Batch can't override an image's entrypoint, so use an image without one: remove
-  the `ENTRYPOINT` line from its Dockerfile, or build one on top that clears it
-  (`FROM <image>` then `ENTRYPOINT []`). `CMD ["python3"]` instead keeps `docker run <image>`
-  starting Python, and doesn't get in the way.
+- **Every job of a rule fails at once with "SyntaxError: source code cannot contain null bytes"
+  (or "... in file /bin/sh").** The rule's image has a Python `ENTRYPOINT` (such as
+  `["python3"]`), and the plugin couldn't read it from the registry: it warns at the start of the
+  run. Batch can't change an image's entrypoint, so the plugin has to know it: give the rule
+  `batch_entrypoint='["python3"]'`, or for a private registry set `registry-credentials`.
 - **"Ignoring source file ../workflow/...".** Snakemake only sends the jobs code that's inside the
   folder you start it from, so start it from the top of the pipeline (not with `--directory`
   pointing at a subfolder). Published pipelines' tests often use `--directory .test`; copy the

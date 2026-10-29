@@ -72,3 +72,23 @@ def test_wrapper_rule_with_conda(tmp_path):
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     fai = (tmp_path / "store/results/wr/ref.fa.fai").read_text()
     assert fai.startswith("chr1\t12\t") and "chr2\t8\t" in fai
+
+
+def test_images_with_an_entrypoint(tmp_path, monkeypatch):
+    # The fake registry gives the images entrypoints of each kind that run here: Python, an
+    # entrypoint script that runs the command it's given, a wrapper, none
+    entry = tmp_path / "entry.sh"
+    entry.write_text('#!/bin/sh\nexport FROM_ENTRYPOINT=1\nexec "$@"\n')
+    entry.chmod(0o755)
+    monkeypatch.setenv("FAKEAWS_ENTRYPOINTS", json.dumps({
+        "vergaju/evoflow:latest": ["python3"], "continuumio/miniconda3:26.7.1-1": [str(entry)],
+        "mambaorg/micromamba:2.3.0": [str(entry)], "condaforge/miniforge3:25.3.1-0": ["env"]}))
+    r, calls = run_conf(tmp_path, "entrypoint.smk", "-j", "6")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    for kind in ("python", "script", "micromamba", "tini", "none", "override"):
+        assert (tmp_path / f"store/results/ep/{kind}.txt").read_text().strip() == f"ok {kind}"
+    cmds = {c["jobName"]: c["cmd"] for c in calls if c["call"] == "submit_job"}
+    python = [c for name, c in cmds.items() if "ep_python" in name or "ep_override" in name]
+    assert len(python) == 2 and all(c[0] == "-c" and "execv('/bin/sh'" in c[1] for c in python)
+    assert sum(c == ["/bin/sh", "-c"] for c in cmds.values()) == 4
+    assert "has ENTRYPOINT ['python3']: its jobs start through it." in r.stderr

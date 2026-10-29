@@ -24,12 +24,13 @@ from snakemake_interface_common.exceptions import WorkflowError
 from . import headjob
 from .bundle import _tag, added_files, clone, head_command, local_commit, make_bundle
 from .check import cmd_check
+from .imageinfo import Entrypoints
 from .jobdefs import JobDefinitions, log_group_of
 from .naming import batch_job_name
 from .orphans import active_jobs, describe_jobs, list_jobs
 from .preflight import check_queue, queue_uses_spot
 from .profiles import Fail, _clients, _load_profile, _Log, workflow_profile_file
-from .settings import from_profile, host_mounts
+from .settings import from_profile, host_mounts, registry_secrets
 from .sizing import fargate_size
 from .tags import MANAGED_BY
 from .transfer import cmd_pull, cmd_push
@@ -154,7 +155,8 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
         jobQueue=queue,
         jobDefinition=jobdef,
         containerOverrides={
-            "command": ["/bin/sh", "-c", head_command(profile, platform, bundle_url, state_url, snakemake_args)],
+            "command": Entrypoints(registry_secrets(s), _Log()).command(
+                image, head_command(profile, platform, bundle_url, state_url, snakemake_args)),
             "resourceRequirements": [{"type": "VCPU", "value": vcpu}, {"type": "MEMORY", "value": str(mem)}],
             "environment": env,
         },

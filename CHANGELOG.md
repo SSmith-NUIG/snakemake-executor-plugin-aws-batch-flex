@@ -15,6 +15,9 @@ should work, and on Windows use WSL.
   per queue
 * per-rule `threads`, `mem_mb`, `runtime`, `gpu`, `/dev/shm` size (`batch_shm_mb`), Fargate disk
   (`disk_mb`), tags, Spot retries, fair-share priority and existing job definitions
+* images with an `ENTRYPOINT` (`["python3"]`, tini, entrypoint scripts): it's read from the image's
+  registry and the job's command is made to suit it, as Batch can't change it (`batch_entrypoint`
+  if the registry can't be read)
 * Python `script:` rules run in the image's own Python (3.10 or newer)
 * conda environments and wrappers in images without conda, with built environments reused per
   machine and optionally kept in S3 (`conda-cache`)

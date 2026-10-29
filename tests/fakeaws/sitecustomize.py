@@ -1,9 +1,13 @@
 """Replaces boto3.client with an in-process fake AWS Batch that really executes the
 submitted container command locally (via `sh -c`). Only for tests."""
-import itertools, json, subprocess, tempfile, time, os, types
+import email.message, io, itertools, json, re, subprocess, tempfile, time, os, types
+import urllib.request, urllib.response
 import boto3
 
 LOG = os.environ.get("FAKEAWS_LOG")
+# Images' ENTRYPOINTs (FAKEAWS_ENTRYPOINTS: JSON {image: [...]}; others have none). A fake
+# registry tells the plugin, and jobs run ENTRYPOINT + command, as Docker does.
+ENTRYPOINTS = json.loads(os.environ.get("FAKEAWS_ENTRYPOINTS") or "{}")
 _ids = itertools.count(1)
 
 
@@ -85,18 +89,23 @@ class FakeBatch:
              exec_role=kw["containerProperties"].get("executionRoleArn"))
         return {}
 
+    def _image(self, jobdef):
+        d = self.defs.get(jobdef) or next(d for d in json.loads(os.environ.get("FAKEAWS_JOBDEFS") or "[]")
+                                          if jobdef in (d["jobDefinitionArn"], f'{d["jobDefinitionName"]}:{d["revision"]}'))
+        return d["containerProperties"]["image"]
+
     def submit_job(self, **kw):
         jid = f"job-{next(_ids)}"
-        cmd = kw["containerOverrides"]["command"]
+        cmd = ENTRYPOINTS.get(self._image(kw["jobDefinition"]), []) + kw["containerOverrides"]["command"]
         env = dict(os.environ)
         if os.environ.get("FAKEAWS_JOB_PATH"): env["PATH"] = os.environ["FAKEAWS_JOB_PATH"]
         env.update({e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]})
         env["TMPDIR"] = tempfile.mkdtemp(prefix="fakejob-")  # each real container has its own /tmp
-        if os.environ.get("FAKEAWS_CMD"): open(os.environ["FAKEAWS_CMD"], "w").write(cmd[2])
+        if os.environ.get("FAKEAWS_CMD"): open(os.environ["FAKEAWS_CMD"], "w").write(cmd[-1])
         # FAKEAWS_OOM_BELOW_MIB: a job of a rule named oom_* runs out of memory when it asks for
         # less than this
         mem = next(int(r["value"]) for r in kw["containerOverrides"]["resourceRequirements"] if r["type"] == "MEMORY")
-        oom = "'oom_" in cmd[2] and mem < int(os.environ.get("FAKEAWS_OOM_BELOW_MIB") or 0)
+        oom = "'oom_" in cmd[-1] and mem < int(os.environ.get("FAKEAWS_OOM_BELOW_MIB") or 0)
         if oom:
             cmd = ["/bin/sh", "-c", "echo killed; exit 137"]
         p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -106,7 +115,7 @@ class FakeBatch:
              tags=kw.get("tags"), propagate=kw.get("propagateTags"),
              env={e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]},
              retry=kw.get("retryStrategy"), priority=kw.get("schedulingPriorityOverride"),
-             cmdtail=kw["containerOverrides"]["command"][2][-700:],
+             cmd=kw["containerOverrides"]["command"][:-1], cmdtail=kw["containerOverrides"]["command"][-1][-700:],
              # ECS allows 8192 characters of overrides (command and environment) per job
              overrides_chars=len(json.dumps(kw["containerOverrides"], separators=(",", ":"))))
         return {"jobId": jid, "jobName": kw["jobName"]}
@@ -187,6 +196,26 @@ class FakeIAM:
         return {"Role": {"RoleName": RoleName}}
 
 
+_real_open = urllib.request.OpenerDirector.open
+
+
+def _registry(self, req, data=None, timeout=None):
+    """The fake registry: every image's manifest, and a config with its FAKEAWS_ENTRYPOINTS."""
+    url = req if isinstance(req, str) else req.full_url
+    m = re.match(r"https://([^/]+)/v2/(.+)/(manifests|blobs)/(.+)$", url)
+    if not m:
+        return _real_open(self, req, data, timeout)
+    host, repo, kind, ref = m.groups()
+    if kind == "manifests":
+        doc = {"config": {"digest": ref}}
+    else:
+        from snakemake_executor_plugin_aws_batch_flex.imageinfo import parse_image
+        image = next((i for i in ENTRYPOINTS if parse_image(i) == (host, repo, ref)), None)
+        doc = {"config": {"Entrypoint": ENTRYPOINTS.get(image)}}
+    return urllib.response.addinfourl(io.BytesIO(json.dumps(doc).encode()), email.message.Message(), url, 200)
+
+
+urllib.request.OpenerDirector.open = _registry
 _batch = FakeBatch()
 _real = boto3.client
 def client(name, *a, **k):

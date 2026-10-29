@@ -177,8 +177,11 @@ mid-run. The tests in `tests/` need no AWS: `pip install -e ".[test]"`, then
   why. Build the AMI on the same CPU architecture as your instances.
 - `pipe()` doesn't work. `--sdm apptainer` isn't supported, and Singularity images (`.sif`) can't
   be used.
-- Images with an ENTRYPOINT that doesn't pass the command through (such as `["python3"]`) will
-  break; see [Troubleshooting](guide.md#troubleshooting).
+- Images with an ENTRYPOINT: the plugin reads it from the image's registry (once per image per
+  run) and gives the jobs a command it runs: a shell gets `-c <script>`, Python a `-c` that hands
+  over to `/bin/sh`, and everything else `/bin/sh -c <script>`, which wrappers (tini, dumb-init,
+  env) and entrypoint scripts that end with `exec "$@"` run. One that does something else (such
+  as `["java", "-jar", "app.jar"]`) can't run the job: use an image without it.
 - All rules in a group must use the same image.
 - On EC2, all jobs on an instance share its disk (`root_volume_gib` in Terraform, 100 GiB in the
   example), and `disk_mb` is not enforced: Batch only places jobs by CPU and memory. Several jobs

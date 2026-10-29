@@ -48,13 +48,12 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
             "volume, a queue with bigger disks for this rule (batch_queue), or fewer jobs per "
             "instance. On Fargate, raise the rule's disk_mb (up to 200 GiB)."
         )
-    if re.search(r"SyntaxError: .*in file /bin/sh\b", text):
+    if re.search(r"SyntaxError: .*(in file /bin/sh\b|source code cannot contain null bytes)", text):
         hints.append(
-            "  hint: the image has a Python ENTRYPOINT (such as [\"python3\"]), so the job's command "
-            "(/bin/sh -c ...) was handed to Python as a script to run. Batch can't override an "
-            "image's entrypoint: use an image without one. Remove the ENTRYPOINT line from its "
-            "Dockerfile, or build one on top that clears it (FROM <image> then ENTRYPOINT []); "
-            "CMD [\"python3\"] keeps `docker run <image>` starting Python."
+            "  hint: the image has a Python ENTRYPOINT (such as [\"python3\"]) that the plugin "
+            "couldn't read from its registry (see the warning at the start), so Python was handed "
+            "/bin/sh as a script to run. Give the rule the entrypoint: "
+            "resources: batch_entrypoint='[\"python3\"]'."
         )
     # a script a shell: command runs that wasn't sent: python, Rscript, sh/bash
     scripts = re.findall(r"can't open file '(?:/tmp/snakemake-job-\d+/)?([^']+)'", text)

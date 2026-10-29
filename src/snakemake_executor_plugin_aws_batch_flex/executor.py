@@ -22,6 +22,7 @@ from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 
 from .bootstrap import conda_snippet, job_tools_source, launcher_snippet, snakemake_prelude
 from .hints import known_problem_hints
+from .imageinfo import Entrypoints
 from .jobdefs import JobDefinitions, describe_existing, log_group_of, mutable_tag, normalize_image
 from .naming import batch_job_name
 from .orphans import ACTIVE, find_orphans, workflow_id
@@ -102,6 +103,7 @@ class Executor(RemoteExecutor):
             mounts.append((CONDA_CACHE_HOST_DIR, CONDA_CACHE_JOB_DIR, False))
         self.mounts = mounts
         registry_credentials = registry_secrets(s)
+        self.entrypoints = Entrypoints(registry_credentials, self.logger)
         self.settings = s
         # lock, default_storage_prefix, container_image and wrapper_prefix are Snakemake's but not
         # declared by the executor interface, hence getattr with a default
@@ -516,7 +518,8 @@ class Executor(RemoteExecutor):
             jobQueue=queue,
             jobDefinition=jobdef,
             containerOverrides={
-                "command": ["/bin/sh", "-c", script],
+                # what the image's ENTRYPOINT, which Batch can't change, runs as /bin/sh -c script
+                "command": self.entrypoints.command(image, script, job.resources.get("batch_entrypoint"), job.name),
                 "resourceRequirements": resource_reqs,
                 "environment": [
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()

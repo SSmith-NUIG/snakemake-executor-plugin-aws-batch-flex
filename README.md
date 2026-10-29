@@ -245,13 +245,14 @@ rule align:
         batch_spot_retries=3,                 # Spot queues
         batch_priority=500,                   # fair-share queues
         batch_script_python="host",           # script: rules only
+        # batch_entrypoint='["python3"]',     # only if the image's registry can't be read
         # batch_job_definition="my-jobdef",   # instead of the plugin's own; it then sets the image
     shell: "bwa mem -t {threads} ref.fa {input} > {output}"
 ```
 
 | On the rule | What it does on AWS |
 |---|---|
-| `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. |
+| `container: "docker://..."` | The image the job runs in. Any registry works (Docker Hub, quay.io, ghcr.io, ECR...); `docker://` is optional. Rules without one use `aws-batch-flex-default-image`. Images with an `ENTRYPOINT` work too: Batch can't change it, so the plugin reads it from the registry and gives the jobs a command it runs. |
 | `threads: 8` | Number of vCPUs requested. On EC2, a job bigger than the largest machine the queue may start waits forever (the plugin warns after `runnable-warn-minutes`). On Fargate, vCPUs and memory are rounded up to the nearest size Fargate offers (at most 16 vCPUs and 120 GiB). |
 | `mem_mb=16000` (or `mem_mib`) | Memory requested, a hard limit. Snakemake itself runs inside the job too, so 256 MiB is added (`mem-overhead-mib`). Without it (many published pipelines don't set it), `default-resources` applies, or else 2048 MiB. A job that goes over it is stopped; with `--retries 2` (or `retries: 2` in the profile) it's retried with twice the memory, then four times (`oom-memory-factor`). The end-of-run table shows what each rule really used. |
 | `retries: 2` | Not a resource but a rule setting (or `retries: 2` in the profile for every rule): how many times Snakemake runs a failed job again. A job that ran out of memory gets more on each retry (`oom-memory-factor`), and `attempt` lets a rule raise anything itself, e.g. `mem_mb=lambda wildcards, attempt: 4000 * attempt` (then the rule's own figure is used, not doubled on top). Jobs that lost their Spot machine are restarted by Batch instead (`batch_spot_retries`) and don't use these up. |
@@ -266,6 +267,7 @@ rule align:
 | `batch_priority=500` | Scheduling priority, 0-9999, higher first. Only on queues with a fair-share policy. `aws_batch_scheduling_priority` also works. |
 | `batch_job_definition="name"` | Use an existing job definition for this rule (see the `job-definition` setting). |
 | `batch_script_python="host"` | For Python `script:` rules: use Snakemake's own Python instead of the image's. |
+| `batch_entrypoint='["python3"]'` | The image's `ENTRYPOINT`, for when the plugin can't read it from the registry (it then warns at the start): a private registry without `registry-credentials`, or no network to it. `'[]'` for none. |
 
 To change resources without editing the Snakefile (for a published pipeline, say), use
 Snakemake's `set-resources`, `set-threads` and `default-resources` in the project's
