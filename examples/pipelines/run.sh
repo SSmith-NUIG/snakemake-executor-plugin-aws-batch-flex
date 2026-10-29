@@ -36,7 +36,7 @@ recipe() {
     kallisto)
       REPO=snakemake-workflows/rna-seq-kallisto-sleuth TAG=v4.1.1
       setup() { overlay; }
-      INPUTS="ngs-test-data resources" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2";;
+      INPUTS="ngs-test-data resources config" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2";;
     nanopore)
       REPO=snakemake-workflows/transcriptome-differential-expression TAG=v2.6.0
       setup() { overlay; }
