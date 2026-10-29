@@ -210,6 +210,7 @@ def test_sources_patch_leaves_other_executors_alone(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "samples.tsv").write_text("s\n")
+    (tmp_path / "Snakefile").write_text("")
     monkeypatch.setattr(DAG.get_sources, "__wrapped__", lambda self: {"Snakefile"})
 
     def dag(executor):

@@ -1,5 +1,5 @@
 """Runs a real Snakemake workflow through the plugin against a fake AWS Batch."""
-import json, os, subprocess, sys, textwrap
+import json, os, shutil, subprocess, sys, textwrap
 from pathlib import Path
 
 FAKE = str(Path(__file__).parent / "fakeaws")
@@ -428,6 +428,16 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     r, calls = run(tmp_path, FOLDER, "--forceall", "--aws-batch-flex-max-sources-mb", "1")
     assert r.returncode != 0 and "refs/ 2 MB" in r.stdout + r.stderr and ".gitignore" in r.stdout + r.stderr
     assert not any(c["call"] == "submit_job" for c in calls)
+
+    # a file git tracks that was deleted here, not committed yet: left out, not a crash
+    shutil.rmtree(tmp_path / "refs")
+    (tmp_path / "old.txt").write_text("x")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    for args in (["init", "-q"], ["add", "-f", "old.txt", "Snakefile"], ["commit", "-qm", "x"]):
+        subprocess.run(git + args, cwd=tmp_path, check=True)
+    (tmp_path / "old.txt").unlink()
+    r, _ = run(tmp_path, FOLDER, "--forceall", "--aws-batch-flex-max-sources-mb", "1")
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_input_nowhere_says_where_jobs_read_it(tmp_path):

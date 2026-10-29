@@ -90,6 +90,9 @@ def skip_remote_module_scripts():
         # does: what git would track, or everything .gitignore doesn't exclude, and config/.
         if isinstance(files, set):
             files.update(workflow_files("."))
+            # git still lists a tracked file deleted here (not committed yet), and Snakemake
+            # then fails to pack it
+            files.difference_update([f for f in files if not os.path.exists(f)])
             settings = getattr(self.workflow, "executor_settings", None)
             limit = getattr(settings, "max_sources_mb", None) or MAX_SOURCES_MB
             problem = too_big(files, limit)
