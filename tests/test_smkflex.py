@@ -336,6 +336,13 @@ def test_push(tmp_path):
     assert (tmp_path / "store" / "data" / "a.fq").read_text() == "CCC"
     r, _ = smkflex(wf, "push", "../x")
     assert r.returncode == 2 and "outside the workflow folder" in r.stderr
+    # a folder smkflex run would send too: said once, not on every push with nothing new
+    (wf / "refs").mkdir()
+    (wf / "refs" / "g.fa").write_text(">g\n")
+    r, _ = smkflex(wf, "push", "refs")
+    assert "add to .gitignore:\nrefs/" in r.stdout and "uploaded to" in r.stdout and "MB/s" not in r.stdout
+    r, _ = smkflex(wf, "push", "refs")
+    assert "0 uploaded" in r.stdout and ".gitignore" not in r.stdout
 
 
 def test_push_absolute_paths_and_many_files(tmp_path):

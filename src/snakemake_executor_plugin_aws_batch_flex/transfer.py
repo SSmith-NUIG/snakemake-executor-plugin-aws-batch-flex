@@ -78,8 +78,11 @@ def _transfer(jobs, work, verb):
     return done, total, secs
 
 def _rate(total, secs):
-    mb = total / 1e6
-    return f"{mb:.1f} MB in {secs:.0f} s ({mb / secs:.1f} MB/s)" if total else ""
+    """How much was sent, and how fast when that means something (1 MB or more, over a second)."""
+    if not total:
+        return ""
+    size = f"{total / 1e6:.1f} MB" if total >= 1e5 else f"{total / 1e3:.1f} kB" if total >= 1e3 else f"{total} bytes"
+    return f"{size} in {secs:.0f} s ({total / 1e6 / secs:.1f} MB/s)" if total >= 1e6 and secs >= 1 else size
 
 def cmd_pull(a):
     _dir, profile = _load_profile(a.profile)
@@ -176,7 +179,8 @@ def cmd_push(a):
         rate = _rate(total, secs)
         print(f"{sent} uploaded to {prefix}" + (f" ({rate})" if rate else "")
               + (f", {skipped} already there (unchanged; --force sends them again)" if skipped else ""))
-        _hint_gitignore([p for p in a.paths if not os.path.isabs(p)])
+        if sent:  # not again on every push that had nothing new
+            _hint_gitignore([p for p in a.paths if not os.path.isabs(p)])
     return 0
 
 def _hint_gitignore(paths):
