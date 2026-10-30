@@ -10,7 +10,8 @@
 # Each is cloned into $WORK/NAME, set up as its own CI test does but run from the top of the
 # repository (the plugin can't run with --directory .test), its inputs uploaded with smkflex push,
 # then run, with --retries 2 (a job that ran out of memory is retried with twice as much, as most
-# pipelines set no mem_mb) and --keep-going (every failure in one run). The log is $WORK/NAME.log; results.tsv here gets one line per run.
+# pipelines set no mem_mb), --keep-going (every failure in one run) and --rerun-incomplete (a run
+# that was stopped carries on). The log is $WORK/NAME.log; results.tsv here gets one line per run.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 PROFILE=${PROFILE:-$HERE/../conformance/profile}
@@ -34,30 +35,30 @@ recipe() {
     rnaseq)
       REPO=snakemake-workflows/rna-seq-star-deseq2 TAG=v3.1.2
       setup() { overlay; }
-      INPUTS="ngs-test-data" ARGS="--configfile config_basic/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
+      INPUTS="ngs-test-data" ARGS="--configfile config_basic/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     kallisto)  # goatools 1.6.4 imports what statsmodels 0.15 (Aug 2026) no longer has: pinned, as a user would
       REPO=snakemake-workflows/rna-seq-kallisto-sleuth TAG=v4.1.1
       setup() { overlay && echo "  - statsmodels <0.15" >> workflow/envs/goatools.yaml; }
-      INPUTS="ngs-test-data resources config" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
+      INPUTS="ngs-test-data resources config" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     nanopore)  # can't run on Batch: it finds its reads by searching the folder Snakemake runs in
       # (os.walk(Path.cwd()), absolute paths), which each job does again in its own folder; see README
       echo "nanopore: not runnable on remote executors as written (see README)" >&2; return 1
       REPO=snakemake-workflows/transcriptome-differential-expression TAG=v2.6.0
       setup() { overlay; }
-      INPUTS="ngs-test-data" ARGS="--configfile config-simple/config.yml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
+      INPUTS="ngs-test-data" ARGS="--configfile config-simple/config.yml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     varlociraptor)
       REPO=snakemake-workflows/dna-seq-varlociraptor TAG=v6.11.4
       setup() { overlay; }
-      INPUTS="data" ARGS="--configfile config-simple/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
+      INPUTS="data" ARGS="--configfile config-simple/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     zarp)  # a container: per rule (biocontainers and others); its tests name ../input_files
       REPO=zavolanlab/zarp TAG=v1.0.0-rc.1
       setup() { cp -r tests/input_files input_files
                 sed -i 's#\.\./input_files/#input_files/#g; s#\.\./\.\./images/#images/#g' input_files/*.yaml input_files/*.tsv; }
-      INPUTS="input_files" ARGS="--configfile input_files/config.yaml -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
+      INPUTS="input_files" ARGS="--configfile input_files/config.yaml -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     grenepipe)  # inputs by absolute path, as its example sets them up
       REPO=lczech/grenepipe TAG=v0.15.0
       setup() { bash example/prepare.sh && cp example/config.yaml config.yaml; }
-      INPUTS="$WORK/grenepipe/example" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
+      INPUTS="$WORK/grenepipe/example" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     *) echo "unknown pipeline $1 (known: $ALL)" >&2; return 1;;
   esac
 }
