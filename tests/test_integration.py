@@ -82,6 +82,22 @@ def test_failure_surfaces_log_tail(tmp_path):
     assert not list(tmp_path.glob(".snakemake/storage/**/boom.log"))  # read, not left behind
 
 
+def test_failure_shows_a_traceback_from_the_start_of_the_log(tmp_path):
+    # a script that opens its log for stderr with "w" and for stdout with "a" (goatools in
+    # rna-seq-kallisto-sleuth) writes its traceback over the start of it, before its output
+    smk = FAILING.replace('    shell: "echo about-to-fail-marker >&2; exit 3"', '''    log: "logs/goa.log"
+    shell:
+        "echo 'Traceback (most recent call last):' > {log}; echo '  File goa.py, line 53' >> {log}; "
+        "echo 'ImportError: cannot import name multipletests' >> {log}; "
+        "for i in $(seq 40); do echo progress $i >> {log}; done; exit 3"''')
+    assert smk != FAILING
+    r, _ = run(tmp_path, smk)
+    out = r.stdout + r.stderr
+    # (the error also appears in the shell command Snakemake prints: look for the log's lines)
+    assert r.returncode != 0 and "    ImportError: cannot import name multipletests\n    ...\n    progress 21\n" in out, out
+    assert "    progress 40" in out
+
+
 def test_failed_group_job_shows_why(tmp_path):
     # Snakemake's report of a failed group job leaves out the executor's message
     snakefile = textwrap.dedent('''

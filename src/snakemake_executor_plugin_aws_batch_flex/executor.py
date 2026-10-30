@@ -56,6 +56,7 @@ WRAPPER_HTTP_PREFIX = "https://github.com/snakemake/snakemake-wrappers/raw/"
 ECS_OVERRIDES_MAX = 8192  # characters of a job's command and environment
 CANCEL_THREADS = 16  # terminate_job calls at once when the run is cancelled
 LOG_FILES, LOG_LINES = 3, 20  # of a failed job's log: files, shown with its error
+LOG_READ_MAX = 2_000_000  # bytes of each read for that, from its start
 
 
 def _out_of_memory(d: dict) -> bool:
@@ -80,9 +81,25 @@ def _sub(info: SubmittedJobInfo) -> Submitted:
     return info.aux["smkflex"]
 
 
+def _traceback(lines, max_lines=30):
+    """The last Python traceback in lines, up to its exception, or []."""
+    starts = [i for i, line in enumerate(lines) if line.startswith("Traceback (most recent call last)")]
+    if not starts:
+        return []
+    tb = []
+    for line in lines[starts[-1]:starts[-1] + max_lines]:
+        tb.append(line)
+        if len(tb) > 1 and line and not line[0].isspace():  # the exception: "ImportError: ..."
+            break
+    return tb
+
+
 def _log_tails(job, files=LOG_FILES, n=LOG_LINES):
-    """[(name, last lines)] of a failed job's log: files, which it uploaded before it ended.
-    Best effort: a file that isn't there or can't be read is left out."""
+    """[(name, lines to show)] of a failed job's log: files, which it uploaded before it ended:
+    the last lines, and a Python traceback from elsewhere in the file. Scripts that open the log
+    for stderr with "w" and for stdout with "a" (common in published pipelines) write their
+    traceback over the start of it. Best effort: a file that isn't there or can't be read is
+    left out."""
     out = []
     for f in list(getattr(job, "log", None) or [])[:files]:
         obj = getattr(f, "storage_object", None) if getattr(f, "is_storage", False) else None
@@ -96,12 +113,20 @@ def _log_tails(job, files=LOG_FILES, n=LOG_LINES):
                     obj.local_path().parent.mkdir(parents=True, exist_ok=True)
                     obj.retrieve_object()
             with open(path, "rb") as fh:
-                fh.seek(max(0, os.path.getsize(path) - 16_000))
-                tail = fh.read().decode(errors="replace").splitlines()[-n:]
+                lines = fh.read(LOG_READ_MAX).decode(errors="replace").splitlines()
+                if os.path.getsize(path) > LOG_READ_MAX:  # a big log: its end too
+                    fh.seek(-16_000, os.SEEK_END)
+                    end = fh.read().decode(errors="replace").splitlines()
+                else:
+                    end = lines
             if obj is not None and fetched:
                 os.remove(path)
         except Exception:  # not there, not allowed, or a storage that can't do this
             continue
+        tail = end[-n:]
+        tb = _traceback(lines + end if end is not lines else lines)
+        if tb and tb[-1] not in tail:
+            tail = tb + ["..."] + tail
         if any(t.strip() for t in tail):
             out.append((name, tail))
     return out
