@@ -571,3 +571,27 @@ def test_s3_directories_move_many_files_at_a_time(tmp_path, monkeypatch):
     o.s3obj = lambda: types.SimpleNamespace(upload_file=lambda p: calls.append(("plugin's own", str(p))))
     s3.StorageObject.store_object(o)
     assert calls[-1][0] == "plugin's own"
+
+
+def test_plain_local_paths_where_each_storage_file_is_kept(tmp_path, monkeypatch):
+    from pathlib import Path
+    from snakemake_interface_storage_plugins.storage_object import StorageObjectBase
+    from snakemake_executor_plugin_aws_batch_flex import jobfixes
+    monkeypatch.setattr(StorageObjectBase, "local_path", StorageObjectBase.local_path)  # restored after
+    monkeypatch.chdir(tmp_path)
+    assert jobfixes.plain_local_paths(["--cores", "1", "--default-storage-prefix", "s3://b/proj/"]) is None
+
+    class Obj:
+        _overwrite_local_path = None
+        provider = types.SimpleNamespace(local_prefix=Path(".snakemake/storage"))
+        def __init__(self, query): self.query = query
+        def local_suffix(self): return "usual"
+
+    def where(query):
+        return StorageObjectBase.local_path(Obj(query))
+
+    usual = Path(".snakemake/storage/usual")
+    assert where("s3://b/proj/results/x.bam") == tmp_path / "results" / "x.bam"
+    assert where("s3://b/proj//data/refs/g.fa") == Path("/data/refs/g.fa")  # an absolute path
+    assert where("s3://b/proj//etc/hosts") == usual  # never into system folders
+    assert where("s3://b/other/x") == usual and where("s3://b/proj/../x") == usual

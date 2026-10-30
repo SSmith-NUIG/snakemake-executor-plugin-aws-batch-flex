@@ -146,3 +146,59 @@ def parallel_s3_directories():
     store_object._parallel = True
     StorageObject.store_object, StorageObject.retrieve_object, StorageObject.remove = store_object, retrieve_object, remove_
     return None
+
+
+SYSTEM_DIRS = ("/proc", "/sys", "/dev", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/opt",
+               "/run", "/var/lib")  # never local copies of storage files there
+
+
+def plain_local_paths(argv):
+    """Keep the job's local copies of the run's storage files at their plain paths: results/x at
+    <working folder>/results/x and an absolute /data/x at /data/x, instead of under
+    .snakemake/storage/<bucket>/<prefix>/. Tools then find inputs however the Snakefile names
+    them, {input}, a param or os.path.abspath(), as on a cluster's shared filesystem (zarp passes
+    STAR its genome index as a param). Only for a job that works at the same path as Snakemake
+    (bootstrap.WORKDIR), so that a plain path means the same as where Snakemake runs. Returns why
+    it isn't applied, or None."""
+    args = list(argv)
+    prefix = next((a.split("=", 1)[1] for a in args if a.startswith("--default-storage-prefix=")), None)
+    if prefix is None and "--default-storage-prefix" in args[:-1]:
+        prefix = args[args.index("--default-storage-prefix") + 1]
+    if not prefix:
+        return None  # no default storage: nothing to keep elsewhere
+    prefix = prefix.rstrip("/")
+    try:
+        import inspect
+        import posixpath
+        from pathlib import Path
+
+        from snakemake_interface_storage_plugins.storage_object import StorageObjectBase
+    except ImportError:
+        return "no storage plugin interface"
+    orig = StorageObjectBase.local_path
+    if getattr(orig, "_plain", False):
+        return None
+    try:
+        if list(inspect.signature(orig).parameters) != ["self"] or "_overwrite_local_path" not in inspect.getsource(orig):
+            return "the storage interface's StorageObjectBase.local_path changed"
+    except (OSError, TypeError):
+        return "the storage interface's StorageObjectBase.local_path can't be checked"
+
+    def local_path(self):
+        query = str(self.query)
+        if self._overwrite_local_path or not query.startswith(prefix + "/"):
+            return orig(self)
+        rest = posixpath.normpath(query[len(prefix) + 1:])
+        if rest.startswith("/"):  # Snakemake's prefix//abs for an absolute path
+            if rest == "/" or any(rest == d or rest.startswith(d + "/") for d in SYSTEM_DIRS):
+                return orig(self)
+            return Path(rest)
+        if rest == ".." or rest.startswith("../"):
+            return orig(self)
+        # absolute: Snakemake's job takes a relative local path equal to the file's own name for
+        # the file itself, and then doesn't see the outputs it made
+        return Path(os.getcwd()) / rest
+
+    local_path._plain = True
+    StorageObjectBase.local_path = local_path
+    return None

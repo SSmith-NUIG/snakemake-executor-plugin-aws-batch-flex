@@ -101,6 +101,10 @@ class FakeBatch:
         if os.environ.get("FAKEAWS_JOB_PATH"): env["PATH"] = os.environ["FAKEAWS_JOB_PATH"]
         env.update({e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]})
         env["TMPDIR"] = tempfile.mkdtemp(prefix="fakejob-")  # each real container has its own /tmp
+        # FAKEAWS_FRESH_WORKDIR: the job's same-path folder doesn't exist yet, as in a container
+        # (here: a fresh folder of its own, as this machine has Snakemake's folder already)
+        if os.environ.get("FAKEAWS_FRESH_WORKDIR"):
+            env["SMK_FLEX_WORKDIR"] = os.path.join(env["TMPDIR"], "workflow")
         if os.environ.get("FAKEAWS_CMD"): open(os.environ["FAKEAWS_CMD"], "w").write(cmd[-1])
         # FAKEAWS_OOM_BELOW_MIB: a job of a rule named oom_* runs out of memory when it asks for
         # less than this

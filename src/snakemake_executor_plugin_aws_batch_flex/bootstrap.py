@@ -106,7 +106,8 @@ WORKDIR = r"""SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"
 case "${SMK_FLEX_WORKDIR:-/}" in
 /|/opt|/opt/*|/usr*|/etc*|/bin*|/sbin*|/lib*|/proc*|/sys*|/dev*|/boot*|/var/lib*|/run*) ;;
 *) if [ ! -e "$SMK_FLEX_WORKDIR" ] || [ -z "$(ls -A "$SMK_FLEX_WORKDIR" 2>/dev/null)" ]; then
-mkdir -p "$SMK_FLEX_WORKDIR" 2>/dev/null && [ -w "$SMK_FLEX_WORKDIR" ] && SMK_WORK=$SMK_FLEX_WORKDIR; fi ;;
+mkdir -p "$SMK_FLEX_WORKDIR" 2>/dev/null && [ -w "$SMK_FLEX_WORKDIR" ] && SMK_WORK=$SMK_FLEX_WORKDIR \
+&& export SMK_FLEX_SAME_PATH=1; fi ;;
 esac
 mkdir -p "$SMK_WORK"; cd "$SMK_WORK"
 """
@@ -148,6 +149,11 @@ if "monitor" in globals() and "--deploy-sources" not in sys.argv:
         _why = parallel_s3_directories()
         if _why:
             print(f"[snakemake-batch] directory() outputs on S3 move one file at a time ({_why})", file=sys.stderr)
+        if os.environ.get("SMK_FLEX_SAME_PATH") == "1":
+            _why = plain_local_paths(sys.argv)
+            if _why:
+                print(f"[snakemake-batch] storage files' local copies stay under .snakemake/storage ({_why})",
+                      file=sys.stderr)
         monitor()
         _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
         if _cc != "none":

@@ -497,6 +497,33 @@ def test_files_the_config_names_reach_the_jobs(tmp_path):
     assert (tmp_path / "store" / "out.txt").read_text() == "g1\ns1\n"
 
 
+def test_jobs_find_inputs_at_their_plain_paths(tmp_path, monkeypatch):
+    # zarp: a tool given an input's folder as a param (STAR --genomeDir, salmon --quants), not
+    # {input}: the job keeps its copy of storage files at the plain path, as a shared filesystem
+    snakefile = textwrap.dedent('''
+        rule all:
+            input: "results/b.txt"
+        rule a:
+            output: "results/index/genome.txt"
+            shell: "echo indexed > {output}"
+        rule b:
+            input: "results/index/genome.txt"
+            output: "results/b.txt"
+            params: index_dir="results/index"
+            shell: "cat {params.index_dir}/genome.txt > {output}; echo {input} >> {output}"
+    ''')
+    monkeypatch.setenv("FAKEAWS_FRESH_WORKDIR", "1")
+    r, _ = run(tmp_path, snakefile)
+    assert r.returncode == 0, r.stdout + r.stderr
+    made, given = (tmp_path / "store" / "results" / "b.txt").read_text().split()
+    assert made == "indexed" and given.endswith("/workflow/results/index/genome.txt"), given  # not .snakemake/storage/
+    # without a same-path folder (an image where it can't be made) the copies stay where they were
+    monkeypatch.delenv("FAKEAWS_FRESH_WORKDIR")
+    (tmp_path / "x").mkdir()
+    r, _ = run(tmp_path / "x", snakefile)
+    assert r.returncode != 0 and "No such file" in r.stdout + r.stderr
+
+
 def test_input_nowhere_says_where_jobs_read_it(tmp_path):
     snakefile = textwrap.dedent('''
         rule a:
