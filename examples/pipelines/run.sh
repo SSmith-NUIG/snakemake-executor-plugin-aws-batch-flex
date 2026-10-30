@@ -35,9 +35,9 @@ recipe() {
       REPO=snakemake-workflows/rna-seq-star-deseq2 TAG=v3.1.2
       setup() { overlay; }
       INPUTS="ngs-test-data" ARGS="--configfile config_basic/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
-    kallisto)
+    kallisto)  # goatools 1.6.4 imports what statsmodels 0.15 (Aug 2026) no longer has: pinned, as a user would
       REPO=snakemake-workflows/rna-seq-kallisto-sleuth TAG=v4.1.1
-      setup() { overlay; }
+      setup() { overlay && echo "  - statsmodels <0.15" >> workflow/envs/goatools.yaml; }
       INPUTS="ngs-test-data resources config" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
     nanopore)
       REPO=snakemake-workflows/transcriptome-differential-expression TAG=v2.6.0
