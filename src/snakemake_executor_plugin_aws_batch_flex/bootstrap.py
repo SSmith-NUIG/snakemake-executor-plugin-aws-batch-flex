@@ -143,6 +143,34 @@ if "monitor" in globals() and "--deploy-sources" not in sys.argv:
     except Exception as e:
         print(f"[snakemake-batch] job tools off for this job (conda env cache, usage figures): {e!r}",
               file=sys.stderr)
+try:
+    # Snakemake hands scripts their params in a form any environment can load: DataFrame, Series
+    # and numpy arrays become lists. In pandas 3 a text column's .values is a pandas array
+    # (StringArray), not a numpy one, so it went to the script as is, and a script environment
+    # with pandas 2 can't load it. It goes as the numpy array pandas 2 gave.
+    import inspect
+    from snakemake import iocontainers as sm_io
+    orig_store = sm_io.Snakemake._safely_store_params
+    if list(inspect.signature(orig_store).parameters) != ["self", "params"]:
+        raise RuntimeError("this Snakemake's Snakemake._safely_store_params changed")
+    def _safely_store_params(self, params):
+        try:
+            import numpy as np
+            from pandas import StringDtype
+            from pandas.api.extensions import ExtensionArray
+        except ImportError:
+            return orig_store(self, params)
+        def text(v):  # only text: other pandas arrays (Categorical...) were pandas objects in pandas 2 too
+            return isinstance(v, ExtensionArray) and isinstance(v.dtype, StringDtype)
+        if any(text(v) for v in params):
+            params = params.__class__(toclone=params)
+            for i, v in enumerate(params):
+                if text(v):
+                    params[i] = np.asarray(v, dtype=object)
+        return orig_store(self, params)
+    sm_io.Snakemake._safely_store_params = _safely_store_params
+except Exception as e:
+    print(f"[snakemake-batch] pandas arrays in params go to scripts unchanged ({e!r})", file=sys.stderr)
 if os.environ.get("SMK_FLEX_SCRIPT_PYTHON") == "host":
     runpy.run_module("snakemake", run_name="__main__", alter_sys=True)
     sys.exit()

@@ -443,9 +443,10 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   `log:` files (most tools write their errors there, with `2> {log}`), fetched from the bucket.
 - **A script fails at once with "StringDtype.__init__() takes from 1 to 2 positional arguments".**
   Snakemake runs with pandas 3 and the rule's environment (or wrapper) has pandas 2, which can't
-  load the data Snakemake hands the script. It fails the same way on your own machine. Use pandas
-  2 where you run Snakemake (`pip install 'pandas<3'`) and then `scripts/update-ami.sh`, so the
-  AMI matches it, or give the rule's environment pandas 3.
+  load a pandas 3 object in the rule's `params`. The plugin hands pandas arrays (a text column's
+  `.values`) to scripts as numpy arrays, as pandas 2 gave them, but not a pandas `Index` or pandas
+  objects inside a list or dict. Give the rule's environment pandas 3 (for a wrapper, a newer
+  wrapper version), or pass plain lists in `params` (`.tolist()`).
 - **A job fails with "403" or "Forbidden" from S3.** Jobs use the job role, not your login, and
   the Terraform setup only lets it use `s3://BUCKET/snakemake/`. Keep the project's folder inside
   it (which `smkflex init` does).

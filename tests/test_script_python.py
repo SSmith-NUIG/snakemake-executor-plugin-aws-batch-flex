@@ -70,3 +70,20 @@ def test_script_with_pandas_params_uses_snakemakes_python_when_the_image_has_no_
     snakefile = SNAKEFILE.replace('params: word="hi"', 'params: word="hi", table=__import__("pandas").DataFrame({"a": [1]})')
     out = run_job(tmp_path, _python(True), snakefile=snakefile)
     assert out == f"hi {sys.executable}"
+
+
+def test_pandas_3_arrays_reach_scripts_as_numpy_arrays(tmp_path):
+    # rna-seq-kallisto-sleuth: a text column's .values is a pandas StringArray in pandas 3 (numpy
+    # in pandas 2), which a script environment with pandas 2 can't load; it goes as numpy
+    import pandas as pd
+    if not isinstance(pd.Series(["a"], dtype="str").values, pd.api.extensions.ExtensionArray):
+        pytest.skip("needs pandas 3")
+    pd_ = '__import__("pandas")'
+    snakefile = SNAKEFILE.replace('params: word="hi"', f'params: word="hi", samples={pd_}.Series(["a", "b"], dtype="str").values, '
+                                  f'groups={pd_}.Categorical(["x"])')
+    script = ('p = snakemake.params\n'
+              'open(snakemake.output[0], "w").write(f"{p.word} {type(p.samples).__name__} {p.samples.tolist()} '
+              '{type(p.groups).__name__}")\n')
+    # a Categorical was a pandas object in pandas 2 too: unchanged
+    out = run_job(tmp_path, sys.executable, mode="host", snakefile=snakefile, script=script)
+    assert out == "hi ndarray ['a', 'b'] Categorical"

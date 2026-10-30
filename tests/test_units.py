@@ -64,7 +64,7 @@ def test_known_problem_hints():
     assert len(h) == 1 and "job role" in h[0] and "s3_prefix" in h[0]
     assert "ran out of disk" in hints(["cp: error writing 'x': No space left on device"])[0]
     h = hints(["TypeError: StringDtype.__init__() takes from 1 to 2 positional arguments but 3 were given"])
-    assert len(h) == 1 and "pandas<3" in h[0]
+    assert len(h) == 1 and ".tolist()" in h[0]
     h = hints(["SyntaxError: source code cannot contain null bytes"])
     assert len(h) == 1 and "batch_entrypoint" in h[0]
     assert hints(["all fine"]) == []

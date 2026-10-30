@@ -52,10 +52,11 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
         )
     if "StringDtype.__init__() takes from 1 to 2 positional arguments" in text:
         hints.append(
-            "  hint: Snakemake runs with pandas 3, the rule's environment has pandas 2, and pandas 2 "
-            "can't load the data Snakemake hands the script (it fails the same way on your own "
-            "machine). Use pandas 2 where you run Snakemake (pip install 'pandas<3') and then "
-            "scripts/update-ami.sh, so the AMI's matches, or give the rule's environment pandas 3."
+            "  hint: Snakemake runs with pandas 3, the rule's environment has pandas 2, and a pandas 3 "
+            "object in the rule's params can't be loaded there (the plugin converts pandas arrays, "
+            "not an Index or pandas objects inside a list or dict). Give the rule's environment "
+            "pandas 3 (for a wrapper: a newer wrapper version), or have params pass plain lists "
+            "(.tolist())."
         )
     if "No space left on device" in text:
         hints.append(
