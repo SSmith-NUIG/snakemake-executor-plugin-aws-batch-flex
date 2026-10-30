@@ -53,7 +53,8 @@ rule align:
 - `batch_tags` adds tags to that rule's jobs; every job is also tagged with the run, workflow,
   rule and job ID.
 - Python `script:` rules run with the image's own Python (3.10 or newer), so they can use its
-  packages; `batch_script_python="host"` uses Snakemake's instead.
+  packages, unless their pandas/numpy/polars `params` need packages it lacks;
+  `batch_script_python="host"` always uses Snakemake's instead.
 - `conda:` and `wrapper:` work with `--sdm conda` (conda from the image, or baked into the AMI).
   Built envs are reused instead of built in every job: by the jobs on the same EC2 machine, or
   from the bucket for later jobs and runs (`aws-batch-flex-conda-cache`).

@@ -52,7 +52,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | `extra-packages` | *none* | Extra pip packages to install along with Snakemake when a job starts (e.g. `[pandas]`, or other Snakemake plugins). |
 | `python-version` | *the one you run Snakemake with* | The Python version to install Snakemake with when a job starts. |
 | `install-prereqs` | `false` | When installing at start, for images that have none of `curl`, `wget` or `pip`: get uv with the image's conda, mamba or micromamba (any user), or else install `curl` with its package manager (images that run as root). |
-| `script-python` | `image` | Which Python runs Python `script:` rules. `image`: the image's own, if it's 3.10 or newer, so the script can use the image's packages. `host`: always Snakemake's own. |
+| `script-python` | `image` | Which Python runs Python `script:` rules. `image`: the image's own, if it's 3.10 or newer, so the script can use the image's packages (but Snakemake's when the rule's pandas, numpy or polars `params` can't be loaded with it). `host`: always Snakemake's own. |
 
 **Memory, disk and Spot**
 

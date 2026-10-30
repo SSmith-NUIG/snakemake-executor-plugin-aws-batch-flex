@@ -240,7 +240,9 @@ different instances. Each job's log records the exact image it ran
 (`[snakemake-batch] image ... id=sha256:...`).
 
 **Python `script:` rules** run with the image's own `python` if it's 3.10 or newer, so they can
-use the image's packages. Otherwise (no Python in the image, or an older one) and for `run:`
+use the image's packages, unless the rule's `params` are pandas, numpy or polars objects that
+the image's Python can't import: the script then runs in Snakemake's Python, as it would on your
+machine (the job's log says so). Otherwise (no Python in the image, or an older one) and for `run:`
 blocks, the code runs in Snakemake's own Python from the machine image, which only has
 Snakemake's packages; call such scripts from `shell:` instead, or add their packages to the
 image as below. `batch_script_python="host"` on a rule (or `aws-batch-flex-script-python: host`
