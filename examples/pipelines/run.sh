@@ -3,6 +3,8 @@
 # Usage:  bash run.sh [--check] NAME [NAME ...]   (one after the other; `all` for every one)
 #   --check   set each one up and dry-run it here with plain Snakemake: no AWS, nothing to pay
 #   MODE=head bash run.sh NAME   run it with `smkflex run --wait` (Snakemake on Batch too)
+#   FRESH=1 bash run.sh NAME   clone and set it up again; otherwise a later run reuses the folder,
+#             so Snakemake carries on where the last run stopped, as it would for a user
 #   PROFILE=...  the plugin's profile (default: ../conformance/profile)
 #   WORK=...     where the pipelines are cloned (default: ~/smkflex-pipelines)
 # Each is cloned into $WORK/NAME, set up as its own CI test does but run from the top of the
@@ -62,7 +64,7 @@ prepare() {  # a fresh clone at the tag, set up
   rm -rf "$WORK/$1" && mkdir -p "$WORK" || return 1
   git -c url."https://github.com/".insteadOf="git@github.com:" clone -q --depth 1 --branch "$TAG" \
     --recurse-submodules --shallow-submodules "https://github.com/$REPO" "$WORK/$1" || return 1
-  cd "$WORK/$1" && setup && printf 'ngs-test-data/\ninput_files/\n' >> .gitignore
+  cd "$WORK/$1" && setup && printf 'ngs-test-data/\ninput_files/\n.prepared\n' >> .gitignore && touch .prepared
 }
 
 check=0; [ "${1:-}" = --check ] && { check=1; shift; }
@@ -74,7 +76,12 @@ for name in "$@"; do
   echo "=== $name ($REPO $TAG)"
   log="$WORK/$name.log"
   mkdir -p "$WORK"
-  if ! (prepare "$name") > "$log" 2>&1 || ! cd "$WORK/$name"; then
+  if [ $check = 0 ] && [ "${FRESH:-0}" != 1 ] && [ -f "$WORK/$name/.prepared" ]; then
+    echo "  reusing $WORK/$name (FRESH=1 to start again)"; : > "$log"
+  elif ! (prepare "$name") > "$log" 2>&1; then
+    echo "  setup FAILED (see $log)"; tail -5 "$log" | sed 's/^/    /'; fail+=("$name"); continue
+  fi
+  if ! cd "$WORK/$name"; then
     echo "  setup FAILED (see $log)"; tail -5 "$log" | sed 's/^/    /'; fail+=("$name"); cd "$HERE"; continue
   fi
   if [ $check = 1 ]; then
