@@ -152,8 +152,11 @@ try:
     # (StringArray), not a numpy one, so it went to the script as is, and a script environment
     # with pandas 2 can't load it. It goes as the numpy array pandas 2 gave.
     import inspect
-    from snakemake import iocontainers as sm_io
-    orig_store = sm_io.Snakemake._safely_store_params
+    try:
+        from snakemake.iocontainers import Snakemake as SmkData
+    except ImportError:  # earlier Snakemake 9 releases had it in snakemake.script
+        from snakemake.script import Snakemake as SmkData
+    orig_store = SmkData._safely_store_params
     if list(inspect.signature(orig_store).parameters) != ["self", "params"]:
         raise RuntimeError("this Snakemake's Snakemake._safely_store_params changed")
     def _safely_store_params(self, params):
@@ -171,7 +174,7 @@ try:
                 if text(v):
                     params[i] = np.asarray(v, dtype=object)
         return orig_store(self, params)
-    sm_io.Snakemake._safely_store_params = _safely_store_params
+    SmkData._safely_store_params = _safely_store_params
 except Exception as e:
     print(f"[snakemake-batch] pandas arrays in params go to scripts unchanged ({e!r})", file=sys.stderr)
 if os.environ.get("SMK_FLEX_SCRIPT_PYTHON") == "host":
