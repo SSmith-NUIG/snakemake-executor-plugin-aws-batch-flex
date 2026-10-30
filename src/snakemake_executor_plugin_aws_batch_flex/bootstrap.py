@@ -98,9 +98,18 @@ _PREREQS = r'''
 '''
 
 
-WORKDIR = (
-    'SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"; mkdir -p "$SMK_WORK"; cd "$SMK_WORK"'
-)
+# The job works in a folder at the same path as the one Snakemake runs in (SMK_FLEX_WORKDIR), so
+# that a Snakefile's os.path.abspath() gives the same paths in the job, as on a cluster's shared
+# filesystem (zarp resolves its inputs so). Only where that's safe: not /, not a system or mount
+# folder, and not a folder the image already has files in; otherwise a folder under /tmp.
+WORKDIR = r"""SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"
+case "${SMK_FLEX_WORKDIR:-/}" in
+/|/opt|/opt/*|/usr*|/etc*|/bin*|/sbin*|/lib*|/proc*|/sys*|/dev*|/boot*|/var/lib*|/run*) ;;
+*) if [ ! -e "$SMK_FLEX_WORKDIR" ] || [ -z "$(ls -A "$SMK_FLEX_WORKDIR" 2>/dev/null)" ]; then
+mkdir -p "$SMK_FLEX_WORKDIR" 2>/dev/null && [ -w "$SMK_FLEX_WORKDIR" ] && SMK_WORK=$SMK_FLEX_WORKDIR; fi ;;
+esac
+mkdir -p "$SMK_WORK"; cd "$SMK_WORK"
+"""
 
 _HOST_TEMPLATE = r"""
 set -eu

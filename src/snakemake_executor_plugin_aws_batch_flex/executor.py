@@ -586,6 +586,8 @@ class Executor(RemoteExecutor):
                     {"name": k, "value": str(v)} for k, v in self.envvars().items()
                 ]
                 + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}]
+                # the job works at this same path where it can (bootstrap.WORKDIR)
+                + [{"name": "SMK_FLEX_WORKDIR", "value": os.getcwd()}]
                 # bioconda needs strict channel priority; an image's own conda often isn't set so,
                 # and then mixes packages from different channels that don't load together
                 + [{"name": "CONDA_CHANNEL_PRIORITY", "value": "strict"}]

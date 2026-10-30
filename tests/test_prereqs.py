@@ -54,3 +54,22 @@ def test_uv_from_the_images_conda_as_any_user(tmp_path):
 def test_skipped_when_curl_already_present(tmp_path):
     r, calls = _run(tmp_path, True, ["apt-get", "curl"])
     assert "apt-get" not in calls
+
+
+def test_job_works_at_snakemakes_path_where_it_safely_can(tmp_path):
+    # so that os.path.abspath() in a Snakefile gives the same paths in the job (zarp)
+    from snakemake_executor_plugin_aws_batch_flex.bootstrap import WORKDIR
+
+    def where(workdir):
+        env = {"PATH": os.environ["PATH"], "TMPDIR": str(tmp_path)}
+        if workdir:
+            env["SMK_FLEX_WORKDIR"] = workdir
+        r = subprocess.run(["sh", "-c", f"set -eu\n{WORKDIR}\npwd"], env=env, capture_output=True, text=True)
+        return r.stdout.strip()
+
+    full = tmp_path / "has-files"
+    full.mkdir()
+    (full / "x").write_text("")
+    assert where(str(tmp_path / "home" / "me" / "proj")) == str(tmp_path / "home" / "me" / "proj")
+    for unsafe in (None, "/", "/opt/x", "/usr/lib/x", str(full)):  # else a folder of its own
+        assert where(unsafe).startswith(str(tmp_path / "snakemake-job-")), unsafe

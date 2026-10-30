@@ -155,6 +155,10 @@ runs everything on your machine need a change:
   aren't fetched unless the rule lists them: `input: multiext("genome.fa", ".amb", ".ann",
   ".bwt", ".pac", ".sa")` for bwa, or `bai="x.bam.bai"`. The failed job's error says so when the
   tool's message is a known one.
+- **Jobs run at the same path as Snakemake** (where the image allows it: not a system folder,
+  and not one the image already has files in), so a Snakefile that makes paths absolute with
+  `os.path.abspath()` gets the same paths in its jobs, as on a cluster's shared filesystem.
+  Inputs named that way are uploaded by their absolute path: `smkflex push $PWD/input_files`.
 - **No `workdir:`.** The jobs need the Snakefile inside the folder Snakemake works in, so the run
   stops at the start and says so. Outputs go under the storage prefix anyway: remove it.
 - **`threads: workflow.cores`** needs `--cores N`, as on a cluster (Snakemake asks for it). Each
