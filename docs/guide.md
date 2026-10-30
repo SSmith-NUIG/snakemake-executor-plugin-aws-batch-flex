@@ -145,8 +145,9 @@ runs everything on your machine need a change:
   a rule that has the file as its input (a `localrules:` rule if it should run on your machine):
   Snakemake then fetches it. Or download the results after the run: `smkflex pull results`.
 - **Jobs get the workflow folder,** except `data/`, `results/`, `logs/`, `benchmarks/`, what
-  `.gitignore` excludes (but `config/` always goes), files over 10 MB and anything outside the
-  folder. A file a rule reads that isn't one of its inputs has to be in there (see
+  `.gitignore` excludes, files over 10 MB and anything outside the folder. `config/` always goes,
+  and so does any file under 10 MB that a config value names (a sample sheet in `data/`, a gene
+  list the pipeline's `.gitignore` excludes), as scripts often open those by path. A file a rule reads that isn't one of its inputs has to be in there (see
   [Troubleshooting](#troubleshooting)).
 - **A job only gets the inputs its rule names.** Files a tool finds next to an input locally,
   such as a genome's index (`genome.fa.bwt`, `genome.fa.fai`, `genome.dict`) or a BAM's `.bai`,

@@ -315,6 +315,18 @@ def test_add_sends_ignored_files_and_replaces(tmp_path):
     assert "samples.tsv" in t.extractfile(".smkflex/files.txt").read().decode().split()
 
 
+def test_bundle_gets_the_files_the_config_names(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.bundle import config_named_files
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "config.yaml").write_text("genes: resources/g.tsv\nsamples: {sheet: data/s.tsv}\n")
+    (tmp_path / "test.yaml").write_text("templates: [tpl/a.yaml, tpl/missing.yaml]\ngenome: refs/big.fa\n")
+    for p, size in {"resources/g.tsv": 3, "data/s.tsv": 3, "tpl/a.yaml": 3, "refs/big.fa": 11_000_000}.items():
+        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / p).write_text("x" * size)
+    got = config_named_files(str(tmp_path), ["--configfile", "test.yaml", "-j", "4"])
+    assert set(got) == {"resources/g.tsv", "data/s.tsv", "tpl/a.yaml"}  # not the 11 MB genome
+
+
 def test_push(tmp_path):
     wf = setup(tmp_path)
     (wf / "data" / "sub").mkdir(parents=True)

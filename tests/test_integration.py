@@ -461,6 +461,26 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
+def test_files_the_config_names_reach_the_jobs(tmp_path):
+    # rna-seq-kallisto-sleuth: a script opens config["gene_list"] by path, not as an input, and
+    # the pipeline's .gitignore keeps resources/ out; a sample sheet can sit in data/ too
+    snakefile = textwrap.dedent('''
+        rule all:
+            input: "out.txt"
+        rule a:
+            output: "out.txt"
+            shell: "cat {config[gene_list]} {config[sheet]} > {output}"
+    ''')
+    (tmp_path / ".gitignore").write_text("resources\n")
+    for p, text in {"resources/genes.tsv": "g1\n", "data/sheet.tsv": "s1\n", "resources/big.fa": "x" * 11_000_000}.items():
+        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / p).write_text(text)
+    r, _ = run(tmp_path, snakefile, "--config", "gene_list=resources/genes.tsv", "sheet=data/sheet.tsv",
+               "genome=resources/big.fa")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "out.txt").read_text() == "g1\ns1\n"
+
+
 def test_input_nowhere_says_where_jobs_read_it(tmp_path):
     snakefile = textwrap.dedent('''
         rule a:

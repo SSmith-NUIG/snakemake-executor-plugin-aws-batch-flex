@@ -22,7 +22,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from snakemake_interface_common.exceptions import WorkflowError
 
 from . import headjob
-from .bundle import _tag, added_files, clone, head_command, local_commit, make_bundle
+from .bundle import _tag, added_files, clone, config_named_files, head_command, local_commit, make_bundle
 from .check import cmd_check
 from .imageinfo import Entrypoints
 from .jobdefs import JobDefinitions, log_group_of
@@ -124,7 +124,8 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
                    f"it or `smkflex cancel {running[0]}` (finished outputs are kept), then run again. "
                    "Another set of samples is another project: `smkflex init` in its own folder.")
 
-    bundle = make_bundle(root, profile_dir, a.max_bundle_mb, extra)
+    bundle = make_bundle(root, profile_dir, a.max_bundle_mb,
+                         {**config_named_files(root, snakemake_args), **(extra or {})})
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     bundle_url = f"{prefix}/.smkflex/runs/{stamp}/workflow.tar.gz"
     headjob.put(bundle_url, bundle)

@@ -13,7 +13,7 @@ import re
 from snakemake_interface_common.exceptions import WorkflowError
 
 from .settings import MAX_SOURCES_MB, PLUGIN_NAME
-from .sources import too_big, workflow_files
+from .sources import named_files, too_big, workflow_files
 
 
 SOURCES = ("sending the workflow folder to the jobs (Snakemake's DAG.get_sources): jobs get only "
@@ -87,9 +87,11 @@ def skip_remote_module_scripts():
         # named in script:/conda:. Scripts a shell: command runs, modules the Snakefile imports,
         # sample sheets and the like are missing in a folder that isn't a git checkout (such as
         # one made by snakedeploy), or when never `git add`ed. Send the folder as smkflex run
-        # does: what git would track, or everything .gitignore doesn't exclude, and config/.
+        # does: what git would track, or everything .gitignore doesn't exclude, config/, and the
+        # small files the config names.
         if isinstance(files, set):
             files.update(workflow_files("."))
+            files.update(named_files(getattr(self.workflow, "config", None) or {}))
             # git still lists a tracked file deleted here (not committed yet), and Snakemake
             # then fails to pack it
             files.difference_update([f for f in files if not os.path.exists(f)])

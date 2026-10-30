@@ -14,7 +14,7 @@ from . import headjob
 from .bootstrap import conda_snippet, snakemake_prelude
 from .profiles import Fail
 from .settings import from_profile
-from .sources import SKIP_DIRS, workflow_files
+from .sources import SKIP_DIRS, named_files, workflow_files
 
 # Runs in the head job before anything else: fetch and unpack the bundle. Kept small, since
 # everything sent with a job must fit in 8192 characters.
@@ -50,6 +50,34 @@ def added_files(paths, base="."):
         else:
             raise Fail(f"--add {p}: no such file or folder here")
     return out
+
+def config_named_files(root, snakemake_args=()):
+    """{path: local file} of the small files named in the config files the run reads: the YAML
+    in config/ and --configfile's (sources.named_files; the Snakefile's own config isn't read
+    before Snakemake starts, so files it names alone are left out)."""
+    import glob
+
+    import yaml
+
+    paths = glob.glob(os.path.join(root, "config", "**", "*.y*ml"), recursive=True)
+    args = list(snakemake_args)
+    for i, arg in enumerate(args):
+        if arg.startswith(("--configfile=", "--configfiles=")):
+            paths.append(os.path.join(root, arg.split("=", 1)[1]))
+        elif arg in ("--configfile", "--configfiles"):
+            for value in args[i + 1:]:
+                if value.startswith("-"):
+                    break
+                paths.append(os.path.join(root, value))
+    configs = []
+    for p in paths:
+        try:
+            with open(p) as f:
+                configs.append(yaml.safe_load(f))
+        except (OSError, yaml.YAMLError):
+            continue
+    return {f: os.path.join(root, f) for f in named_files(configs, root)}
+
 
 def make_bundle(root, profile_dir, max_mb, extra=None):
     """The workflow folder `root` as a tar.gz, with `extra` ({path in the bundle: local file})

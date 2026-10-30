@@ -62,6 +62,30 @@ def workflow_files(root):
                   and os.path.isfile(os.path.join(root, f))))
 
 
+def named_files(config, root="."):
+    """Files in the folder that config values name (sample sheets, gene lists, templates),
+    relative to it. Scripts often open them by path instead of as inputs, so jobs need them
+    where the config says, even when git-ignored or under data/. Only small ones (Snakemake's
+    per-file limit): a big file is data, which a rule reads from storage as an input."""
+    found, todo = set(), [config]
+    while todo:
+        v = todo.pop()
+        if isinstance(v, dict):
+            todo += v.values()
+        elif isinstance(v, (list, tuple)):
+            todo += v
+        elif isinstance(v, str) and 0 < len(v) < 1000 and "\n" not in v and "://" not in v:
+            path = os.path.join(root, v)
+            try:
+                if os.path.isfile(path) and os.path.getsize(path) <= SNAKEMAKE_MAX_FILE:
+                    rel = os.path.relpath(path, root)
+                    if not rel.startswith(".."):
+                        found.add(rel)
+            except (OSError, ValueError):
+                pass
+    return found
+
+
 def too_big(files, limit_mb, root="."):
     """None, or what to say when `files` add up to more than limit_mb (MB)."""
     total, by_top = 0, {}
