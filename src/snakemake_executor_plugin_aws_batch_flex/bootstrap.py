@@ -356,7 +356,7 @@ def build_host_prelude(env_path: str, wait_seconds: int = 120) -> str:
 def conda_snippet(conda_path: str) -> str:
     """Make a host-mounted conda usable in any image: only `condabin` (conda itself, no python)
     goes at the END of PATH, so an image's own conda wins; packages cache to a writable dir.
-    The AMI's git (smkflex-bin, see hostenv) goes there too, for images without one."""
+    The AMI's git, curl and wget (smkflex-bin, see hostenv) go there too, for images without them."""
     return (
         f'export PATH="$PATH:{conda_path}/condabin:{conda_path}/smkflex-bin"\n'
         'export CONDA_PKGS_DIRS="$SMK_WORK/conda-pkgs"\n'

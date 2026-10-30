@@ -59,11 +59,12 @@ out of memory once.
 - **A pipeline's own tests** (`.test/` in its repository) are run with `--directory .test`. That
   doesn't work with remote storage, because Snakemake only sends the jobs the code inside the
   folder it starts in. Copy the test config into `config/` instead.
-- **git:** Snakemake keeps a git clone of a pipeline loaded from GitHub, so `git` has to be
-  wherever the Snakefile is read: on your machine, in the `smkflex` head job (its image has it),
-  and in every job. On EC2, jobs whose image has no git use the one in the machine image (made
-  with conda, so images built before this need `scripts/update-ami.sh`); on Fargate, the rules'
-  images need their own.
+- **git, curl, wget:** Snakemake keeps a git clone of a pipeline loaded from GitHub, so `git` has
+  to be wherever the Snakefile is read: on your machine, in the `smkflex` head job (its image has
+  it), and in every job. Wrappers and scripts also call `curl` or `wget` without listing them
+  (they're on every workstation). On EC2, jobs whose image has none of these use the machine
+  image's (made with conda, after the image's own on the PATH; images built before this need
+  `scripts/update-ami.sh`); on Fargate, the rules' images need their own.
 - **Private pipeline repositories** need `GITHUB_TOKEN` set where Snakemake runs and in the jobs
   (`--envvars GITHUB_TOKEN`).
 

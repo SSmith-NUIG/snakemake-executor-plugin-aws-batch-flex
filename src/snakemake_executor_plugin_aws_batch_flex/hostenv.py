@@ -110,13 +110,16 @@ if [ ! -x "$ROOT/bin/conda" ]; then
   rm -f /tmp/miniforge.sh
 fi
 @ENVS@
-# git for jobs whose image has none: Snakemake needs it for pipelines loaded from GitHub
-# (module ... github(...), what snakedeploy sets up). conda-forge's git brings its own libraries,
-# so it works in any image; smkflex-bin holds only a link to it, for the end of jobs' PATH.
-if [ ! -x "$ROOT/envs/smkflex-git/bin/git" ]; then
-  "$ROOT/bin/conda" create -y -q -p "$ROOT/envs/smkflex-git" -c conda-forge git
+# Tools a workstation has, for jobs whose image has none: git, which Snakemake needs for
+# pipelines loaded from GitHub (module ... github(...), what snakedeploy sets up), and curl and
+# wget, which wrappers and scripts call without listing them (bio/vep/cache). conda-forge's builds
+# bring their own libraries, so they work in any image; smkflex-bin holds only links to them, for
+# the end of jobs' PATH, so an image's own come first.
+if [ ! -x "$ROOT/envs/smkflex-tools/bin/wget" ]; then
+  "$ROOT/bin/conda" create -y -q -p "$ROOT/envs/smkflex-tools" -c conda-forge git curl wget
 fi
-mkdir -p "$ROOT/smkflex-bin" && ln -sf ../envs/smkflex-git/bin/git "$ROOT/smkflex-bin/git"
+mkdir -p "$ROOT/smkflex-bin"
+for t in git curl wget; do ln -sf "../envs/smkflex-tools/bin/$t" "$ROOT/smkflex-bin/$t"; done
 "$ROOT/bin/conda" clean -a -y -q || true
 chmod -R a+rX "$ROOT"
 echo "conda ready at $ROOT"

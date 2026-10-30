@@ -14,6 +14,8 @@ def test_conda_script_creates_named_envs_and_is_valid_bash(tmp_path):
     f = tmp_path / "c.sh"; f.write_text(s)
     assert subprocess.run(["bash", "-n", str(f)]).returncode == 0
     assert "env create -n rnaseq" in s and "env update -n rnaseq" in s
+    # tools a workstation has, for images without them (wrappers call curl without listing it)
+    assert "-c conda-forge git curl wget" in s and "for t in git curl wget" in s
     with pytest.raises(ValueError):
         hostenv.conda_script("/x", [("bad name", "x")])
 
