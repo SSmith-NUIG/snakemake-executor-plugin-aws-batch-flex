@@ -28,9 +28,9 @@ def _python(min_ok):
     return None
 
 
-def run_job(tmp_path, image_python, mode="image"):
-    (tmp_path / "Snakefile").write_text(SNAKEFILE)
-    (tmp_path / "s.py").write_text(SCRIPT)
+def run_job(tmp_path, image_python, mode="image", snakefile=SNAKEFILE, script=SCRIPT):
+    (tmp_path / "Snakefile").write_text(snakefile)
+    (tmp_path / "s.py").write_text(script)
     img = tmp_path / "imagebin"; img.mkdir()
     os.symlink(image_python, img / "python")
     work = tmp_path / "work"; work.mkdir()
@@ -57,3 +57,16 @@ def test_old_image_python_falls_back_to_snakemakes(tmp_path):
 @pytest.mark.skipif(not _python(True), reason="needs a second python >= 3.10")
 def test_host_setting_keeps_snakemakes_python(tmp_path):
     assert run_job(tmp_path, _python(True), mode="host") == f"hi {sys.executable}"
+
+
+def _lacks_pandas(py):
+    return py and subprocess.run([py, "-c", "import pandas"], capture_output=True).returncode != 0
+
+
+@pytest.mark.skipif(not _lacks_pandas(_python(True)), reason="needs a second python >= 3.10 without pandas")
+def test_script_with_pandas_params_uses_snakemakes_python_when_the_image_has_no_pandas(tmp_path):
+    # rna-seq-kallisto-sleuth: a script handed pandas tables as params, in continuumio/miniconda3
+    # (no pandas); locally it runs in Snakemake's python, which has pandas
+    snakefile = SNAKEFILE.replace('params: word="hi"', 'params: word="hi", table=__import__("pandas").DataFrame({"a": [1]})')
+    out = run_job(tmp_path, _python(True), snakefile=snakefile)
+    assert out == f"hi {sys.executable}"

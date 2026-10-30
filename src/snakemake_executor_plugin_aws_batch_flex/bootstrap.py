@@ -158,6 +158,20 @@ def image_python():
             except OSError:
                 pass
     return found[0]
+has = {}
+def image_lacks(params):
+    # Snakemake hands a script its pandas, numpy and polars params as such (top-level values,
+    # iocontainers._safely_store_params), so the script's python needs them just to start.
+    # Locally such scripts usually run in Snakemake's own python, which has them.
+    missing = []
+    for v in params or []:
+        m = type(v).__module__.split(".")[0]
+        if m in ("pandas", "numpy", "polars") and m not in missing:
+            if m not in has:
+                has[m] = subprocess.run([image_python(), "-c", "import " + m], capture_output=True).returncode == 0
+            if not has[m]:
+                missing.append(m)
+    return missing
 def own_packages():
     # Links to just this Snakemake's packages, put first on the script's path so that a
     # Snakemake installed in the image can't shadow them. Everything else: image first.
@@ -178,6 +192,11 @@ try:
         raise RuntimeError("this Snakemake's PythonScript.execute_script changed")
     def execute_script(self, fname, edit=False):
         if self.container_img is None and self.conda_env is None and self.env_modules is None and image_python():
+            missing = image_lacks(self.params)
+            if missing:
+                print(f"[snakemake-batch] this script runs in Snakemake's python: its params are {', '.join(missing)} "
+                      "objects, which the image's python can't load", file=sys.stderr)
+                return orig(self, fname, edit)
             return self._execute_cmd(
                 "PYTHONPATH={pkgs:q}${{PYTHONPATH:+:$PYTHONPATH}} {py_exec:q} {fname:q}",
                 pkgs=own_packages(), py_exec=image_python(), fname=fname, is_python_script=True)
