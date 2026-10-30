@@ -98,7 +98,7 @@ for t in "${@:-script fanout}"; do
                --aws-batch-flex-install-prereqs -j 2;;
       spot) SQ=$(terraform -chdir=../../terraform output -raw spot_queue_name)
             run spot -s fanout.smk --config n_units=$N -j $N --aws-batch-flex-queue "$SQ";;
-      rules) bash "$0" checkpoint group shadow benchmark retries tempdir directory; exit;;
+      rules) for r in checkpoint group shadow benchmark retries tempdir directory; do run $r -s $r.smk -j 4; done;;
       checkpoint|group|shadow|benchmark|retries|tempdir|directory) run $name -s $name.smk -j 4;;
     esac
   done
