@@ -136,6 +136,9 @@ if "monitor" in globals() and "--deploy-sources" not in sys.argv:
     # the job tools came with this launcher, in the same file (job_tools_source)
     try:
         make_numpy_loadable()
+        _why = parallel_s3_directories()
+        if _why:
+            print(f"[snakemake-batch] directory() outputs on S3 move one file at a time ({_why})", file=sys.stderr)
         monitor()
         _cc = os.environ.get("SMK_FLEX_CONDA_CACHE", "none")
         if _cc != "none":

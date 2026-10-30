@@ -21,6 +21,8 @@ SOURCES = ("sending the workflow folder to the jobs (Snakemake's DAG.get_sources
 MISSING = "the hint for inputs that are only on this machine (Snakemake's MissingInputException)"
 S3_DIRS = ("directory() outputs on S3 (the S3 storage plugin's StorageObject.exists): they can be "
            "reported missing after the job made them, or stop the run after a failed job removed them")
+S3_PARALLEL = ("moving directory() outputs on S3 many files at a time (the S3 storage plugin's "
+               "StorageObject, jobfixes.parallel_s3_directories): one at a time, they take minutes")
 # Workarounds this Snakemake (or S3 plugin) doesn't let us apply; the executor warns about them
 NOT_APPLIED: list = []
 

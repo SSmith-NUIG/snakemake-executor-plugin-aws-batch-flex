@@ -495,3 +495,79 @@ def test_each_library_the_image_lacks_comes_from_the_amis_conda(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "loaded ['libgcc_s.so.1', 'libstdc++.so.6', 'libz.so.1']" in r.stdout
     assert "can't load in this image" not in r.stderr
+
+
+def test_s3_directories_move_many_files_at_a_time(tmp_path, monkeypatch):
+    import threading
+    import time
+    from pathlib import Path
+
+    import boto3
+    import pytest
+    s3 = pytest.importorskip("snakemake_storage_plugin_s3")
+    from snakemake_executor_plugin_aws_batch_flex import jobfixes
+
+    calls, busy, most = [], [0], [0]
+    lock = threading.Lock()
+
+    class Client:  # what the patch sends; each call takes a moment, to see them overlap
+        def _call(self, *what):
+            with lock:
+                busy[0] += 1
+                most[0] = max(most[0], busy[0])
+            time.sleep(0.01)
+            with lock:
+                busy[0] -= 1
+                calls.append(what)
+
+        def upload_file(self, filename, bucket, key):
+            self._call("put", bucket, key)
+
+        def download_file(self, bucket, key, filename):
+            Path(filename).write_text(key)
+            self._call("get", key)
+
+        def delete_objects(self, Bucket, Delete):
+            self._call("delete", len(Delete["Objects"]))
+
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: Client())
+    assert jobfixes.parallel_s3_directories() is None
+    assert jobfixes.parallel_s3_directories() is None  # patching twice is harmless
+
+    out = tmp_path / "report"
+    (out / "data").mkdir(parents=True)
+    for i in range(200):
+        (out / "data" / f"{i}.js").write_text("x")
+    settings = types.SimpleNamespace(endpoint_url=None, region="eu-west-1", access_key=None, secret_key=None,
+                                     token=None, signature_version=None, retries=5)
+
+    class Provider:  # a real one, unlike a SimpleNamespace, can be weakly referenced
+        pass
+    provider = Provider()
+    provider.settings = settings
+
+    class Obj:
+        bucket, key, _is_dir = "b", "proj/results/report", None
+        def __init__(self, local): self.local, self.provider = local, provider
+        def local_path(self): return self.local
+        def bucket_exists(self): return True
+        def is_dir(self): return True
+        def get_subkeys(self):
+            return [types.SimpleNamespace(key=k) for _, _, k in [c for c in calls if c[0] == "put"]]
+
+    o = Obj(out)
+    s3.StorageObject.store_object(o)
+    puts = [c for c in calls if c[0] == "put"]
+    assert len(puts) == 200 and ("put", "b", "proj/results/report/data/7.js") in puts and o._is_dir is True
+    assert most[0] > 8  # many at a time, not one by one
+    s3.StorageObject.retrieve_object(Obj(tmp_path / "copy"))
+    assert (tmp_path / "copy" / "data" / "7.js").read_text() == "proj/results/report/data/7.js"
+    s3.StorageObject.remove(o)
+    assert [c for c in calls if c[0] == "delete"] == [("delete", 200)]  # one request, not 200
+
+    # a single file is the plugin's own business
+    o = Obj(tmp_path / "copy" / "data" / "7.js")
+    o.is_dir = lambda: False
+    o.s3obj = lambda: types.SimpleNamespace(upload_file=lambda p: calls.append(("plugin's own", str(p))))
+    s3.StorageObject.store_object(o)
+    assert calls[-1][0] == "plugin's own"
