@@ -39,7 +39,8 @@ snakemake-batch-flex-host-env = "snakemake_executor_plugin_aws_batch_flex.hosten
 smkflex = "snakemake_executor_plugin_aws_batch_flex.remote:main"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-xdist", "ruff", "snakemake", "snakemake-storage-plugin-fs", "snakemake-storage-plugin-s3"]
+test = ["pytest", "pytest-xdist", "ruff", "snakemake", "snakemake-storage-plugin-fs", "snakemake-storage-plugin-s3",
+        "pandas"]  # scripts handed pandas params (test_script_python)
 
 # PyPI gives headings no anchors: links within the README go to it on GitHub instead
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
