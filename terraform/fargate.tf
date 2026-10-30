@@ -72,7 +72,7 @@ output "snakemake_profile_fargate" {
     "aws-batch-flex-head-role-arn: ${aws_iam_role.head.arn}",
     "aws-batch-flex-bootstrap: auto",
     "aws-batch-flex-install-prereqs: true",
-    "aws-batch-flex-default-image: debian:12",
+    "aws-batch-flex-default-image: buildpack-deps:bookworm-scm",
     "default-resources: [mem_mb=512]",
     "jobs: 5",
   ], local.log_group == null ? [] : ["aws-batch-flex-log-group: ${local.log_group}"])) : "enable_fargate is false"

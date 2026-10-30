@@ -35,7 +35,7 @@ grouped below; most people never need more than the first group. In the tables, 
 | `job-role-arn` | *the instances' own role (EC2)* | The IAM role jobs run as. It needs to read and write the S3 bucket. |
 | `execution-role-arn` | *none* | The IAM role Batch uses to start a job: to pull its image and send its logs. Needed for Fargate queues and private registries. |
 | `head-role-arn` | *none* | The IAM role of the head job, the Batch job in which `smkflex run` runs Snakemake (see [Long runs](guide.md#long-runs-smkflex)). Only `smkflex` uses it. |
-| `default-image` | *none* | The image for rules that have no `container:`. |
+| `default-image` | *none* | The image for rules that have no `container:`. The setup writes `buildpack-deps:bookworm-scm` (Debian 12 with curl, wget and git, as a workstation has them): pipelines often call such tools, or a wrapper does, without a container or conda package for them. |
 | `tags` | *none* | Extra `KEY=VALUE` tags on every job, e.g. `[project=rnaseq, team=genomics]`, for example to see costs by project. |
 
 **How jobs get Snakemake**

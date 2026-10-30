@@ -21,7 +21,7 @@ aws-batch-flex-queue: my-queue
 aws-batch-flex-region: eu-west-1
 aws-batch-flex-job-role-arn: arn:aws:iam::123456789012:role/snakemake-job
 aws-batch-flex-bootstrap: host
-aws-batch-flex-default-image: debian:12
+aws-batch-flex-default-image: buildpack-deps:bookworm-scm
 jobs: 100
 ```
 
