@@ -660,6 +660,8 @@ class Executor(RemoteExecutor):
                     times, _asked = self._oom.get(info.job.jobid, (0, None))
                     self._oom[info.job.jobid] = (times + 1, _sub(info).asked)
                 msg = await asyncio.to_thread(self._failure_message, d, info)
+                if info.job.is_group():  # Snakemake's report of a failed group leaves msg out
+                    self.logger.error(f"Error in group job {info.job.name}:\n    message: {msg}")
                 self.report_job_error(info, msg=msg)
             elif status in ACTIVE:
                 self._warn_if_stuck(d, info)

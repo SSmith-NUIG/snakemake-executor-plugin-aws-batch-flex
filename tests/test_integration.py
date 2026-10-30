@@ -82,6 +82,27 @@ def test_failure_surfaces_log_tail(tmp_path):
     assert not list(tmp_path.glob(".snakemake/storage/**/boom.log"))  # read, not left behind
 
 
+def test_failed_group_job_shows_why(tmp_path):
+    # Snakemake's report of a failed group job leaves out the executor's message
+    snakefile = textwrap.dedent('''
+        rule all:
+            input: "b.txt"
+        rule a:
+            output: "a.txt"
+            group: "g"
+            shell: "touch {output}"
+        rule b:
+            input: "a.txt"
+            output: "b.txt"
+            group: "g"
+            shell: "echo group-member-failed-marker >&2; exit 3"
+    ''')
+    r, calls = run(tmp_path, snakefile)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and sum(c["call"] == "submit_job" for c in calls) == 1
+    assert "Error in group job" in out and "exit code: 1" in out and "group-member-failed-marker" in out
+
+
 def test_startup_check_wrong_queue(tmp_path):
     r, calls = run(tmp_path, FAILING, "--aws-batch-flex-queue", "no-such-queue")
     assert r.returncode != 0
