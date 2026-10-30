@@ -50,11 +50,12 @@ recipe() {
       REPO=snakemake-workflows/dna-seq-varlociraptor TAG=v6.11.4
       setup() { overlay; }
       INPUTS="data" ARGS="--configfile config-simple/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
-    zarp)  # a container: per rule (biocontainers and others); its tests name ../input_files
+    zarp)  # a container: per rule (biocontainers and others); its tests name ../input_files, and it
+      # makes input paths absolute (os.path.abspath), so they're uploaded by their absolute path
       REPO=zavolanlab/zarp TAG=v1.0.0-rc.1
       setup() { cp -r tests/input_files input_files
                 sed -i 's#\.\./input_files/#input_files/#g; s#\.\./\.\./images/#images/#g' input_files/*.yaml input_files/*.tsv; }
-      INPUTS="input_files" ARGS="--configfile input_files/config.yaml -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
+      INPUTS="$WORK/zarp/input_files" ARGS="--configfile input_files/config.yaml -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
     grenepipe)  # inputs by absolute path, as its example sets them up
       REPO=lczech/grenepipe TAG=v0.15.0
       setup() { bash example/prepare.sh && cp example/config.yaml config.yaml; }
