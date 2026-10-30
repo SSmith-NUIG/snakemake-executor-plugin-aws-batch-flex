@@ -50,6 +50,13 @@ def known_problem_hints(log_lines: List[str]) -> List[str]:
             "multiext(\"genome.fa\", \".amb\", \".ann\", \".bwt\", \".pac\", \".sa\") for bwa, "
             "or bai=\"x.bam.bai\"."
         )
+    if "StringDtype.__init__() takes from 1 to 2 positional arguments" in text:
+        hints.append(
+            "  hint: Snakemake runs with pandas 3, the rule's environment has pandas 2, and pandas 2 "
+            "can't load the data Snakemake hands the script (it fails the same way on your own "
+            "machine). Use pandas 2 where you run Snakemake (pip install 'pandas<3') and then "
+            "scripts/update-ami.sh, so the AMI's matches, or give the rule's environment pandas 3."
+        )
     if "No space left on device" in text:
         hints.append(
             "  hint: the job ran out of disk. On EC2, all jobs on an instance share its disk "

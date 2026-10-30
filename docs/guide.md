@@ -440,6 +440,11 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   without the Terraform setup); the rule's own `log:` files are in the bucket (`smkflex pull logs`).
 - **Where a job's error is.** The plugin shows the end of the job's own output and of the rule's
   `log:` files (most tools write their errors there, with `2> {log}`), fetched from the bucket.
+- **A script fails at once with "StringDtype.__init__() takes from 1 to 2 positional arguments".**
+  Snakemake runs with pandas 3 and the rule's environment (or wrapper) has pandas 2, which can't
+  load the data Snakemake hands the script. It fails the same way on your own machine. Use pandas
+  2 where you run Snakemake (`pip install 'pandas<3'`) and then `scripts/update-ami.sh`, so the
+  AMI matches it, or give the rule's environment pandas 3.
 - **A job fails with "403" or "Forbidden" from S3.** Jobs use the job role, not your login, and
   the Terraform setup only lets it use `s3://BUCKET/snakemake/`. Keep the project's folder inside
   it (which `smkflex init` does).
