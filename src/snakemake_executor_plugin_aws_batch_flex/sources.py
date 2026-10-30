@@ -79,5 +79,5 @@ def too_big(files, limit_mb, root="."):
         return None
     biggest = ", ".join(f"{d} {n / 1e6:.0f} MB" for d, n in sorted(by_top.items(), key=lambda kv: -kv[1])[:5])
     return (f"Every job gets the workflow folder, and it has {total / 1e6:.0f} MB to send ({biggest}); the limit "
-            f"is {limit_mb} MB. Data belongs in storage: add folders like these to .gitignore (`smkflex init` "
-            "adds resources/ too), or raise aws-batch-flex-max-sources-mb.")
+            f"is {limit_mb} MB. Data belongs in storage: add folders like these to .gitignore (and upload "
+            "what the rules read as inputs with smkflex push), or raise aws-batch-flex-max-sources-mb.")

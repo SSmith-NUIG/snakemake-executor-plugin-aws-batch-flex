@@ -282,7 +282,9 @@ def cmd_status(a):
         print(f"{j['jobId']}  {j.get('status', ''):<9}  {when}  {what}")
     return 0
 
-IGNORE_LINES = ("data/", "results/", "resources/", "logs/", ".snakemake/")
+# Not resources/: in Snakemake's layout it has small files the workflow reads (gene lists,
+# templates), which the jobs need; what rules download into it goes to storage anyway
+IGNORE_LINES = ("data/", "results/", "logs/", ".snakemake/")
 
 def cmd_init(a):
     """Set up this folder as a project: its own folder in the bucket (in the workflow profile

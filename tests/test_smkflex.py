@@ -415,6 +415,7 @@ def test_init(tmp_path):
     assert wp == f"default-storage-prefix: {store}/wf\n"
     gi = (wf / ".gitignore").read_text()
     assert gi.startswith("*.bam\n") and "data/" in gi and ".snakemake/" in gi
+    assert "resources/" not in gi  # small files the pipeline's scripts read: the jobs need them
     # again: nothing changes
     r, _ = smkflex(wf, "init")
     assert "already has its folder in storage" in r.stdout

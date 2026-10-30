@@ -430,8 +430,9 @@ so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the s
   `smkflex push /shared/refs`). When the file is on this machine, the message says so and gives
   the command.
 - **"Every job gets the workflow folder, and it has … MB".** Data sitting in the folder would
-  go to every job: add its folders to `.gitignore` (`smkflex init` adds `resources/`), or raise
-  `aws-batch-flex-max-sources-mb`.
+  go to every job: add its folders to `.gitignore` (and upload what the rules read as inputs
+  with `smkflex push`), or raise `aws-batch-flex-max-sources-mb`. `resources/` goes along unless
+  you add it: pipelines keep small files there that their scripts read directly.
 - **A job fails.** Snakemake prints the end of the job's log, and for causes the plugin recognises
   (out of memory, a full disk, a missing package or storage plugin, S3 permissions) a hint on what
   to do. Full logs are in the AWS console under **CloudWatch** > **Log groups** >
