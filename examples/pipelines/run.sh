@@ -39,7 +39,9 @@ recipe() {
       REPO=snakemake-workflows/rna-seq-kallisto-sleuth TAG=v4.1.1
       setup() { overlay && echo "  - statsmodels <0.15" >> workflow/envs/goatools.yaml; }
       INPUTS="ngs-test-data resources config" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
-    nanopore)
+    nanopore)  # can't run on Batch: it finds its reads by searching the folder Snakemake runs in
+      # (os.walk(Path.cwd()), absolute paths), which each job does again in its own folder; see README
+      echo "nanopore: not runnable on remote executors as written (see README)" >&2; return 1
       REPO=snakemake-workflows/transcriptome-differential-expression TAG=v2.6.0
       setup() { overlay; }
       INPUTS="ngs-test-data" ARGS="--configfile config-simple/config.yml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going";;
