@@ -63,6 +63,8 @@ def test_run_on_batch_and_rerun_with_saved_state(tmp_path):
     jobdefs = {c["name"]: c["image"] for c in calls if c["call"] == "register_job_definition"}
     assert jobdefs[head["jobdef"]] == "buildpack-deps:bookworm-scm"
     assert head["tags"]["smkflex-workflow"] == "wf"
+    # unpacked at the project's own path where it can, so os.path.abspath() agrees with push
+    assert f"SMKFLEX_HERE={wf}" in head["script"]
     assert {"type": "MEMORY", "value": "2048"} in head["res"]
     # the head job removes the uploaded workflow when it's done
     assert not list((store / ".smkflex" / "runs").glob("*/workflow.tar.gz"))
@@ -225,6 +227,7 @@ def test_run_from_git(tmp_path):
     head = next(c for c in calls if c["call"] == "submit_job" and c["jobName"] == "smkflex-pipeline")
     assert head["tags"]["smkflex-commit"] == v1[:12] and head["tags"]["smkflex-source"] == f"{url} v1"
     assert f"Submitted workflow 'pipeline' at {v1[:12]}" in r.stdout
+    assert "SMKFLEX_HERE" not in head["script"]  # a clone's temporary folder: no path to keep
 
     # the rest of a run doesn't depend on what was cloned: a commit needs a full clone, and
     # without --rev it's the default branch (v2)

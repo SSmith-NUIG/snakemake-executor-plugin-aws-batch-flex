@@ -157,7 +157,8 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
         jobDefinition=jobdef,
         containerOverrides={
             "command": Entrypoints(registry_secrets(s), _Log()).command(
-                image, head_command(profile, platform, bundle_url, state_url, snakemake_args)),
+                image, head_command(profile, platform, bundle_url, state_url, snakemake_args,
+                                    workdir=None if a.git else os.path.abspath(root))),
             "resourceRequirements": [{"type": "VCPU", "value": vcpu}, {"type": "MEMORY", "value": str(mem)}],
             "environment": env,
         },

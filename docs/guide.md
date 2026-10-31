@@ -160,7 +160,9 @@ runs everything on your machine need a change:
   files at their plain paths (`results/x.bam` there, an absolute `/data/x` at `/data/x`), not
   under `.snakemake/storage/`. So a tool finds an input however the Snakefile passes it: `{input}`,
   a param (`--genomeDir {params.index}`), or a path made with `os.path.abspath()`. Inputs named
-  by an absolute path are uploaded by it: `smkflex push $PWD/input_files`. Where the image doesn't
+  by an absolute path are uploaded by it: `smkflex push $PWD/input_files`. `smkflex run` unpacks
+  the workflow at the same path as your project folder too (not with `--git`, which clones into a
+  temporary folder), so such paths agree in its head job. Where the image doesn't
   allow that folder (it runs as a non-root user, or already has files there), the job works under
   `/tmp` and such pipelines fail as they would with any cloud executor.
 - **No `workdir:`.** The jobs need the Snakefile inside the folder Snakemake works in, so the run

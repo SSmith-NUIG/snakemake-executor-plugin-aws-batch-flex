@@ -120,6 +120,7 @@ class FakeBatch:
              env={e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]},
              retry=kw.get("retryStrategy"), priority=kw.get("schedulingPriorityOverride"),
              cmd=kw["containerOverrides"]["command"][:-1], cmdtail=kw["containerOverrides"]["command"][-1][-700:],
+             script=kw["containerOverrides"]["command"][-1],
              # ECS allows 8192 characters of overrides (command and environment) per job
              overrides_chars=len(json.dumps(kw["containerOverrides"], separators=(",", ":"))))
         return {"jobId": jid, "jobName": kw["jobName"]}

@@ -98,19 +98,28 @@ _PREREQS = r'''
 '''
 
 
+def same_path(want: str, use: str, then: str = "") -> str:
+    """Shell that sets $<use> to the path in $<want>, and runs `then`, where that's safe: not /,
+    not a system or mount folder, not a folder the image already has files in, and one it can
+    make and write to. Otherwise $<use> stays as it is."""
+    return (
+        f'case "${{{want}:-/}}" in\n'
+        "/|/opt|/opt/*|/usr*|/etc*|/bin*|/sbin*|/lib*|/proc*|/sys*|/dev*|/boot*|/var/lib*|/run*) ;;\n"
+        f'*) if [ ! -e "${want}" ] || [ -z "$(ls -A "${want}" 2>/dev/null)" ]; then\n'
+        f'mkdir -p "${want}" 2>/dev/null && [ -w "${want}" ] && {use}=${want}{" && " + then if then else ""}; fi ;;\n'
+        "esac\n"
+    )
+
+
 # The job works in a folder at the same path as the one Snakemake runs in (SMK_FLEX_WORKDIR), so
 # that a Snakefile's os.path.abspath() gives the same paths in the job, as on a cluster's shared
-# filesystem (zarp resolves its inputs so). Only where that's safe: not /, not a system or mount
-# folder, and not a folder the image already has files in; otherwise a folder under /tmp.
-WORKDIR = r"""SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"
-case "${SMK_FLEX_WORKDIR:-/}" in
-/|/opt|/opt/*|/usr*|/etc*|/bin*|/sbin*|/lib*|/proc*|/sys*|/dev*|/boot*|/var/lib*|/run*) ;;
-*) if [ ! -e "$SMK_FLEX_WORKDIR" ] || [ -z "$(ls -A "$SMK_FLEX_WORKDIR" 2>/dev/null)" ]; then
-mkdir -p "$SMK_FLEX_WORKDIR" 2>/dev/null && [ -w "$SMK_FLEX_WORKDIR" ] && SMK_WORK=$SMK_FLEX_WORKDIR \
-&& export SMK_FLEX_SAME_PATH=1; fi ;;
-esac
-mkdir -p "$SMK_WORK"; cd "$SMK_WORK"
-"""
+# filesystem (zarp resolves its inputs so), and it keeps storage files at their plain paths there
+# (jobfixes.plain_local_paths). Otherwise a folder under /tmp.
+WORKDIR = (
+    'SMK_WORK="${TMPDIR:-/tmp}/snakemake-job-$$"\n'
+    + same_path("SMK_FLEX_WORKDIR", "SMK_WORK", "export SMK_FLEX_SAME_PATH=1")
+    + 'mkdir -p "$SMK_WORK"; cd "$SMK_WORK"\n'
+)
 
 _HOST_TEMPLATE = r"""
 set -eu

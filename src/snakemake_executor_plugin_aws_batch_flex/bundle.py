@@ -11,7 +11,7 @@ import tarfile
 from datetime import datetime, timezone
 
 from . import headjob
-from .bootstrap import conda_snippet, snakemake_prelude
+from .bootstrap import conda_snippet, same_path, snakemake_prelude
 from .profiles import Fail
 from .settings import from_profile
 from .sources import SKIP_DIRS, named_files, workflow_files
@@ -112,7 +112,10 @@ def make_bundle(root, profile_dir, max_mb, extra=None):
         t.add(headjob.__file__, arcname=".smkflex/head.py")
     return buf.getvalue()
 
-def head_command(profile, platform, bundle_url, state_url, snakemake_args):
+def head_command(profile, platform, bundle_url, state_url, snakemake_args, workdir=None):
+    """The head job's command. With workdir (the project folder smkflex run was started in), it
+    unpacks the workflow at that same path where it can, so that paths a Snakefile makes absolute
+    (os.path.abspath) are where smkflex push put them, in the head job and its jobs alike."""
     s = from_profile(profile)
     mode = "auto" if s.bootstrap == "host" and platform == "fargate" else s.bootstrap
     resolved_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -122,7 +125,9 @@ def head_command(profile, platform, bundle_url, state_url, snakemake_args):
     args = " ".join(shlex.quote(a) for a in snakemake_args)
     return (
         f"{prelude}\n"
-        'SMKFLEX_DIR="${TMPDIR:-/tmp}/smkflex-workflow"; rm -rf "$SMKFLEX_DIR"; mkdir -p "$SMKFLEX_DIR"\n'
+        'SMKFLEX_DIR="${TMPDIR:-/tmp}/smkflex-workflow"\n'
+        + (f"SMKFLEX_HERE={shlex.quote(workdir)}\n" + same_path("SMKFLEX_HERE", "SMKFLEX_DIR") if workdir else "")
+        + 'rm -rf "$SMKFLEX_DIR"; mkdir -p "$SMKFLEX_DIR"\n'
         'SMKFLEX_PY="${SMK_PY:-python}"\n'
         f'"$SMKFLEX_PY" -c {shlex.quote(_FETCH)} {shlex.quote(bundle_url)} "$SMKFLEX_DIR"\n'
         'cd "$SMKFLEX_DIR"\n'
