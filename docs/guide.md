@@ -463,6 +463,10 @@ definition of your own (`aws-batch-flex-job-definition`) doesn't get them: set i
   and `benchmarks/` never go along (jobs read and write those in storage), nor do single files
   over 10 MB or anything outside the folder. So check whether the file is git-ignored,
   big, or outside the folder. Data the workflow reads belongs in its inputs, in storage.
+- **"links to files outside the workflow folder".** Jobs get the folder's links as links, so a
+  sample sheet linked in from elsewhere would point at nothing there; the run stops before
+  submitting anything. Copy the file in instead (`cp --remove-destination "$(readlink -f F)" F`).
+  A relative link to a file inside the folder is fine, and `smkflex run` sends links' content.
 - **"Missing input files … (in storage)".** Jobs read their inputs from storage, not from your
   machine, so input data has to be uploaded once: `smkflex push data` (absolute paths too, e.g.
   `smkflex push /shared/refs`). When the file is on this machine, the message says so and gives

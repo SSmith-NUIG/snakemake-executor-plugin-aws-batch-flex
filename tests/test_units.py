@@ -662,3 +662,17 @@ def test_job_definitions_without_secrets_keep_their_names():
     arn = "arn:aws:ssm:eu-west-1:1:parameter/t"
     props = JobDefinitions(None, None, secrets={"T": arn}, **kw).container_properties("debian:12")
     assert props["secrets"] == [{"name": "T", "valueFrom": arn}] and props["executionRoleArn"] == kw["execution_role_arn"]
+
+
+def test_links_a_job_couldnt_follow(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.sources import outside_links
+    wf = tmp_path / "wf"
+    (wf / "config").mkdir(parents=True)
+    (tmp_path / "sheet.tsv").write_text("s\n")
+    (wf / "config" / "real.tsv").write_text("r\n")
+    (wf / "config" / "outside.tsv").symlink_to(tmp_path / "sheet.tsv")  # absolute, outside
+    (wf / "config" / "up.tsv").symlink_to("../../sheet.tsv")  # relative, outside
+    (wf / "config" / "abs_in.tsv").symlink_to(wf / "config" / "real.tsv")  # absolute: the job may work elsewhere
+    (wf / "config" / "rel_in.tsv").symlink_to("real.tsv")  # relative, inside: arrives working
+    files = ["config/real.tsv", "config/outside.tsv", "config/up.tsv", "config/abs_in.tsv", "config/rel_in.tsv"]
+    assert outside_links(files, str(wf)) == ["config/abs_in.tsv", "config/outside.tsv", "config/up.tsv"]

@@ -13,7 +13,7 @@ import re
 from snakemake_interface_common.exceptions import WorkflowError
 
 from .settings import MAX_SOURCES_MB, PLUGIN_NAME
-from .sources import named_files, too_big, workflow_files
+from .sources import named_files, outside_links, too_big, workflow_files
 
 
 SOURCES = ("sending the workflow folder to the jobs (Snakemake's DAG.get_sources): jobs get only "
@@ -97,6 +97,15 @@ def skip_remote_module_scripts():
             # git still lists a tracked file deleted here (not committed yet), and Snakemake
             # then fails to pack it
             files.difference_update([f for f in files if not os.path.exists(f)])
+            links = outside_links(files)
+            if links:
+                raise WorkflowError(
+                    f"{', '.join(links[:5])}{' and more' if len(links) > 5 else ''}: links to files outside "
+                    "the workflow folder. Jobs get the folder's files with links as links, so these would point "
+                    "at nothing there. Copy the file in instead of linking it (cp --remove-destination "
+                    "\"$(readlink -f FILE)\" FILE), or make it a rule's input and push it to storage. "
+                    "(smkflex run sends their content.)"
+                )
             settings = getattr(self.workflow, "executor_settings", None)
             limit = getattr(settings, "max_sources_mb", None) or MAX_SOURCES_MB
             problem = too_big(files, limit)

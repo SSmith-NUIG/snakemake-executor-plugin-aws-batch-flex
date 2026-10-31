@@ -829,3 +829,14 @@ def test_group_jobs_get_no_set_resources_lines(tmp_path, monkeypatch):
     assert any(l.split()[:1] == ["mapping_ga_gb"] for l in usage.splitlines()), usage  # still in the table
     assert "set-resources:" not in usage and "set-threads:" not in usage, usage
     assert "group mapping (rules ga, gb) peaked at 1024 MiB" in usage, usage
+
+
+def test_a_linked_file_outside_the_folder_stops_the_run(tmp_path):
+    sheet = tmp_path.parent / f"{tmp_path.name}-sheet.tsv"
+    sheet.write_text("s1\n")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "samples.tsv").symlink_to(sheet)
+    r, calls = run(tmp_path, SNAKEFILE)
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and "config/samples.tsv: links to files outside the workflow folder" in out, out
+    assert not any(c["call"] == "submit_job" for c in calls)

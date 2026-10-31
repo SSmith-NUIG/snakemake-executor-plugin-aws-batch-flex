@@ -86,6 +86,20 @@ def named_files(config, root="."):
     return found
 
 
+def outside_links(files, root="."):
+    """The files that are links a job couldn't follow: Snakemake sends a link as a link, so one
+    that is absolute or points outside the folder arrives pointing at nothing."""
+    here = os.path.realpath(root)
+    out = []
+    for f in sorted(files):
+        path = os.path.join(root, f)
+        if os.path.islink(path):
+            target = os.path.realpath(path)
+            if os.path.isabs(os.readlink(path)) or os.path.commonpath([here, target]) != here:
+                out.append(f)
+    return out
+
+
 def too_big(files, limit_mb, root="."):
     """None, or what to say when `files` add up to more than limit_mb (MB)."""
     total, by_top = 0, {}
