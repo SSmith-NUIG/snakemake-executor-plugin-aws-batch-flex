@@ -92,7 +92,7 @@ def make_bundle(root, profile_dir, max_mb, extra=None):
     with tarfile.open(fileobj=buf, mode="w:gz", dereference=True) as t:
         for f in files:
             total += os.path.getsize(sources[f])
-            if total > max_mb * 1024 * 1024:
+            if total > max_mb * 1e6:  # MB, as max-sources-mb
                 raise Fail(f"the workflow folder has more than {max_mb} MB of files (at {f}); data "
                            "belongs in storage. Add big files to .gitignore, or raise --max-bundle-mb.")
             t.add(sources[f], arcname=f)

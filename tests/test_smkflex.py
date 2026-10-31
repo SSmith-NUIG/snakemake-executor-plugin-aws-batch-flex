@@ -158,6 +158,21 @@ def test_bundle_sends_linked_files_as_files(tmp_path):
     assert (tmp_path / "out" / "config" / "samples.tsv").read_text() == "sample\n"
 
 
+def test_bundle_limit_is_in_mb_like_max_sources_mb(tmp_path):
+    import pytest
+    from snakemake_executor_plugin_aws_batch_flex.bundle import make_bundle
+    from snakemake_executor_plugin_aws_batch_flex.profiles import Fail
+    wf, prof = tmp_path / "wf", tmp_path / "prof"
+    wf.mkdir()
+    prof.mkdir()
+    (prof / "config.yaml").write_text("x: 1\n")
+    (wf / "ref.fa").write_bytes(b"A" * 1_000_001)  # over 1 MB, under 1 MiB
+    with pytest.raises(Fail, match="more than 1 MB"):
+        make_bundle(str(wf), str(prof), 1)
+    (wf / "ref.fa").write_bytes(b"A" * 1_000_000)
+    make_bundle(str(wf), str(prof), 1)
+
+
 def test_git_stand_in_lists_the_sent_files(tmp_path, monkeypatch):
     import shutil
     from snakemake_executor_plugin_aws_batch_flex import headjob
