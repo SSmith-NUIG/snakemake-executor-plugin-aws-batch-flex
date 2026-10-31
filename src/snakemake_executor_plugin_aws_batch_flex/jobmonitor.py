@@ -32,6 +32,8 @@ CGROUP = "/sys/fs/cgroup"
 
 def _memory():
     path = os.environ.get("SMK_FLEX_MEMSTAT_FILE", os.path.join(CGROUP, "memory.stat"))
+    if not os.path.exists(path):  # cgroup v1 keeps it in the memory controller's folder
+        path = os.path.join(CGROUP, "memory", "memory.stat")
     total = 0
     with open(path) as f:
         for line in f:

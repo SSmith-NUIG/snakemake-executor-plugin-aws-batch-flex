@@ -595,3 +595,51 @@ def test_plain_local_paths_where_each_storage_file_is_kept(tmp_path, monkeypatch
     assert where("s3://b/proj//data/refs/g.fa") == Path("/data/refs/g.fa")  # an absolute path
     assert where("s3://b/proj//etc/hosts") == usual  # never into system folders
     assert where("s3://b/other/x") == usual and where("s3://b/proj/../x") == usual
+
+
+def _failed_job_info():
+    from snakemake_executor_plugin_aws_batch_flex.executor import Submitted
+    job = types.SimpleNamespace(log=[], attempt=1, restart_times=0, jobid=1, name="r", is_group=lambda: False)
+    return types.SimpleNamespace(job=job, external_jobid="j1",
+                                 aux={"smkflex": Submitted("img", "q", "ec2", 1.0, 2048, 2048)})
+
+
+def test_failure_message_for_a_job_that_never_had_a_log():
+    # an image that can't be pulled: the job fails before it has a log stream
+    from snakemake_executor_plugin_aws_batch_flex.executor import Executor
+    me = types.SimpleNamespace(settings=types.SimpleNamespace(oom_memory_factor=2.0, log_group="/aws/batch/job"))
+    d = {"jobId": "j1", "status": "FAILED", "statusReason": "CannotPullContainerError: not found", "container": {}}
+    msg = Executor._failure_message(me, d, _failed_job_info())
+    assert "CannotPullContainerError" in msg and "CloudWatch" not in msg
+
+
+def test_a_failed_status_query_leaves_the_jobs_running():
+    import asyncio, contextlib
+    from botocore.exceptions import ClientError
+    from snakemake_executor_plugin_aws_batch_flex.executor import Executor
+
+    def describe_jobs(jobs):
+        raise ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "DescribeJobs")
+
+    errors, kept = [], []
+    me = types.SimpleNamespace(batch=types.SimpleNamespace(describe_jobs=describe_jobs), _unfinished={"j1"},
+                               status_rate_limiter=contextlib.AsyncExitStack(),
+                               logger=types.SimpleNamespace(warning=lambda m: None),
+                               report_job_error=lambda info, msg=None: errors.append(msg))
+
+    async def check():
+        async for info in Executor.check_active_jobs(me, [_failed_job_info()]):
+            kept.append(info)
+
+    asyncio.run(check())
+    assert len(kept) == 1 and not errors and me._unfinished == {"j1"}
+
+
+def test_peak_memory_on_cgroup_v1(tmp_path, monkeypatch):
+    from snakemake_executor_plugin_aws_batch_flex import jobmonitor
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "memory.stat").write_text("cache 999\nrss 100\nshmem 20\ntotal_rss 100\n")
+    monkeypatch.setattr(jobmonitor, "CGROUP", str(tmp_path))
+    monkeypatch.delenv("SMK_FLEX_MEMSTAT_FILE", raising=False)
+    assert jobmonitor._memory() == 120
+

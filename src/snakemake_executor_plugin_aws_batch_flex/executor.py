@@ -668,7 +668,7 @@ class Executor(RemoteExecutor):
                 except (ClientError, BotoCoreError) as e:
                     self.logger.warning(f"AWS Batch status query failed, will retry: {e}")
                     for jid in ids[i : i + 100]:
-                        yield by_id[jid]
+                        yield by_id.pop(jid)  # still active; not "no longer known" below
                     continue
             for d in resp["jobs"]:
                 described[d["jobId"]] = d
@@ -776,6 +776,7 @@ class Executor(RemoteExecutor):
                     f"  hint: the job ran out of memory ({mem} MiB). Raise the rule's mem_mb, or run with "
                     "--retries 2: the plugin then retries jobs that ran out of memory with twice as much."
                 )
+        events = []  # none when the job failed before it had a log (an image that can't be pulled)
         stream = c.get("logStreamName")
         if stream:
             group = log_group_of(c, self.settings.log_group)
@@ -791,7 +792,6 @@ class Executor(RemoteExecutor):
                     lines.append("  last log lines:")
                     lines += [f"    {e['message'].rstrip()}" for e in events]
             except (ClientError, BotoCoreError):
-                events = []
                 lines.append("  (could not fetch log tail)")
         # Tools' own errors are usually in the rule's log: files (2> {log}), which are in storage
         logged = []

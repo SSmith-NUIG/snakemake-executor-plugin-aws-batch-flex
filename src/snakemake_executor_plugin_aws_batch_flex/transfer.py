@@ -144,7 +144,13 @@ def cmd_push(a):
         if os.path.isfile(path):
             files[target] = path
             continue
-        for d, dirs, names in os.walk(path):
+        seen = set()
+        # reads are often linked in from elsewhere (data/run1 -> /mnt/seq/run1): follow links
+        for d, dirs, names in os.walk(path, followlinks=True):
+            if os.path.realpath(d) in seen:  # a link back up the tree
+                dirs[:] = []
+                continue
+            seen.add(os.path.realpath(d))
             dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
             for n in names:
                 local = os.path.join(d, n)

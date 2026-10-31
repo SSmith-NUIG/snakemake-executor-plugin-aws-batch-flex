@@ -311,8 +311,9 @@ def cmd_init(a):
             print("(no workflow/ or Snakefile here; is this the project's top folder?)", file=sys.stderr)
         prefix = f"{base}/{name}"
         os.makedirs(wp_dir, exist_ok=True)
+        ends_open = os.path.isfile(wp) and open(wp).read()[-1:] not in ("", "\n")
         with open(wp, "a") as f:
-            f.write(f"default-storage-prefix: {prefix}\n")
+            f.write(("\n" if ends_open else "") + f"default-storage-prefix: {prefix}\n")
         print(f"This project's files go to {prefix} (written to {wp}).")
     lines = []
     if os.path.isfile(".gitignore"):

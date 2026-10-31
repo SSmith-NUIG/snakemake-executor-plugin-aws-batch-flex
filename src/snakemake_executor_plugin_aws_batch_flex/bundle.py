@@ -87,7 +87,9 @@ def make_bundle(root, profile_dir, max_mb, extra=None):
     sources = {f: os.path.join(root, f) for f in workflow_files(root)}
     sources.update(extra or {})
     files = sorted(sources)
-    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+    # dereference: a linked file (config/samples.tsv -> ~/sheets/...) goes as its content; the
+    # head job's unpacking refuses links that point outside the folder
+    with tarfile.open(fileobj=buf, mode="w:gz", dereference=True) as t:
         for f in files:
             total += os.path.getsize(sources[f])
             if total > max_mb * 1024 * 1024:

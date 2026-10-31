@@ -142,6 +142,22 @@ def test_bundle_follows_gitignore(tmp_path):
     assert workflow_files(str(tmp_path)) == [".gitignore", "Snakefile"]
 
 
+def test_bundle_sends_linked_files_as_files(tmp_path):
+    # the head job's unpacking (filter "data") refuses links that point outside the folder
+    import io
+    from snakemake_executor_plugin_aws_batch_flex.bundle import make_bundle
+    wf, prof = tmp_path / "wf", tmp_path / "prof"
+    (wf / "config").mkdir(parents=True)
+    prof.mkdir()
+    (prof / "config.yaml").write_text("x: 1\n")
+    (wf / "Snakefile").write_text("")
+    (tmp_path / "sheet.tsv").write_text("sample\n")
+    (wf / "config" / "samples.tsv").symlink_to(tmp_path / "sheet.tsv")
+    t = tarfile.open(fileobj=io.BytesIO(make_bundle(str(wf), str(prof), 100)))
+    t.extractall(tmp_path / "out", filter="data")
+    assert (tmp_path / "out" / "config" / "samples.tsv").read_text() == "sample\n"
+
+
 def test_git_stand_in_lists_the_sent_files(tmp_path, monkeypatch):
     import shutil
     from snakemake_executor_plugin_aws_batch_flex import headjob
@@ -340,6 +356,16 @@ def test_push(tmp_path):
     r, _ = smkflex(wf, "push", "data")
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "store" / "data" / "sub" / "b.fq").read_text() == "BB"
+    # a folder of reads linked in from elsewhere, and a link back up that mustn't loop
+    (tmp_path / "seq" / "run1").mkdir(parents=True)
+    (tmp_path / "seq" / "run1" / "c.fq").write_text("C")
+    (wf / "data" / "run1").symlink_to(tmp_path / "seq" / "run1")
+    (wf / "data" / "sub" / "up").symlink_to(wf / "data")
+    r, _ = smkflex(wf, "push", "data")
+    assert "1 uploaded" in r.stdout, r.stdout + r.stderr
+    assert (tmp_path / "store" / "data" / "run1" / "c.fq").read_text() == "C"
+    (wf / "data" / "run1").unlink()
+    (wf / "data" / "sub" / "up").unlink()
     r, _ = smkflex(wf, "push", "data")
     assert "0 uploaded" in r.stdout and "2 already there" in r.stdout
     # edited since, to the same size: sent again
@@ -435,6 +461,11 @@ def test_init(tmp_path):
     r, _ = smkflex(wf, "init")
     assert "already has its folder in storage" in r.stdout
     assert (wf / ".gitignore").read_text() == gi
+    # a workflow profile whose last line has no newline: still valid YAML after init
+    wp_file = wf / "profiles" / "default" / "config.yaml"
+    wp_file.write_text("jobs: 4")
+    r, _ = smkflex(wf, "init")
+    assert wp_file.read_text() == f"jobs: 4\ndefault-storage-prefix: {store}/wf\n", r.stderr
     # push now goes to the project's folder
     (wf / "data").mkdir()
     (wf / "data" / "x").write_text("x")

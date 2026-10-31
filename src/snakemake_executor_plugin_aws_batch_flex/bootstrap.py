@@ -237,10 +237,16 @@ def own_packages():
     site = os.path.dirname(os.path.dirname(snakemake.__file__))
     d = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".smk-pkgs")
     if not os.path.isdir(d):
-        os.makedirs(d)
+        # made whole under another name, then renamed: a group job runs scripts at once
+        import tempfile
+        tmp = tempfile.mkdtemp(dir=os.path.dirname(d))
         for n in os.listdir(site):
             if n.startswith("snakemake") and os.path.isdir(os.path.join(site, n)) and "." not in n:
-                os.symlink(os.path.join(site, n), os.path.join(d, n))
+                os.symlink(os.path.join(site, n), os.path.join(tmp, n))
+        try:
+            os.rename(tmp, d)
+        except OSError:  # another script's came first
+            shutil.rmtree(tmp, ignore_errors=True)
     return d
 try:
     import inspect
