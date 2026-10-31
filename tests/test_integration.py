@@ -798,3 +798,34 @@ def test_a_secret_sent_as_plain_text_is_warned_about(tmp_path, monkeypatch):
     assert r.returncode == 0, r.stdout + r.stderr
     out = r.stdout + r.stderr
     assert out.count("GITHUB_TOKEN: sent to every job as plain text") == 1 and "--aws-batch-flex-secrets" in out
+
+
+GROUPED = textwrap.dedent('''
+    rule all:
+        input: "g/b.txt"
+    rule ga:
+        output: "g/a.txt"
+        group: "mapping"
+        resources: mem_mb=8000
+        shell: "echo A > {output}"
+    rule gb:
+        input: "g/a.txt"
+        output: "g/b.txt"
+        group: "mapping"
+        resources: mem_mb=8000
+        shell: "cat {input} > {output}"
+''')
+
+
+def test_group_jobs_get_no_set_resources_lines(tmp_path, monkeypatch):
+    # a group job's name (mapping_ga_gb) isn't a rule, and its peak is its rules' together
+    stat = tmp_path / "memory.stat"
+    stat.write_text(f"anon {1024 ** 3}\n")
+    monkeypatch.setenv("SMK_FLEX_MEMSTAT_FILE", str(stat))
+    r, _ = run(tmp_path, GROUPED)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out
+    usage = out.split("AWS Batch usage of this run")[1]
+    assert any(l.split()[:1] == ["mapping_ga_gb"] for l in usage.splitlines()), usage  # still in the table
+    assert "set-resources:" not in usage and "set-threads:" not in usage, usage
+    assert "group mapping (rules ga, gb) peaked at 1024 MiB" in usage, usage

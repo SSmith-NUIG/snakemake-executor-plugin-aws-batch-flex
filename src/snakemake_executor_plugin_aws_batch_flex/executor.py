@@ -715,7 +715,9 @@ class Executor(RemoteExecutor):
 
     def _record_usage(self, info: SubmittedJobInfo, d: dict):
         sub = _sub(info)
-        self.usage.add(info.job.name, d, sub.vcpu, sub.mem, sub.platform)
+        job = info.job
+        group = (job.groupid, sorted({j.rule.name for j in job.jobs})) if job.is_group() else None
+        self.usage.add(job.name, d, sub.vcpu, sub.mem, sub.platform, group)
         c = d.get("container") or {}
         if c.get("logStreamName") and d.get("status") == "SUCCEEDED":
             group = log_group_of(c, self.settings.log_group)

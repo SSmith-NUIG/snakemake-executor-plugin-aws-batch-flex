@@ -58,9 +58,13 @@ class Usage:
         self.threads = defaultdict(float)  # rule -> most vCPUs a job asked for
         self.oom_kills = defaultdict(int)  # rule -> its jobs' processes killed for lack of memory
         self.platform = {}  # rule -> ec2 | fargate
+        # group job name (mapping_bwa_sort) -> (group, its rules): not a rule, so no set-resources
+        self.groups = {}
         self.sampled = False
 
-    def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str):
+    def add(self, rule: str, d: dict, vcpu: float, mem_mib: int, platform: str, group=None):
+        if group:
+            self.groups[rule] = group
         secs = _seconds(d)
         if secs:
             self.seconds[rule].append(secs)
@@ -124,7 +128,7 @@ class Usage:
         seen before that is less than they need."""
         out = {}
         for rule, peaks in self.peaks.items():
-            if self.oom_kills.get(rule):
+            if self.oom_kills.get(rule) or rule in self.groups:
                 continue
             want = max(512, math.ceil(max(peaks) * HEADROOM / 100) * 100)  # container memory, MiB
             # the plugin adds overhead_mib for Snakemake itself; mem_mb is in MB
@@ -135,6 +139,8 @@ class Usage:
         """rule -> threads, for rules that never had most of their vCPUs busy at once."""
         out = {}
         for rule, busy in self.busy.items():
+            if rule in self.groups:
+                continue
             asked, most = self.threads.get(rule, 0), max(busy)
             if asked >= 2 and most <= asked * FEW_THREADS:
                 out[rule] = max(1, min(int(asked) - 1, math.ceil(most * THREAD_HEADROOM)))
@@ -189,6 +195,11 @@ class Usage:
             lines.append("set-threads:")
             for rule, n in sorted(threads.items()):
                 lines.append(f"  {rule}: {n:<6}# had {self.threads[rule]:g}, at most {max(self.busy[rule]):.1f} busy")
+        for name, (group, rules) in sorted(self.groups.items()):
+            if self.peaks.get(name):
+                lines.append(f"Note: group {group} (rules {', '.join(rules)}) peaked at {max(self.peaks[name]):.0f} MiB "
+                             f"(had {self.asked.get(name)}), its rules running in one job together; set-resources "
+                             "takes rules, so give them mem_mb that together cover that, plus 30%.")
         for rule, n in sorted(self.oom_kills.items()):
             if n:
                 lines.append(f"Hint: in {rule}'s jobs, Linux killed {n} process(es) for lack of memory (a job "
