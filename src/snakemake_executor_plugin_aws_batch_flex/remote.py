@@ -356,7 +356,7 @@ def main(argv=None):
     r.add_argument("--vcpus", type=int, default=1)
     r.add_argument("--mem-mb", type=int, default=2048)
     r.add_argument("--max-bundle-mb", type=int, default=100, help="stop when the workflow folder to send is "
-                   "bigger than this many MB (default: 100)")
+                   "bigger than this many MiB, as du -sh shows sizes (default: 100)")
     r.add_argument("--wait", action="store_true", help="stay attached and print the log until the run ends")
     for name, text in (("logs", "print a run's Snakemake log"), ("cancel", "stop a run and its jobs")):
         s = sub.add_parser(name, help=text)

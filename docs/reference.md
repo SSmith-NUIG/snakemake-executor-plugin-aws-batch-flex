@@ -77,7 +77,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 |---|---|---|
 | `log-group` | `/aws/batch/job` | The CloudWatch log group for job logs. It must already exist. Terraform creates one that deletes logs after 30 days and puts it in the profile; Batch's default group keeps them forever. |
 | `no-usage-summary` | `false` | Don't print the table of what the run used at the end (see [What a run used](guide.md#what-a-run-used)). |
-| `max-sources-mb` | `100` | Every job gets the workflow folder (what git would track, or everything `.gitignore` doesn't exclude, plus `config/`; never `data/`, `results/`, `logs/` or `benchmarks/`, and no single file over 10 MB). Above this many MB the run stops with a message saying which folders to put in `.gitignore`: data belongs in storage. |
+| `max-sources-mb` | `100` | Every job gets the workflow folder (what git would track, or everything `.gitignore` doesn't exclude, plus `config/`; never `data/`, `results/`, `logs/` or `benchmarks/`, and no single file over 10 MB). Above this many MiB (as `du -sh` shows sizes) the run stops with a message saying which folders to put in `.gitignore`: data belongs in storage. |
 | `runnable-warn-minutes` | `15` | Warn when a job has waited this long for a machine to run on. |
 | `skip-preflight` | `false` | Skip the checks of the queue and roles at the start of a run. |
 | `orphan-jobs` | `cancel` | What to do with jobs still running from an earlier run that was killed: `cancel`, `warn` or `ignore` (see [Interrupted runs](guide.md#interrupted-runs)). |

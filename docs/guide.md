@@ -471,7 +471,7 @@ definition of your own (`aws-batch-flex-job-definition`) doesn't get them: set i
   machine, so input data has to be uploaded once: `smkflex push data` (absolute paths too, e.g.
   `smkflex push /shared/refs`). When the file is on this machine, the message says so and gives
   the command.
-- **"Every job gets the workflow folder, and it has … MB".** Data sitting in the folder would
+- **"Every job gets the workflow folder, and it has … MiB".** Data sitting in the folder would
   go to every job: add its folders to `.gitignore` (and upload what the rules read as inputs
   with `smkflex push`), or raise `aws-batch-flex-max-sources-mb`. `resources/` goes along unless
   you add it: pipelines keep small files there that their scripts read directly.

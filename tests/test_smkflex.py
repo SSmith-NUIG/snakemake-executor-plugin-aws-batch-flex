@@ -158,7 +158,7 @@ def test_bundle_sends_linked_files_as_files(tmp_path):
     assert (tmp_path / "out" / "config" / "samples.tsv").read_text() == "sample\n"
 
 
-def test_bundle_limit_is_in_mb_like_max_sources_mb(tmp_path):
+def test_bundle_limit_is_in_mib_as_du_shows_sizes(tmp_path):
     import pytest
     from snakemake_executor_plugin_aws_batch_flex.bundle import make_bundle
     from snakemake_executor_plugin_aws_batch_flex.profiles import Fail
@@ -166,10 +166,10 @@ def test_bundle_limit_is_in_mb_like_max_sources_mb(tmp_path):
     wf.mkdir()
     prof.mkdir()
     (prof / "config.yaml").write_text("x: 1\n")
-    (wf / "ref.fa").write_bytes(b"A" * 1_000_001)  # over 1 MB, under 1 MiB
-    with pytest.raises(Fail, match="more than 1 MB"):
+    (wf / "ref.fa").write_bytes(b"A" * 1_048_577)  # 1 byte over 1 MiB
+    with pytest.raises(Fail, match="more than 1 MiB"):
         make_bundle(str(wf), str(prof), 1)
-    (wf / "ref.fa").write_bytes(b"A" * 1_000_000)
+    (wf / "ref.fa").write_bytes(b"A" * 1_048_576)  # over 1 MB, but within 1 MiB
     make_bundle(str(wf), str(prof), 1)
 
 

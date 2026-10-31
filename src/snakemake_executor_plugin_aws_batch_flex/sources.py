@@ -12,6 +12,7 @@ ALWAYS = "config"
 NEVER = {"data", "results", "logs", "benchmarks"}
 # Snakemake leaves out bigger files itself (with a warning), so they don't count
 SNAKEMAKE_MAX_FILE = 10_000_000
+MiB = 1024 * 1024  # what the limits count in, as ls -lh and du -h show sizes
 
 
 def _ignore_patterns(root):
@@ -101,7 +102,7 @@ def outside_links(files, root="."):
 
 
 def too_big(files, limit_mb, root="."):
-    """None, or what to say when `files` add up to more than limit_mb (MB)."""
+    """None, or what to say when `files` add up to more than limit_mb (MiB)."""
     total, by_top = 0, {}
     for f in files:
         try:
@@ -113,9 +114,9 @@ def too_big(files, limit_mb, root="."):
         total += n
         top = f.split("/")[0] + "/" if "/" in f else "files at the top"
         by_top[top] = by_top.get(top, 0) + n
-    if total <= limit_mb * 1e6:
+    if total <= limit_mb * MiB:
         return None
-    biggest = ", ".join(f"{d} {n / 1e6:.0f} MB" for d, n in sorted(by_top.items(), key=lambda kv: -kv[1])[:5])
-    return (f"Every job gets the workflow folder, and it has {total / 1e6:.0f} MB to send ({biggest}); the limit "
-            f"is {limit_mb} MB. Data belongs in storage: add folders like these to .gitignore (and upload "
+    biggest = ", ".join(f"{d} {n / MiB:.0f} MiB" for d, n in sorted(by_top.items(), key=lambda kv: -kv[1])[:5])
+    return (f"Every job gets the workflow folder, and it has {total / MiB:.0f} MiB to send ({biggest}); the limit "
+            f"is {limit_mb} MiB. Data belongs in storage: add folders like these to .gitignore (and upload "
             "what the rules read as inputs with smkflex push), or raise aws-batch-flex-max-sources-mb.")

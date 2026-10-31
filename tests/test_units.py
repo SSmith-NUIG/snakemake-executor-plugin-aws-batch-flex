@@ -676,3 +676,11 @@ def test_links_a_job_couldnt_follow(tmp_path):
     (wf / "config" / "rel_in.tsv").symlink_to("real.tsv")  # relative, inside: arrives working
     files = ["config/real.tsv", "config/outside.tsv", "config/up.tsv", "config/abs_in.tsv", "config/rel_in.tsv"]
     assert outside_links(files, str(wf)) == ["config/abs_in.tsv", "config/outside.tsv", "config/up.tsv"]
+
+
+def test_sources_limit_is_in_mib_as_du_shows_sizes(tmp_path):
+    from snakemake_executor_plugin_aws_batch_flex.sources import too_big
+    (tmp_path / "ref.fa").write_bytes(b"A" * 1_048_576)  # over 1 MB, but within 1 MiB
+    assert too_big(["ref.fa"], 1, str(tmp_path)) is None
+    (tmp_path / "ref.fa").write_bytes(b"A" * 1_048_577)
+    assert "it has 1 MiB to send (files at the top 1 MiB); the limit is 1 MiB" in too_big(["ref.fa"], 1, str(tmp_path))

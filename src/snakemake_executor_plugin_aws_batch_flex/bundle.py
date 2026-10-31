@@ -14,7 +14,7 @@ from . import headjob
 from .bootstrap import conda_snippet, same_path, snakemake_prelude
 from .profiles import Fail
 from .settings import from_profile
-from .sources import SKIP_DIRS, named_files, workflow_files
+from .sources import SKIP_DIRS, MiB, named_files, workflow_files
 
 # Runs in the head job before anything else: fetch and unpack the bundle. Kept small, since
 # everything sent with a job must fit in 8192 characters.
@@ -92,8 +92,8 @@ def make_bundle(root, profile_dir, max_mb, extra=None):
     with tarfile.open(fileobj=buf, mode="w:gz", dereference=True) as t:
         for f in files:
             total += os.path.getsize(sources[f])
-            if total > max_mb * 1e6:  # MB, as max-sources-mb
-                raise Fail(f"the workflow folder has more than {max_mb} MB of files (at {f}); data "
+            if total > max_mb * MiB:
+                raise Fail(f"the workflow folder has more than {max_mb} MiB of files (at {f}); data "
                            "belongs in storage. Add big files to .gitignore, or raise --max-bundle-mb.")
             t.add(sources[f], arcname=f)
         # what `git ls-files` would say, for the head job's stand-in git

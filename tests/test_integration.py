@@ -463,7 +463,7 @@ def test_jobs_get_the_workflow_folder_without_git(tmp_path):
     (tmp_path / "refs" / "genome.fa").write_bytes(b"x" * 2_000_000)
     (tmp_path / "calls.jsonl").unlink()
     r, calls = run(tmp_path, FOLDER, "--forceall", "--aws-batch-flex-max-sources-mb", "1")
-    assert r.returncode != 0 and "refs/ 2 MB" in r.stdout + r.stderr and ".gitignore" in r.stdout + r.stderr
+    assert r.returncode != 0 and "refs/ 2 MiB" in r.stdout + r.stderr and ".gitignore" in r.stdout + r.stderr
     assert not any(c["call"] == "submit_job" for c in calls)
 
     # a file git tracks that was deleted here, not committed yet: left out, not a crash

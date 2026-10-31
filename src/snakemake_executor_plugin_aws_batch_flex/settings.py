@@ -355,7 +355,8 @@ class ExecutorSettings(ExecutorSettingsBase):
         metadata={
             "help": "Every job gets the workflow folder (what git would track, or everything "
             ".gitignore doesn't exclude, and config/; single files over 10 MB are left out). "
-            "Stop with a message when that is more than this many MB: data belongs in storage.",
+            "Stop with a message when that is more than this many MiB (as du -sh shows sizes): data "
+            "belongs in storage.",
             "env_var": False,
             "required": False,
         },
