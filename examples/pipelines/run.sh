@@ -60,7 +60,9 @@ recipe() {
                 sed -i 's#\.\./input_files/#input_files/#g; s#\.\./\.\./images/#images/#g' input_files/*.yaml input_files/*.tsv; }
       # one of its rules lists the pipeline's own zarp_multiqc_config.py as an input: from storage too
       INPUTS="$WORK/zarp/input_files $WORK/zarp/workflow/scripts/zarp_multiqc_config.py" ARGS="--configfile input_files/config.yaml -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
-    grenepipe)  # inputs by absolute path, as its example sets them up
+    grenepipe)  # needs Snakemake 8 (it pins 8.15.2 and uses logger.mode, gone in 9); the plugin needs 9
+      echo "grenepipe: needs Snakemake 8, the plugin needs 9 (see README)" >&2; return 1
+      # inputs by absolute path, as its example sets them up
       REPO=lczech/grenepipe TAG=v0.15.0
       setup() { bash example/prepare.sh && cp example/config.yaml config.yaml; }
       INPUTS="$WORK/grenepipe/example" ARGS="--sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
