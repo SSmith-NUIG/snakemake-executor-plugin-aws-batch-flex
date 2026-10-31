@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.2.0...v0.2.1) (2026-10-31)
+
+
+### Documentation
+
+* rewrite the docs for Snakemake users, with values for every option, and disclose AI assistance ([8116e61](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/8116e610b00bc107f1ac1317f34d0d7659f0fc0a))
+* update what's been tested on AWS ([164b06c](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/164b06c8c06e34097081ba156c323272233eae85))
+
 ## [0.2.0](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.1.1...v0.2.0) (2026-10-31)
 
 
