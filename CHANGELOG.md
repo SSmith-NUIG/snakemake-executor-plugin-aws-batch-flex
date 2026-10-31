@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.2.1...v0.2.1) (2026-10-31)
+
+
+### Miscellaneous Chores
+
+* release 0.2.1 ([3b93b0d](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/3b93b0d8c9c4570b3beed242ef2e6421f3ccdcf8))
+
 ## [0.2.1](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.2.0...v0.2.1) (2026-10-31)
 
 
