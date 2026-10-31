@@ -149,7 +149,8 @@ more, the whole setup with `scripts/setup.sh` (twice, as a second, separate setu
 account; with conda and pandas in the image, and `smkflex init`/`push`/`pull`), the published
 rna-seq-star-deseq2 pipeline on its test data (with `snakemake`, as a `smkflex` head job, and set
 up with `snakedeploy`), and the conda env cache on it (per machine: 12 builds instead of 52, 11
-instead of 18-21 minutes; from S3 on a second run: no builds, 7.5 minutes).
+instead of 18-21 minutes; from S3 on a second run: no builds, 7.5 minutes), and a job
+reading an SSM parameter through `aws-batch-flex-secrets` on EC2 (`run.sh secrets`).
 
 Only tested against a fake Batch: private registry
 credentials (outside AWS), `--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being
