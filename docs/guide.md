@@ -279,6 +279,12 @@ job's PATH, so an image's own conda still wins. The machine you run `snakemake` 
 on its PATH as well. Wrappers work the same way; the plugin passes jobs an HTTPS
 `--wrapper-prefix`, so images don't need git.
 
+Jobs build envs with strict channel priority (`CONDA_CHANNEL_PRIORITY=strict`), which bioconda
+requires. Miniforge is set up that way, but an image's own conda often isn't, and then mixes
+packages from different channels that don't load together. If an env solves differently on AWS
+than on your machine, check `conda config --show channel_priority` here: with `flexible` or
+`disabled`, your machine can pick packages that strict priority won't.
+
 Each job builds the envs its rule needs, which takes a minute or more per env. So that this
 happens once rather than in every job, built envs are reused (`aws-batch-flex-conda-cache`):
 
