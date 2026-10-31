@@ -11,7 +11,7 @@ pipelines as people write them, not only with the small workflows in `../conform
 | `kallisto` | [rna-seq-kallisto-sleuth](https://github.com/snakemake-workflows/rna-seq-kallisto-sleuth) | many `script:` steps (23 R scripts) |
 | `nanopore` | [transcriptome-differential-expression](https://github.com/snakemake-workflows/transcriptome-differential-expression) | **not runnable on Batch as written** (below) |
 | `varlociraptor` | [dna-seq-varlociraptor](https://github.com/snakemake-workflows/dna-seq-varlociraptor) | a large DAG, modules, meta-wrappers |
-| `zarp` | [zarp](https://github.com/zavolanlab/zarp) | a `container:` per rule (biocontainers and others), a checkpoint |
+| `zarp` | [zarp](https://github.com/zavolanlab/zarp) | **not runnable on Batch as written** (below) |
 | `grenepipe` | [grenepipe](https://github.com/lczech/grenepipe) | inputs named by absolute path, checkpoints |
 
 ```
@@ -38,3 +38,12 @@ reads aren't (they come from the bucket) and the paths differ, so the jobs can't
 inputs. It needs every machine to see the same files at the same paths (a laptop, or a cluster's
 shared filesystem); any executor without one has the same problem. The fix belongs in the
 pipeline: build the read paths from `config["inputdir"]`, relative to the workflow folder.
+
+**zarp** (v1.0.0-rc.1) names inputs by absolute paths and passes them to tools as params, which
+work on Batch (jobs see files at the same paths as Snakemake). But its rules leave outputs
+undeclared: `create_index_star` declares `chrName.txt` and `chrNameLength.txt` of the STAR
+index, and STAR writes a dozen more files beside them. Snakemake only stores declared outputs,
+so the rest of the index never reaches the bucket and `map_genome_star` can't open
+`genomeParameters.txt`; the quantification merges fail the same way. A shared filesystem keeps
+undeclared files, which is why it runs on a cluster. The fix belongs in the pipeline: declare
+such folders with `directory()`.

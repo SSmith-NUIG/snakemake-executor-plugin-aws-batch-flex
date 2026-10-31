@@ -50,7 +50,10 @@ recipe() {
       REPO=snakemake-workflows/dna-seq-varlociraptor TAG=v6.11.4
       setup() { overlay; }
       INPUTS="data" ARGS="--configfile config-simple/config.yaml --sdm conda -j 10 --default-resources mem_mb=4000 --retries 2 --keep-going --rerun-incomplete";;
-    zarp)  # a container: per rule (biocontainers and others); its tests name ../input_files, and it
+    zarp)  # can't run on Batch as written: its rules leave outputs undeclared (most of the STAR index),
+      # which only a shared filesystem keeps; see README
+      echo "zarp: needs a shared filesystem as written (see README)" >&2; return 1
+      # a container: per rule (biocontainers and others); its tests name ../input_files, and it
       # makes input paths absolute (os.path.abspath), so they're uploaded by their absolute path
       REPO=zavolanlab/zarp TAG=v1.0.0-rc.1
       setup() { cp -r tests/input_files input_files
