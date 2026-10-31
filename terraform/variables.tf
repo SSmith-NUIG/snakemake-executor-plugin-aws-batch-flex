@@ -142,3 +142,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "enable_secrets" {
+  description = "Create the execution role that lets jobs read SSM parameters and Secrets Manager secrets named <name>/... (aws-batch-flex-secrets), also on EC2."
+  type        = bool
+  default     = false
+}

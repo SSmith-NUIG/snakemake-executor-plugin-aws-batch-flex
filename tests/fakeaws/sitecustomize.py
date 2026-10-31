@@ -86,7 +86,8 @@ class FakeBatch:
              linux=kw["containerProperties"].get("linuxParameters"),
              disk=kw["containerProperties"].get("ephemeralStorage"),
              logs=kw["containerProperties"].get("logConfiguration"),
-             exec_role=kw["containerProperties"].get("executionRoleArn"))
+             exec_role=kw["containerProperties"].get("executionRoleArn"),
+             secrets=kw["containerProperties"].get("secrets"))
         return {}
 
     def _image(self, jobdef):
@@ -100,6 +101,10 @@ class FakeBatch:
         env = dict(os.environ)
         if os.environ.get("FAKEAWS_JOB_PATH"): env["PATH"] = os.environ["FAKEAWS_JOB_PATH"]
         env.update({e["name"]: e["value"] for e in kw["containerOverrides"]["environment"]})
+        # the job definition's secrets, as ECS reads them at start (FAKEAWS_SECRETS: {ARN: value})
+        values = json.loads(os.environ.get("FAKEAWS_SECRETS") or "{}")
+        for sec in (self.defs.get(kw["jobDefinition"]) or {}).get("containerProperties", {}).get("secrets") or []:
+            env[sec["name"]] = values[sec["valueFrom"]]
         env["TMPDIR"] = tempfile.mkdtemp(prefix="fakejob-")  # each real container has its own /tmp
         # FAKEAWS_FRESH_WORKDIR: the job's same-path folder doesn't exist yet, as in a container
         # (here: a fresh folder of its own, as this machine has Snakemake's folder already)

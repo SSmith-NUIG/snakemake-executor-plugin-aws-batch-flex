@@ -91,6 +91,7 @@ from the machine image (`host`); otherwise it's installed when each job starts, 
 | `volumes` | *none* | Folders on the EC2 machine to make available in every job, as `MACHINE_PATH:JOB_PATH`, with `:ro` for read-only, e.g. `[/data/refs:/refs:ro]`. |
 | `scheduling-priority` | *none* | Priority for every job (0-9999), for queues with a fair-share scheduling policy. Other queues ignore it, with a warning. |
 | `registry-credentials` | *none* | `REGISTRY=SECRET_ARN` for private registries outside AWS (see [Private images](guide.md#private-images)). |
+| `secrets` | *none* | `NAME=ARN` of an SSM parameter or Secrets Manager secret: environment variables jobs get without the value passing through Batch (see [Secrets](guide.md#secrets)). Needs `execution-role-arn`. |
 | `job-definition` | *none* | Use an existing Batch job definition (name, `name:revision` or ARN) instead of the ones the plugin makes, e.g. where you aren't allowed to make them. It decides the image, job role, mounted folders and `/dev/shm`; vCPUs, memory, timeout and tags still come from the rules. If it doesn't mount the machine image's Snakemake, jobs install it when they start. |
 | `job-definition-prefix` | `snakemake` | How the job definitions the plugin makes are named. |
 

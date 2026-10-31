@@ -6,6 +6,7 @@ import json
 import importlib.metadata as md
 import math
 import os
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +43,7 @@ from .settings import (
     host_mounts,
     normalized,
     registry_secrets,
+    secret_refs,
     validate,
     volume_mounts,
 )
@@ -58,6 +60,8 @@ ECS_OVERRIDES_MAX = 8192  # characters of a job's command and environment
 CANCEL_THREADS = 16  # terminate_job calls at once when the run is cancelled
 LOG_FILES, LOG_LINES = 3, 20  # of a failed job's log: files, shown with its error
 LOG_READ_MAX = 2_000_000  # bytes of each read for that, from its start
+# names of environment variables that look like they hold a secret
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|APIKEY|(^|_)KEY($|_)", re.IGNORECASE)
 
 
 def _out_of_memory(d: dict) -> bool:
@@ -163,6 +167,8 @@ class Executor(RemoteExecutor):
         registry_credentials = registry_secrets(s)
         self.entrypoints = Entrypoints(registry_credentials, self.logger)
         self.settings = s
+        self.secrets = secret_refs(s)
+        self._warned_plain_secrets = False
         # lock, default_storage_prefix, container_image and wrapper_prefix are Snakemake's but not
         # declared by the executor interface, hence getattr with a default
         lock = getattr(self.workflow.execution_settings, "lock", True)
@@ -198,6 +204,7 @@ class Executor(RemoteExecutor):
             tags=tags,
             mounts=mounts,
             registry_credentials=registry_credentials,
+            secrets=self.secrets,
         )
         self.job_code = self._upload_job_code()
         self.default_image = s.default_image or getattr(
@@ -510,6 +517,8 @@ class Executor(RemoteExecutor):
                 notes.append("batch_shm_mb is ignored (set sharedMemorySize in the job definition)")
             if disk_gib:
                 notes.append("disk_mb is ignored (set ephemeralStorage in the job definition)")
+            if self.secrets:
+                notes.append("--aws-batch-flex-secrets aren't added (set secrets in the job definition)")
             if self.settings.job_role_arn and ex.job_role and ex.job_role != self.settings.job_role_arn:
                 notes.append(f"its job role {ex.job_role} is used")
             if notes:
@@ -574,6 +583,9 @@ class Executor(RemoteExecutor):
         if req.gpu:
             resource_reqs.append({"type": "GPU", "value": str(req.gpu)})
 
+        # the secrets come from the job definition: never their values here as well
+        env = {k: v for k, v in self.envvars().items() if k not in self.secrets}
+        self._warn_plain_secrets(env)
         kwargs = dict(
             jobName=batch_job_name(self.get_jobname(job)),
             jobQueue=queue,
@@ -583,7 +595,7 @@ class Executor(RemoteExecutor):
                 "command": self.entrypoints.command(image, script, job.resources.get("batch_entrypoint"), job.name),
                 "resourceRequirements": resource_reqs,
                 "environment": [
-                    {"name": k, "value": str(v)} for k, v in self.envvars().items()
+                    {"name": k, "value": str(v)} for k, v in env.items()
                 ]
                 + [{"name": "SMK_FLEX_SCRIPT_PYTHON", "value": script_python}]
                 # the job works at this same path where it can (bootstrap.WORKDIR)
@@ -739,6 +751,22 @@ class Executor(RemoteExecutor):
         ids = {i.external_jobid for i in active_jobs} | set(self._unfinished)
         with ThreadPoolExecutor(CANCEL_THREADS) as pool:
             list(pool.map(cancel, sorted(ids)))
+
+    def _warn_plain_secrets(self, env: dict):
+        """Once: environment variables (envvars:, --envvars, storage settings) that look like
+        secrets go to every job as plain text, which anyone who can see the account's Batch jobs
+        or CloudTrail can read."""
+        if self._warned_plain_secrets:
+            return
+        self._warned_plain_secrets = True
+        plain = sorted(k for k in env if SECRET_NAME.search(k))
+        if plain:
+            self.logger.warning(
+                f"{', '.join(plain)}: sent to every job as plain text, which anyone who can see this "
+                "account's Batch jobs or CloudTrail can read. For a secret, use --aws-batch-flex-secrets "
+                "NAME=ARN (an SSM parameter or Secrets Manager secret; see Secrets in docs/guide.md); "
+                "for storage keys, the job role."
+            )
 
     def _warn_if_stuck(self, d: dict, info: SubmittedJobInfo):
         sub = _sub(info)

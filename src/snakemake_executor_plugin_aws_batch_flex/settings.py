@@ -2,6 +2,7 @@
 command line. `from_profile` reads them from a profile the way Snakemake does, for smkflex."""
 
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -276,6 +277,18 @@ class ExecutorSettings(ExecutorSettingsBase):
             "nargs": "+",
         },
     )
+    secrets: List[str] = field(
+        default_factory=list,
+        metadata={
+            "help": "NAME=ARN pairs: environment variables jobs get from an SSM parameter "
+            "(arn:aws:ssm:...:parameter/...) or a Secrets Manager secret. ECS reads them when the job "
+            "starts, so unlike --envvars the value is never in the job's settings, the Batch console "
+            "or CloudTrail. Needs --aws-batch-flex-execution-role-arn allowed to read them.",
+            "env_var": False,
+            "required": False,
+            "nargs": "+",
+        },
+    )
     orphan_jobs: Optional[str] = field(
         default=None,
         metadata={
@@ -418,6 +431,26 @@ def registry_secrets(s: ExecutorSettings) -> dict:
     return out
 
 
+def secret_refs(s: ExecutorSettings) -> dict:
+    """{environment variable: ARN} from the secrets setting (NAME=ARN)."""
+    out = {}
+    for item in s.secrets or []:
+        name, sep, arn = (x.strip() for x in item.partition("="))
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) \
+                or not re.match(r"arn:aws[a-z-]*:(ssm|secretsmanager):", arn):
+            raise WorkflowError(
+                f"Invalid --aws-batch-flex-secrets entry '{item}', expected NAME=ARN of an SSM parameter or "
+                "a Secrets Manager secret (e.g. GITHUB_TOKEN=arn:aws:ssm:eu-west-1:123456789012:parameter/smkflex/github-token)."
+            )
+        out[name] = arn
+    if out and not s.execution_role_arn:
+        raise WorkflowError(
+            "--aws-batch-flex-secrets needs --aws-batch-flex-execution-role-arn: ECS reads the secrets with "
+            "the execution role (Terraform: enable_secrets = true prints it)."
+        )
+    return out
+
+
 def _one_of(name, value, allowed):
     if value is not None and value not in allowed:
         raise WorkflowError(f"--aws-batch-flex-{name} must be {' or '.join(repr(a) for a in allowed)}, got {value!r}.")
@@ -454,6 +487,7 @@ def validate(s: ExecutorSettings) -> ExecutorSettings:
     _number("max-sources-mb", s.max_sources_mb, 1)
     volume_mounts(s)
     registry_secrets(s)
+    secret_refs(s)
     return s
 
 

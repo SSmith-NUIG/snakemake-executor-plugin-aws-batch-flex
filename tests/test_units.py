@@ -377,7 +377,11 @@ def test_settings_are_checked_before_anything_reaches_aws():
            ({"registry_credentials": ["docker.io"]}, "expected REGISTRY=SECRET_ARN"),
            ({"registry_credentials": [f"docker.io={secret}"]}, "needs --aws-batch-flex-execution-role-arn"),
            ({"registry_credentials": [f"123456789012.dkr.ecr.eu-west-1.amazonaws.com={secret}"],
-             "execution_role_arn": ex}, "is ECR")]
+             "execution_role_arn": ex}, "is ECR"),
+           ({"secrets": ["TOKEN"], "execution_role_arn": ex}, "expected NAME=ARN"),
+           ({"secrets": ["MY-TOKEN=arn:aws:ssm:eu-west-1:1:parameter/t"], "execution_role_arn": ex}, "expected NAME=ARN"),
+           ({"secrets": ["TOKEN=arn:aws:s3:::bucket/t"], "execution_role_arn": ex}, "expected NAME=ARN"),
+           ({"secrets": ["TOKEN=arn:aws:ssm:eu-west-1:1:parameter/t"]}, "needs --aws-batch-flex-execution-role-arn")]
     for kw, msg in bad:
         with pytest.raises(WorkflowError, match=re.escape(msg)):
             check(**kw)
@@ -385,6 +389,9 @@ def test_settings_are_checked_before_anything_reaches_aws():
               execution_role_arn=ex)
     assert volume_mounts(s) == [("/scratch", "/scratch", False), ("/ref", "/ref", True)]
     assert registry_secrets(s) == {"docker.io": secret}
+    from snakemake_executor_plugin_aws_batch_flex.settings import secret_refs
+    s = check(secrets=["TOKEN=arn:aws:ssm:eu-west-1:1:parameter/t", f"HUB = {secret}"], execution_role_arn=ex)
+    assert secret_refs(s) == {"TOKEN": "arn:aws:ssm:eu-west-1:1:parameter/t", "HUB": secret}
 
 
 def test_aws_errors_are_told_apart_by_their_codes(monkeypatch, tmp_path):
@@ -643,3 +650,15 @@ def test_peak_memory_on_cgroup_v1(tmp_path, monkeypatch):
     monkeypatch.delenv("SMK_FLEX_MEMSTAT_FILE", raising=False)
     assert jobmonitor._memory() == 120
 
+
+def test_job_definitions_without_secrets_keep_their_names():
+    # a new setting mustn't change the definitions (and names) existing setups registered
+    from snakemake_executor_plugin_aws_batch_flex.jobdefs import JobDefinitions
+    kw = dict(prefix="snakemake", platform="ec2", job_role_arn=None, execution_role_arn="arn:aws:iam::1:role/exec",
+              log_group="/aws/batch/job", assign_public_ip="ENABLED", ephemeral_storage_gib=None, tags={})
+    plain = JobDefinitions(None, None, **kw).container_properties("debian:12")
+    assert plain == {"image": "debian:12", "resourceRequirements": [{"type": "VCPU", "value": "1"},
+                                                                     {"type": "MEMORY", "value": "2048"}]}
+    arn = "arn:aws:ssm:eu-west-1:1:parameter/t"
+    props = JobDefinitions(None, None, secrets={"T": arn}, **kw).container_properties("debian:12")
+    assert props["secrets"] == [{"name": "T", "valueFrom": arn}] and props["executionRoleArn"] == kw["execution_role_arn"]

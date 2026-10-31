@@ -12,18 +12,41 @@ variable "fargate_max_vcpus" {
   default = 32
 }
 
-# Fargate pulls images and writes logs through this role (not the job role).
+# Fargate pulls images and writes logs through this role (not the job role); jobs on either
+# platform get their secrets (aws-batch-flex-secrets) through it too. Its name stays as it was
+# when only Fargate used it.
 resource "aws_iam_role" "fargate_exec" {
-  count              = var.enable_fargate ? 1 : 0
+  count              = var.enable_fargate || var.enable_secrets ? 1 : 0
   name_prefix        = "${var.name}-fargate-exec-"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
   tags               = local.tags
 }
 
 resource "aws_iam_role_policy_attachment" "fargate_exec" {
-  count      = var.enable_fargate ? 1 : 0
+  count      = var.enable_fargate || var.enable_secrets ? 1 : 0
   role       = aws_iam_role.fargate_exec[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Only parameters and secrets named <name>/... (SSM: /smkflex/github-token), so the role can't
+# read the account's other secrets. Parameters encrypted with the default aws/ssm key need no
+# kms:Decrypt.
+data "aws_iam_policy_document" "read_secrets" {
+  statement {
+    actions   = ["ssm:GetParameters"]
+    resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.me.account_id}:parameter/${var.name}/*"]
+  }
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = ["arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.me.account_id}:secret:${var.name}/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "read_secrets" {
+  count  = var.enable_secrets ? 1 : 0
+  name   = "read-${var.name}-secrets"
+  role   = aws_iam_role.fargate_exec[0].id
+  policy = data.aws_iam_policy_document.read_secrets.json
 }
 
 resource "aws_batch_compute_environment" "fargate" {

@@ -65,8 +65,9 @@ out of memory once.
   (they're on every workstation). On EC2, jobs whose image has none of these use the machine
   image's (made with conda, after the image's own on the PATH; images built before this need
   `scripts/update-ami.sh`); on Fargate, the rules' images need their own.
-- **Private pipeline repositories** need `GITHUB_TOKEN` set where Snakemake runs and in the jobs
-  (`--envvars GITHUB_TOKEN`).
+- **Private pipeline repositories** need `GITHUB_TOKEN` set where Snakemake runs and in the jobs.
+  Give it to the jobs with `aws-batch-flex-secrets`, not `--envvars`, which sends it as plain
+  text (see [Secrets](#secrets)).
 
 `smkflex run --git URL --add config/` does the same without `snakedeploy`: the code comes from a
 clone of the repository and your `config/` is laid over it (see [Long runs](#long-runs-smkflex)).
@@ -419,6 +420,31 @@ aws-batch-flex-execution-role-arn: arn:aws:iam::123456789012:role/my-exec-role
 
 Only images from that registry get the credentials. ECS reads the secret with the execution role,
 so it's needed on EC2 too, and it needs `secretsmanager:GetSecretValue` on the secret.
+
+### Secrets
+
+Environment variables from `envvars:` or `--envvars` go to every job as plain text: anyone who
+can see the account's Batch jobs (the console, `aws batch describe-jobs`) or CloudTrail can read
+them. The plugin warns at start when one looks like a secret (`..._TOKEN`, `..._KEY`, `PASSWORD`).
+
+For a token or password, store it as an SSM parameter (SecureString, free) or a Secrets Manager
+secret, named under `smkflex/`, and map the variable to it in the profile:
+
+```bash
+aws ssm put-parameter --name /smkflex/github-token --type SecureString --value "$GITHUB_TOKEN"
+```
+
+```yaml
+aws-batch-flex-secrets: [GITHUB_TOKEN=arn:aws:ssm:eu-west-1:123456789012:parameter/smkflex/github-token]
+aws-batch-flex-execution-role-arn: arn:aws:iam::123456789012:role/...   # Terraform prints it
+```
+
+Only the ARN reaches Batch: ECS reads the value with the execution role when each job starts.
+Set `enable_secrets = true` in `terraform.tfvars` to have Terraform make that role (on EC2 too)
+and allow it to read parameters and secrets named `smkflex/...` (`<name>/...`), and nothing else.
+The `smkflex run` head job gets them too. If the Snakefile declares the variable (`envvars:`),
+Snakemake still wants it set where you start it; the plugin sends the jobs only the ARN. A job
+definition of your own (`aws-batch-flex-job-definition`) doesn't get them: set its `secrets`.
 
 ## Troubleshooting
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Real-AWS conformance run, from this directory, with the profile setup.sh installed (or
-# profile/config.yaml here, see find-profile.sh). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|pdsheet|entrypoint|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|rules ...]   (default: script fanout)
+# profile/config.yaml here, see find-profile.sh). Usage:  bash run.sh [script|fanout|conda|pipeline|pyimage|pyrule|pdsheet|entrypoint|shm|existing|ecr|rscript|wrapper|mixed|disk|spot|oom|secrets|rules ...]   (default: script fanout)
 # `mixed` = EC2 + Fargate queues in one run, `disk` = Fargate disk size from disk_mb
 # (both need enable_fargate=true in terraform), `spot` = fanout on the Spot queue (enable_spot_queue=true)
+# `secrets` = a job gets an SSM parameter through aws-batch-flex-secrets (enable_secrets=true)
 # `rules` = checkpoint group shadow benchmark retries tempdir directory (one small workflow each)
 set -u
 . ./find-profile.sh
@@ -45,6 +46,8 @@ run() { # name, snakemake args...
       disk)       check disk results/disk/check.txt "^disk ok";;
       oom)        check oom results/oom/out.txt "^ok" && grep -q "ran out of memory with .* retrying with" conformance-oom.log \
                     && echo "  retried with more memory";;
+      secrets)    check secrets results/secrets/out.txt "^ok$" && ! grep -q hello-ssm conformance-secrets.log \
+                    && echo "  the job got the parameter, and its value isn't in the log";;
       spot)       check spot results/total.txt "$(( N * (N - 1) / 2 ))" && grep -q "queue $SQ," conformance-spot.log \
                     && echo "  jobs went to $SQ";;
     esac && pass+=($name) || fail+=($name)
@@ -98,6 +101,24 @@ for t in "${@:-script fanout}"; do
                --aws-batch-flex-install-prereqs -j 2;;
       spot) SQ=$(terraform -chdir=../../terraform output -raw spot_queue_name)
             run spot -s fanout.smk --config n_units=$N -j $N --aws-batch-flex-queue "$SQ";;
+      secrets) # a test parameter, named under smkflex/ where the execution role may read; removed after
+            XR=$(terraform -chdir=../../terraform output -raw snakemake_profile | sed -n 's/^ *aws-batch-flex-execution-role-arn: //p')
+            if [ -z "$XR" ]; then
+              echo "  no execution role: set enable_secrets = true in terraform.tfvars and apply"; fail+=(secrets)
+            else
+              REGION=$(grep '^aws-batch-flex-region:' "$CFG" | awk '{print $2}')
+              ACCT=$(aws sts get-caller-identity --query Account --output text)
+              P=/smkflex/conformance-test-token
+              aws ssm delete-parameter --name $P --region $REGION 2>/dev/null
+              if aws ssm put-parameter --name $P --type SecureString --value hello-ssm --region $REGION \
+                   --tags Key=ManagedBy,Value=snakemake-batch-flex > /dev/null; then
+                run secrets -s secrets.smk --aws-batch-flex-execution-role-arn "$XR" \
+                  --aws-batch-flex-secrets "SMKFLEX_TEST_TOKEN=arn:aws:ssm:$REGION:$ACCT:parameter$P"
+              else
+                echo "  could not make the test parameter; nothing submitted"; fail+=(secrets)
+              fi
+              aws ssm delete-parameter --name $P --region $REGION && echo "  deleted parameter $P"
+            fi;;
       rules) for r in checkpoint group shadow benchmark retries tempdir directory; do run $r -s $r.smk -j 4; done;;
       checkpoint|group|shadow|benchmark|retries|tempdir|directory) run $name -s $name.smk -j 4;;
     esac

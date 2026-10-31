@@ -46,7 +46,8 @@ output "snakemake_profile" {
     aws-batch-flex-head-role-arn: ${aws_iam_role.head.arn}
     aws-batch-flex-bootstrap: host
     aws-batch-flex-host-env-wait-seconds: 180
-    aws-batch-flex-default-image: buildpack-deps:bookworm-scm%{if local.log_group != null}
+    aws-batch-flex-default-image: buildpack-deps:bookworm-scm%{if var.enable_secrets}
+    aws-batch-flex-execution-role-arn: ${aws_iam_role.fargate_exec[0].arn}%{endif}%{if local.log_group != null}
     aws-batch-flex-log-group: ${local.log_group}%{endif}
   EOT
 }

@@ -30,7 +30,7 @@ from .naming import batch_job_name
 from .orphans import active_jobs, describe_jobs, list_jobs
 from .preflight import check_queue, queue_uses_spot
 from .profiles import Fail, _clients, _load_profile, _Log, workflow_profile_file
-from .settings import from_profile, host_mounts, registry_secrets
+from .settings import from_profile, host_mounts, registry_secrets, secret_refs
 from .sizing import fargate_size
 from .tags import MANAGED_BY
 from .transfer import cmd_pull, cmd_push
@@ -142,6 +142,8 @@ def _run(a, snakemake_args, root, source, default_name, extra=None):
         ephemeral_storage_gib=None,
         tags={},
         mounts=host_mounts(s) if platform == "ec2" else [],
+        # Snakemake in the head job sees them too (a Snakefile's envvars: checks for them there)
+        secrets=secret_refs(s),
     )
     # Debian 12 with git: Snakemake needs git for pipelines loaded from GitHub (snakedeploy's)
     image = a.image or HEAD_IMAGE

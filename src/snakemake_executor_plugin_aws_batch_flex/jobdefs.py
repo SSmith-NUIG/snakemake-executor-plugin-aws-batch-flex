@@ -71,6 +71,7 @@ class JobDefinitions:
         tags: dict,
         mounts: Optional[list] = None,
         registry_credentials: Optional[dict] = None,
+        secrets: Optional[dict] = None,
     ):
         self.batch = batch_client
         self.logger = logger
@@ -86,6 +87,8 @@ class JobDefinitions:
         self.mounts = list(mounts or [])
         # registry host -> Secrets Manager secret ARN (username/password) for private images
         self.registry_credentials = dict(registry_credentials or {})
+        # environment variable -> SSM parameter / Secrets Manager ARN, read by ECS at job start
+        self.secrets = dict(secrets or {})
         self._cache: dict[tuple, str] = {}
 
     def container_properties(
@@ -109,8 +112,10 @@ class JobDefinitions:
         secret = self.registry_credentials.get(image_registry(image))
         if secret:
             props["repositoryCredentials"] = {"credentialsParameter": secret}
-        # ECS reads the registry secret with the execution role, on EC2 too
-        if self.execution_role_arn and (platform == "fargate" or secret):
+        if self.secrets:  # only their ARNs: the values never reach Batch
+            props["secrets"] = [{"name": n, "valueFrom": arn} for n, arn in sorted(self.secrets.items())]
+        # ECS reads the registry secret and the secrets with the execution role, on EC2 too
+        if self.execution_role_arn and (platform == "fargate" or secret or self.secrets):
             props["executionRoleArn"] = self.execution_role_arn
         if self.mounts and platform == "ec2":  # Fargate has no host paths
             props["volumes"] = [

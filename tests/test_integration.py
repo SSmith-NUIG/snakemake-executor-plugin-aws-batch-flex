@@ -765,3 +765,36 @@ def test_priority_skipped_without_fair_share_and_validated(tmp_path):
     r, calls = run(tmp_path, PRIO.replace("batch_priority=500", "batch_priority=99999"), "--forceall",
                    "--aws-batch-flex-queue", "fair-queue")
     assert r.returncode != 0 and "batch_priority must be a whole number from 0 to 9999" in r.stdout + r.stderr
+
+
+TOKEN_ARN = "arn:aws:ssm:eu-west-1:123456789012:parameter/smkflex/github-token"
+USES_TOKEN = textwrap.dedent('''
+    envvars: "GITHUB_TOKEN"
+    rule all:
+        input: "t.txt"
+    rule t:
+        output: "t.txt"
+        shell: 'echo "$GITHUB_TOKEN" > {output}'
+''')
+
+
+def test_secrets_reach_jobs_only_through_the_job_definition(tmp_path, monkeypatch):
+    # here for envvars:'s check; the job's comes from the parameter (the fake jobs inherit this env)
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    monkeypatch.setenv("FAKEAWS_SECRETS", json.dumps({TOKEN_ARN: "from-ssm"}))
+    r, calls = run(tmp_path, USES_TOKEN, "--aws-batch-flex-secrets", f"GITHUB_TOKEN={TOKEN_ARN}",
+                   "--aws-batch-flex-execution-role-arn", EXEC)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "store" / "t.txt").read_text() == "from-ssm\n"
+    d = next(c for c in calls if c["call"] == "register_job_definition")
+    assert d["secrets"] == [{"name": "GITHUB_TOKEN", "valueFrom": TOKEN_ARN}] and d["exec_role"] == EXEC
+    assert "ghp_secret" not in json.dumps([c for c in calls if c["call"] == "submit_job"])
+    assert "plain text" not in r.stdout + r.stderr
+
+
+def test_a_secret_sent_as_plain_text_is_warned_about(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    r, calls = run(tmp_path, USES_TOKEN)
+    assert r.returncode == 0, r.stdout + r.stderr
+    out = r.stdout + r.stderr
+    assert out.count("GITHUB_TOKEN: sent to every job as plain text") == 1 and "--aws-batch-flex-secrets" in out
