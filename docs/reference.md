@@ -76,7 +76,7 @@ job.
 | Setting (`aws-batch-flex-...`) | Value | Default | What it does |
 |---|---|---|---|
 | `conda-path` | absolute path on the instance, e.g. `/opt/miniforge3` | *none* | Where the AMI has conda (`setup.sh` sets it). It's mounted read-only into jobs, so `conda:` rules work in images without conda, and envs baked into the AMI can be used by name. EC2 only. |
-| `conda-cache` | `instance`, `none`, or an `s3://` URL | `instance` | Reuse built conda envs instead of building them in every job. `instance`: jobs on the same EC2 instance share them. An S3 URL, e.g. `s3://BUCKET/snakemake/.smkflex/conda-cache`: they're also kept there for later jobs and runs, and Fargate jobs can use them. `none`: build in every job. See [Conda and wrappers](guide.md#conda-and-wrappers). |
+| `conda-cache` | `instance`, `none`, or an `s3://` URL | `instance` | Reuse built conda envs instead of building them in every job. `instance`: jobs on the same EC2 instance share them until it shuts down. An S3 URL, e.g. `s3://BUCKET/snakemake/.smkflex/conda-cache`: the same per-instance sharing, plus a copy in S3 that later jobs, runs and Fargate jobs reuse. `none`: build in every job. `setup.sh` writes the S3 line commented out. See [Conda and wrappers](guide.md#conda-and-wrappers). |
 
 ### Logs, checks and leftovers
 
@@ -148,33 +148,50 @@ same permissions as the identity running `snakemake`, and that identity also nee
 
 ## What's been tested
 
-On real AWS (eu-west-1):
+On real AWS (eu-west-1, Snakemake 9.27):
 
 - **Rule types:** `shell:`, `run:`, Python, bash and R `script:` (Python scripts in the image's
-  own Python), `wrapper:`.
+  own Python, e.g. a pandas image), `wrapper:`; pandas 3 objects in `params` handed to a
+  script whose env has pandas 2 (rna-seq-kallisto-sleuth's datavzrd wrapper).
 - **Conda:** YAML envs in an image with conda; YAML and named (AMI-baked) envs in images
   without it; the env cache on rna-seq-star-deseq2 (per instance: 12 builds instead of 52,
   11 minutes instead of 18-21; from S3 on a second run: no builds, 7.5 minutes).
 - **Workflow features:** a different image per rule, checkpoints, groups, `shadow:`,
-  `benchmark:`, `log:`, retries, `temp()`, `directory()`, resources and tags, fan-out to 100 jobs.
+  `benchmark:`, `log:`, retries, `temp()`, `directory()` (also a few thousand files, uploaded in
+  parallel), absolute paths in inputs and `params`, resources and tags (including
+  `mem-overhead-mib`), a pandas sample
+  sheet read in the Snakefile with bioconda images, fan-out to 100 jobs.
 - **Platforms:** EC2 and Fargate, separately and mixed in one run; the Spot queue; `/dev/shm`
-  size per rule; Fargate disk size from `disk_mb`; install-at-start on a bare `debian:12`.
-- **Images and job definitions:** a private ECR image, an existing job definition, secrets from
-  SSM through `aws-batch-flex-secrets` on EC2.
+  size per rule; Fargate disk size from `disk_mb`; install-at-start on a bare `debian:12` (with
+  `install-prereqs`), and in a non-root image through its micromamba (Fargate).
+- **Images and job definitions:** images with an `ENTRYPOINT` (EC2 and Fargate), a private ECR
+  image, an existing job definition, secrets from SSM through `aws-batch-flex-secrets` on EC2.
 - **Failures and cancelling:** OOM and timeout reporting, retrying an OOM-killed job with more
-  memory, Ctrl-C, cancelling jobs left over from an interrupted run, stopping jobs under the
-  Terraform IAM policy, startup checks.
-- **Usage table:** the CPU, disk and peak-memory figures, and the hint about many short jobs.
+  memory, cancelling with a double Ctrl-C, cancelling jobs left over from an interrupted run,
+  stopping jobs under the Terraform IAM policy, startup checks (a wrong queue or platform stops
+  the run before anything is submitted; the AMI's Snakemake version is compared with yours).
+- **Security:** jobs can't use the instances' credentials (`jobs_use_instance_role = false`);
+  the IAM policy's refusal of privileged job definitions was checked with the IAM policy
+  simulator.
+- **Usage table:** the CPU, disk and peak-memory figures on EC2, and the hint about many short
+  jobs.
 - **`smkflex`:** a whole workflow as a head job (from a folder and with `--git`) and cancelling
-  one; `init`, `push` and `pull`.
+  one, with `--persistence-backend db` too; `init`, `push` and `pull`.
 - **Setup and upkeep:** the whole setup with `scripts/setup.sh` (twice, the second as a
-  separate setup in the same account, with conda and pandas in the AMI), updating the AMI with
+  separate setup in the same account, with conda and pandas in the AMI), building the AMI from
+  the stock ECS-optimized AMI, updating the AMI with
   `update-ami.sh`, job logs in Terraform's log group (EC2 and Fargate).
-- **Pipelines:** a 6-image variant-calling pipeline, and the published rna-seq-star-deseq2 on its
-  test data (with `snakemake`, as a `smkflex` head job, and deployed with `snakedeploy`).
+- **Published pipelines** on their test data: rna-seq-star-deseq2 (with `snakemake`, as a
+  `smkflex` head job, and deployed with `snakedeploy`), rna-seq-kallisto-sleuth (61 jobs, 43 minutes from scratch),
+  dna-seq-varlociraptor (688 jobs), the Snakemake tutorial workflow, and a 6-image
+  variant-calling pipeline. Not runnable, for reasons in the pipelines themselves (see
+  `examples/pipelines/`): zarp (undeclared outputs) and transcriptome-differential-expression
+  (searches its working folder for reads) need a shared filesystem; grenepipe needs Snakemake 8.
 
 Only against a fake Batch: private registry credentials (outside AWS),
-`--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being reclaimed mid-job.
+`--aws-batch-flex-volumes`, a single Ctrl-C, a Spot instance being reclaimed mid-job, peak
+memory on Fargate, the error for an image tag that doesn't exist, and mixing different Snakemake versions locally and in the AMI
+(9.5 to 9.27).
 
 Not tested yet: `notebook:`, Julia, GPU.
 

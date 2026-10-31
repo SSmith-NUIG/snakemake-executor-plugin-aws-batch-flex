@@ -293,7 +293,7 @@ Plugin settings go in a profile as `aws-batch-flex-NAME: value`, or on the comma
 |---|---|---|
 | `queue` | queue name | The Batch queue jobs go to. |
 | `default-image` | image | The image for rules without `container:`. |
-| `conda-cache` | `instance` (default), `none` or an `s3://` URL | Reuse built conda envs per instance, or keep them in S3 for later runs. |
+| `conda-cache` | `instance` (default), `none` or an `s3://` URL | Reuse built conda envs: shared per instance by default; an S3 URL also keeps a copy in S3 for later runs. |
 | `oom-memory-factor` | number, `1` or more (default `2`) | How much more memory a job gets when it's retried after running out. |
 | `spot-retries` | `0` to `9` (default `2`) | How many times Batch restarts a job whose Spot instance was reclaimed. |
 | `tags` | list of `KEY=VALUE` | Extra tags on every job, e.g. to break costs down by project. |

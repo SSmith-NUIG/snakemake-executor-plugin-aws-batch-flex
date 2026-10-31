@@ -58,8 +58,9 @@ rule align:
   packages, unless their pandas/numpy/polars `params` need packages it lacks;
   `batch_script_python="host"` always uses Snakemake's instead.
 - `conda:` and `wrapper:` work with `--sdm conda` (conda from the image, or baked into the AMI).
-  Built envs are reused rather than rebuilt in every job: by the jobs on the same EC2 instance,
-  or from S3 for later jobs and runs (`aws-batch-flex-conda-cache`).
+  Built envs are reused rather than rebuilt in every job: by default, by the jobs on the same
+  EC2 instance; with `aws-batch-flex-conda-cache` set to an S3 URL, also from S3 by later jobs
+  and runs.
 - If `snakemake` is killed, the jobs it left running are cancelled when you restart it.
 - Private images: ECR works through the IAM roles; other registries through Secrets Manager
   (`aws-batch-flex-registry-credentials`).

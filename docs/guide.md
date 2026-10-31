@@ -158,6 +158,13 @@ need a change:
   fetched unless the rule lists them: `input: multiext("genome.fa", ".amb", ".ann", ".bwt",
   ".pac", ".sa")` for bwa, or `bai="x.bam.bai"`. When the tool's error message is a known one,
   the failed job's error says so.
+- **Only declared outputs are kept.** When a job ends, it uploads its rule's declared outputs
+  (and `log:` and `benchmark:` files) to the bucket; anything else it wrote is lost with the
+  container. On a shared filesystem, a later rule can read a file that an earlier rule wrote
+  without declaring it; here that file is missing. Tools that write several files, such as an
+  index (STAR, bwa, salmon) or a report folder, are the usual cases: declare each file, use
+  `multiext()`, or declare the folder with `directory()`. The later rule then has to name it
+  as an input.
 - **Jobs see files at the same paths as on your machine,** as with a shared filesystem. A job
   works in a folder at the same path as Snakemake does, and keeps its copies of the bucket's
   files at their plain paths (`results/x.bam` there, an absolute `/data/x` at `/data/x`), not
@@ -287,21 +294,30 @@ AWS than on your machine, check `conda config --show channel_priority` locally: 
 or `disabled`, your machine can pick packages that strict priority won't.
 
 Each job builds the envs its rule needs, which takes a minute or more per env. To do this once
-rather than in every job, built envs are reused (`aws-batch-flex-conda-cache`):
+rather than in every job, built envs are reused. `aws-batch-flex-conda-cache` has three
+settings, and the S3 one adds to the default rather than replacing it:
 
-- **Per instance** (the default, `instance`): jobs on the same EC2 instance share an env folder,
-  so the first job of a rule builds the env and the others on that instance use it (a job that
-  needs an env another job is building waits for it). The cache is gone when the instance shuts
-  down.
-- **In S3** (`aws-batch-flex-conda-cache: s3://BUCKET/snakemake/.smkflex/conda-cache`): a job
-  that builds an env also uploads it there as an archive, and later jobs on any instance, later
-  runs, other projects and Fargate jobs unpack it in seconds instead. `setup.sh` writes this
-  line, commented out, into the profile. A packed env is typically 0.1-2 GB, a few cents a month
-  each.
+- **`instance`** (the default): jobs on the same EC2 instance share an env folder, so the first
+  job that needs an env builds it and the others on that instance reuse it (a job that needs
+  an env another job is still building waits for it). The cache is lost when the instance shuts
+  down, so the next run, or a new instance, builds the env again. Fargate jobs don't share it:
+  each runs alone.
+- **An S3 URL** (`s3://BUCKET/snakemake/.smkflex/conda-cache`): the same sharing on each
+  instance, plus a copy in S3. Before building an env, a job looks on its instance, then in S3,
+  and builds it only if neither has it, in which case it also uploads it. Later jobs on any
+  instance, later runs, other projects and Fargate jobs then unpack it in seconds. It's off by
+  default because it stores the envs in your bucket (typically 0.1-2 GB each, a few cents a
+  month); `setup.sh` writes this line into the profile commented out, so to turn it on,
+  uncomment it.
+- **`none`**: every job builds its own envs.
 
-On rna-seq-star-deseq2's test data, a run took 18-21 minutes with every job building its envs,
-11 minutes with the per-machine cache (12 builds instead of 52), and 7.5 minutes on a second run
-with the S3 cache (no builds at all).
+On rna-seq-star-deseq2's test data:
+
+| Setting | Env builds | Run time |
+|---|---|---|
+| `none` | 52 | 18-21 minutes |
+| `instance` (default) | 12 | 11 minutes |
+| S3 URL, second run | 0 | 7.5 minutes |
 
 An env is reused only for the same definition (the YAML file, its pinned versions, the wrapper
 version) and for images with the same glibc version, which conda resolves packages against, so
