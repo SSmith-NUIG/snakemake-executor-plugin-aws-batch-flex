@@ -30,6 +30,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex"
+Repository = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex"
 Documentation = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex#getting-started"
 Issues = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/issues"
 Changelog = "https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/blob/main/CHANGELOG.md"
