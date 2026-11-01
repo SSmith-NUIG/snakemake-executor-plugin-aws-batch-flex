@@ -12,13 +12,17 @@ is installed into the container when the job starts. Inputs and outputs go throu
 Snakemake's S3 storage plugin. Instances start when jobs arrive and stop when the queue is
 empty, so you pay only while jobs run.
 
-**How it differs from the aws-batch plugin.** The other AWS Batch executor in the plugin
-catalog,
+**Which AWS Batch plugin?** The Snakemake organisation maintains
 [snakemake-executor-plugin-aws-batch](https://github.com/snakemake/snakemake-executor-plugin-aws-batch),
-runs `snakemake` inside each job's container, so every image a rule uses needs Snakemake and the
-S3 storage plugin installed; biocontainers and other stock images can't be used as they are.
-This plugin brings Snakemake to the job instead, so each rule can use any image, and conda envs
-work in images without conda. It also:
+which runs `snakemake` inside each job's container. Its jobs use an image that has Snakemake and
+the S3 storage plugin, either its published image or ones you build on top of it, and a rule
+can name its own image through a resource. That suits workflows whose tools fit in one image or
+a few custom ones. This plugin brings Snakemake to the job instead, so each rule runs in its own
+`container:` image unchanged, such as a biocontainer, and conda envs work in images without
+conda. In return, it needs its own AMI on EC2, or installs Snakemake when each job starts. (As
+of October 2026; see each plugin's docs for the current details.)
+
+This plugin also:
 
 - sets up the AWS side (AMI, queue, roles, bucket, profile) with one command;
 - mixes EC2, Spot and Fargate queues in one run;
