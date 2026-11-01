@@ -1,9 +1,9 @@
 # snakemake-executor-plugin-aws-batch-flex
 
-A Snakemake executor plugin that runs each job on [AWS Batch](https://aws.amazon.com/batch/) in
-the image named by its rule's `container:` directive: a stock image from Docker Hub,
-quay.io/biocontainers, your own ECR repository, and so on. The images don't need Snakemake or
-Python inside them.
+Run Snakemake workflows on [AWS Batch](https://aws.amazon.com/batch/) with off-the-shelf
+container images. Each rule runs in the image its `container:` directive names, exactly as
+published: a biocontainer from quay.io, a stock image from Docker Hub, your own ECR image. You
+don't build images with Snakemake in them, and the images don't need Python either.
 
 **How it works.** On EC2, a Snakemake environment is baked into the machine image (AMI) that
 Batch starts instances from, and mounted read-only into every job's container; this is how
