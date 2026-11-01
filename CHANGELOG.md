@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.1](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.2.1...v0.2.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* add the repository URL to the package metadata, which the Snakemake plugin catalog reads ([ba2f0ec](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/ba2f0ec1ecae7e57fb151fbfa31840b21fbfa96a))
+
+
+### Documentation
+
+* describe the aws-batch plugin neutrally, with when each plugin suits ([de34a1b](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/de34a1b16785c07db6549cb4d29723c872997745))
+* lead with off-the-shelf container images ([2bb2742](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/2bb2742fed359b1c91a2f51b8685e6dd3389dfab))
+* package description says images need no Snakemake, not that jobs run in containers ([5eb2911](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/5eb29110c84ebb8d62373b9e770ceb0b9427b436))
+* say on the catalog page that the S3 storage plugin and Snakemake 9.5 are needed ([dc55327](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/dc5532710f58c40d03508238aecf47e7c6f72fe6))
+
+
+### Miscellaneous Chores
+
+* release 0.2.1 ([3b93b0d](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/commit/3b93b0d8c9c4570b3beed242ef2e6421f3ccdcf8))
+
 ## [0.2.1](https://github.com/SSmith-NUIG/snakemake-executor-plugin-aws-batch-flex/compare/v0.2.1...v0.2.1) (2026-10-31)
 
 
