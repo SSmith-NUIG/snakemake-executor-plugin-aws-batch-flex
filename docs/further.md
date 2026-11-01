@@ -1,5 +1,16 @@
 # Setup
 
+Install the plugin together with the S3 storage plugin, which it uses for all files but doesn't
+depend on (in pixi, both go under `[pypi-dependencies]`):
+
+```bash
+pip install snakemake-executor-plugin-aws-batch-flex snakemake-storage-plugin-s3
+```
+
+Besides `--executor aws-batch-flex`, a run needs a queue and S3 storage, best kept in a profile
+(see the example below): `--aws-batch-flex-queue`, `--default-storage-provider s3` and
+`--default-storage-prefix s3://BUCKET/PREFIX`.
+
 You need a Batch queue whose instances have the Snakemake environment. In the repository,
 `bash scripts/setup.sh --region eu-west-1` builds the AMI (with Snakemake, conda and pandas),
 creates the queue, compute environment, roles, log group and S3 bucket with Terraform, and
